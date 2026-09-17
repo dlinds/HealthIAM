@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}New HR import · HealthIAM{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb">
+  <li class="breadcrumb-item"><a href="{% url 'orgs:import_list' %}">HR imports</a></li>
+  <li class="breadcrumb-item active">New</li>
+</ol></nav>
+<div class="row g-3">
+  <div class="col-lg-5">
+    <div class="card">
+      <div class="card-body">
+        <h1 class="h4">Upload a file</h1>
+        <p class="text-body-secondary small">The file is previewed first (nothing is written). You then review and apply it.</p>
+        <form method="post" enctype="multipart/form-data">
+          {% csrf_token %}
+          {% include "partials/form_fields.html" with form=form %}
+          <button class="btn btn-primary" type="submit"><i class="bi bi-eye me-1"></i>Preview</button>
+          <a class="btn btn-link" href="{% url 'orgs:import_list' %}">Cancel</a>
+        </form>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-7">
+    <div class="card">
+      <div class="card-header">Column reference</div>
+      <div class="card-body small">
+        <p class="mb-1"><strong>Departments</strong>: <code>code,name</code> (aliases: department_code, dept_code, department_name)</p>
+        <p class="mb-1"><strong>Job codes</strong>: <code>code,title</code> (aliases: job_code, job_title, description)</p>
+        <p class="mb-1"><strong>Positions</strong>: <code>department_code,job_code[,title]</code> or <code>position_code[,title]</code> where position_code is <code>DDDD-JJJJ</code></p>
+        <ul class="mb-0 mt-2">
+          <li>Header row required; comma, tab, semicolon, or pipe delimited; UTF-8.</li>
+          <li>Codes must be exactly four digits (keep leading zeros).</li>
+          <li>Rows are upserted by code. Records already present but inactive are reactivated.</li>
+          <li>Imported records are marked <em>HR feed</em>. With "deactivate missing" checked, HR-sourced records not in the file are inactivated; manual records are never touched.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

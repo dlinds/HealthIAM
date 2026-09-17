@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}{% if object %}Edit {{ object.code }}{% else %}New position{% endif %} · HealthIAM{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb">
+  <li class="breadcrumb-item"><a href="{% url 'orgs:position_list' %}">Positions</a></li>
+  {% if object %}<li class="breadcrumb-item"><a href="{{ object.get_absolute_url }}">{{ object.code }}</a></li>{% endif %}
+  <li class="breadcrumb-item active">{% if object %}Edit{% else %}New{% endif %}</li>
+</ol></nav>
+<div class="row">
+  <div class="col-lg-6">
+    <div class="card">
+      <div class="card-body">
+        <h1 class="h4">{% if object %}Edit position {{ object.code }}{% else %}New position{% endif %}</h1>
+        {% if object %}
+        <p class="text-body-secondary small">
+          Department <strong>{{ object.department }}</strong> and job code <strong>{{ object.job_code }}</strong> define this position's code.
+          To change them, inactivate this position and create a new one.
+        </p>
+        {% else %}
+        <p class="text-body-secondary small">A position is a department + job code pair. Only active departments and job codes are listed.</p>
+        {% endif %}
+        <form method="post">
+          {% csrf_token %}
+          {% include "partials/form_fields.html" with form=form %}
+          <button class="btn btn-primary" type="submit">Save</button>
+          <a class="btn btn-link" href="{% if object %}{{ object.get_absolute_url }}{% else %}{% url 'orgs:position_list' %}{% endif %}">Cancel</a>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

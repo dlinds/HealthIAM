@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}{{ position.code }} · HealthIAM{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb">
+  <li class="breadcrumb-item"><a href="{% url 'orgs:position_list' %}">Positions</a></li>
+  <li class="breadcrumb-item active">{{ position.code }}</li>
+</ol></nav>
+<div class="d-flex flex-wrap align-items-start justify-content-between gap-2 mb-3">
+  <div>
+    <h1 class="h3 mb-1"><span class="text-mono">{{ position.code }}</span> · {{ position.display_name }}</h1>
+    <div class="text-body-secondary">
+      <a href="{% url 'orgs:department_list' %}?q={{ position.department.code }}">{{ position.department.code }} {{ position.department.name }}</a>
+      &middot;
+      <a href="{% url 'orgs:job_code_list' %}?q={{ position.job_code.code }}">{{ position.job_code.code }} {{ position.job_code.title }}</a>
+      &middot; <span class="badge text-bg-light border">{{ position.get_source_display }}</span>
+      {% if position.is_active %}<span class="badge text-bg-success">Active</span>{% else %}<span class="badge text-bg-secondary">Inactive since {{ position.inactivated_at|date:'Y-m-d' }}</span>{% endif %}
+    </div>
+  </div>
+  {% if iam.can_manage_positions %}
+  <div>
+    <a class="btn btn-outline-primary" href="{% url 'orgs:position_update' position.pk %}"><i class="bi bi-pencil me-1"></i>Edit</a>
+    <form class="d-inline" method="post" action="{% url 'orgs:position_toggle' position.pk %}">{% csrf_token %}
+      <input type="hidden" name="next" value="{{ position.get_absolute_url }}">
+      <button class="btn btn-outline-secondary" type="submit">{% if position.is_active %}Inactivate{% else %}Reactivate{% endif %}</button>
+    </form>
+  </div>
+  {% endif %}
+</div>
+{% if position.description %}<p>{{ position.description|linebreaksbr }}</p>{% endif %}
+
+<div class="row g-3">
+  <div class="col-lg-8">
+    {% block position_defaults %}
+    <div class="card"><div class="card-body text-body-secondary">Default access will appear here.</div></div>
+    {% endblock %}
+  </div>
+  <div class="col-lg-4">
+    {% if position.notes %}
+    <div class="card mb-3"><div class="card-header">Notes</div><div class="card-body">{{ position.notes|linebreaksbr }}</div></div>
+    {% endif %}
+    {% block position_sidebar %}{% endblock %}
+  </div>
+</div>
+{% endblock %}

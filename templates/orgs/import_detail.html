@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Import #{{ batch.pk }} · HealthIAM{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb">
+  <li class="breadcrumb-item"><a href="{% url 'orgs:import_list' %}">HR imports</a></li>
+  <li class="breadcrumb-item active">#{{ batch.pk }}</li>
+</ol></nav>
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+  <div>
+    <h1 class="h3 mb-1">{{ batch.get_kind_display }} import #{{ batch.pk }}</h1>
+    <div class="text-body-secondary small">
+      {{ batch.original_filename }} · uploaded by {{ batch.created_by.display_name|default:"scheduled job" }} on {{ batch.created_at|date:"Y-m-d H:i" }}
+      {% if batch.deactivate_missing %} · <span class="badge text-bg-warning">deactivates missing HR records</span>{% endif %}
+    </div>
+  </div>
+  <div>
+    {% if batch.status == 'previewed' %}
+    <form method="post" action="{% url 'orgs:import_apply' batch.pk %}" onsubmit="return confirm('Apply this import? Changes are audited and reversible only by hand.');">{% csrf_token %}
+      <button class="btn btn-primary" type="submit"><i class="bi bi-check2-circle me-1"></i>Apply import</button>
+    </form>
+    {% elif batch.status == 'completed' %}<span class="badge text-bg-success fs-6">Completed {{ batch.finished_at|date:"Y-m-d H:i" }}</span>
+    {% elif batch.status == 'failed' %}<span class="badge text-bg-danger fs-6">Failed</span>{% endif %}
+  </div>
+</div>
+
+{% if batch.error %}<div class="alert alert-danger">{{ batch.error }}</div>{% endif %}
+
+{% if batch.summary %}
+<div class="row g-2 mb-3">
+  <div class="col-6 col-md-2"><div class="card text-center"><div class="card-body py-2"><div class="fs-4">{{ batch.summary.created }}</div><div class="small text-body-secondary">Created</div></div></div></div>
+  <div class="col-6 col-md-2"><div class="card text-center"><div class="card-body py-2"><div class="fs-4">{{ batch.summary.updated }}</div><div class="small text-body-secondary">Updated</div></div></div></div>
+  <div class="col-6 col-md-2"><div class="card text-center"><div class="card-body py-2"><div class="fs-4">{{ batch.summary.reactivated }}</div><div class="small text-body-secondary">Reactivated</div></div></div></div>
+  <div class="col-6 col-md-2"><div class="card text-center"><div class="card-body py-2"><div class="fs-4">{{ batch.summary.deactivated }}</div><div class="small text-body-secondary">Deactivated</div></div></div></div>
+  <div class="col-6 col-md-2"><div class="card text-center"><div class="card-body py-2"><div class="fs-4">{{ batch.summary.unchanged }}</div><div class="small text-body-secondary">Unchanged</div></div></div></div>
+  <div class="col-6 col-md-2"><div class="card text-center {% if batch.summary.errors %}border-danger{% endif %}"><div class="card-body py-2"><div class="fs-4">{{ batch.summary.errors }}</div><div class="small text-body-secondary">Errors</div></div></div></div>
+</div>
+{% if batch.status == 'previewed' %}<p class="text-body-secondary small">This is a dry run: nothing has been written yet. Rows with errors are skipped when applied.</p>{% endif %}
+{% endif %}
+
+{% if problems %}
+<div class="card mb-3 border-danger">
+  <div class="card-header text-danger">Rows with errors ({{ problems|length }})</div>
+  <div class="table-responsive"><table class="table table-sm mb-0">
+    <thead><tr><th>Row</th><th>Code</th><th>Problem</th></tr></thead>
+    <tbody>{% for e in problems %}<tr><td>{{ e.row }}</td><td class="text-mono">{{ e.code }}</td><td>{{ e.message }}</td></tr>{% endfor %}</tbody>
+  </table></div>
+</div>
+{% endif %}
+
+<div class="card">
+  <div class="card-header">Changes ({{ changes|length }})</div>
+  <div class="table-responsive"><table class="table table-sm mb-0">
+    <thead><tr><th>Row</th><th>Code</th><th>Action</th><th>Value</th></tr></thead>
+    <tbody>
+    {% for e in changes %}
+      <tr><td>{{ e.row|default:"—" }}</td><td class="text-mono">{{ e.code }}</td>
+        <td><span class="badge {% if e.action == 'created' %}text-bg-success{% elif e.action == 'deactivated' %}text-bg-warning{% else %}text-bg-info{% endif %}">{{ e.action }}</span></td>
+        <td>{{ e.message }}</td></tr>
+    {% empty %}
+      <tr><td colspan="4" class="text-body-secondary">No changes.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+</div>
+{% endblock %}

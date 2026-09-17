@@ -36,3 +36,29 @@ def make_help_desk(**kwargs):
 
 def make_auditor(**kwargs):
     return UserFactory(groups=[roles.AUDITOR], **kwargs)
+
+
+class DepartmentFactory(factory.django.DjangoModelFactory):
+    class Meta:
+        model = "orgs.Department"
+        django_get_or_create = ("code",)
+
+    code = factory.Sequence(lambda n: f"{1000 + n:04d}")
+    name = factory.Sequence(lambda n: f"Department {n}")
+
+
+class JobCodeFactory(factory.django.DjangoModelFactory):
+    class Meta:
+        model = "orgs.JobCode"
+        django_get_or_create = ("code",)
+
+    code = factory.Sequence(lambda n: f"{5000 + n:04d}")
+    title = factory.Sequence(lambda n: f"Job Title {n}")
+
+
+class PositionFactory(factory.django.DjangoModelFactory):
+    class Meta:
+        model = "orgs.Position"
+
+    department = factory.SubFactory(DepartmentFactory)
+    job_code = factory.SubFactory(JobCodeFactory)

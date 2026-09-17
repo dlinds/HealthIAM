@@ -1,5 +1,7 @@
 """Settings for the pytest suite."""
 
+import tempfile
+
 from .dev import *  # noqa: F401,F403
 
 AUTH_LOCAL_LOGIN = True
@@ -12,3 +14,5 @@ STORAGES = {
 }
 WHITENOISE_AUTOREFRESH = True
 ENTRA_GROUP_ROLE_MAP = {}
+
+MEDIA_ROOT = tempfile.mkdtemp(prefix="healthiam-test-media-")

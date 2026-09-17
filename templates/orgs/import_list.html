@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}HR imports · HealthIAM{% endblock %}
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h1 class="h3 mb-0">HR imports</h1>
+  <a class="btn btn-primary" href="{% url 'orgs:import_upload' %}"><i class="bi bi-upload me-1"></i>New import</a>
+</div>
+<div class="table-responsive">
+<table class="table table-hover table-sm align-middle">
+  <thead><tr><th>#</th><th>Kind</th><th>File</th><th>Status</th><th>Summary</th><th>By</th><th>When</th></tr></thead>
+  <tbody>
+  {% for b in object_list %}
+    <tr>
+      <td><a href="{{ b.get_absolute_url }}">{{ b.pk }}</a></td>
+      <td>{{ b.get_kind_display }}</td>
+      <td>{{ b.original_filename }}</td>
+      <td>
+        {% if b.status == 'completed' %}<span class="badge text-bg-success">{{ b.get_status_display }}</span>
+        {% elif b.status == 'failed' %}<span class="badge text-bg-danger">{{ b.get_status_display }}</span>
+        {% else %}<span class="badge text-bg-secondary">{{ b.get_status_display }}</span>{% endif %}
+      </td>
+      <td class="small">{% if b.summary %}+{{ b.summary.created }} / ~{{ b.summary.updated }} / ↺{{ b.summary.reactivated }} / −{{ b.summary.deactivated }} / !{{ b.summary.errors }}{% endif %}</td>
+      <td>{{ b.created_by.display_name|default:"scheduled" }}</td>
+      <td>{{ b.created_at|date:"Y-m-d H:i" }}</td>
+    </tr>
+  {% empty %}
+    <tr><td colspan="7" class="text-body-secondary">No imports yet.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% include "partials/pagination.html" %}
+{% endblock %}

@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% load ui %}
+{% block title %}{{ entity.plural }} · HealthIAM{% endblock %}
+{% block content %}
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+  <h1 class="h3 mb-0">{{ entity.plural }}</h1>
+  {% if iam.can_manage_orgs %}
+  <div>
+    <a class="btn btn-outline-secondary" href="{% url 'orgs:import_upload' %}?kind={{ entity.import_kind }}"><i class="bi bi-upload me-1"></i>Import CSV</a>
+    <a class="btn btn-primary" href="{% url entity.create_url %}"><i class="bi bi-plus-lg me-1"></i>New {{ entity.label|lower }}</a>
+  </div>
+  {% endif %}
+</div>
+<form class="row g-2 mb-3 js-autosubmit" method="get">
+  <div class="col-md-4">
+    <input class="form-control" type="search" name="q" value="{{ q }}" placeholder="Search code or {{ entity.name_label|lower }}">
+  </div>
+  <div class="col-md-2">
+    <select class="form-select" name="active">
+      <option value="1" {% if active == '1' %}selected{% endif %}>Active</option>
+      <option value="0" {% if active == '0' %}selected{% endif %}>Inactive</option>
+      <option value="all" {% if active == 'all' %}selected{% endif %}>All</option>
+    </select>
+  </div>
+  <div class="col-auto"><button class="btn btn-outline-secondary" type="submit">Filter</button></div>
+</form>
+<div class="table-responsive">
+<table class="table table-hover table-sm align-middle">
+  <thead><tr><th style="width:8rem">Code</th><th>{{ entity.name_label }}</th><th>Source</th><th class="text-end">Active positions</th><th>Status</th><th></th></tr></thead>
+  <tbody>
+  {% for obj in object_list %}
+    <tr>
+      <td class="text-mono">{{ obj.code }}</td>
+      <td>{% if entity.name_field == 'name' %}{{ obj.name }}{% else %}{{ obj.title }}{% endif %}</td>
+      <td><span class="badge text-bg-light border">{{ obj.get_source_display }}</span></td>
+      <td class="text-end"><a href="{% url 'orgs:position_list' %}?q={{ obj.code }}">{{ obj.position_count }}</a></td>
+      <td>{% if obj.is_active %}<span class="badge text-bg-success">Active</span>{% else %}<span class="badge text-bg-secondary" title="Inactivated {{ obj.inactivated_at|date:'Y-m-d' }}">Inactive</span>{% endif %}</td>
+      <td class="text-end">
+        {% if iam.can_manage_orgs %}
+        <a class="btn btn-sm btn-outline-primary" href="{% url entity.update_url obj.pk %}">Edit</a>
+        <form class="d-inline" method="post" action="{% url entity.toggle_url obj.pk %}">{% csrf_token %}
+          <input type="hidden" name="next" value="{{ request.get_full_path }}">
+          <button class="btn btn-sm btn-outline-secondary" type="submit">{% if obj.is_active %}Inactivate{% else %}Reactivate{% endif %}</button>
+        </form>
+        {% endif %}
+      </td>
+    </tr>
+  {% empty %}
+    <tr><td colspan="6" class="text-body-secondary">No {{ entity.plural|lower }} found.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% include "partials/pagination.html" %}
+{% endblock %}

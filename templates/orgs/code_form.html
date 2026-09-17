@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}{% if object %}Edit {{ object.code }}{% else %}New {{ entity.label|lower }}{% endif %} · HealthIAM{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb">
+  <li class="breadcrumb-item"><a href="{% url entity.list_url %}">{{ entity.plural }}</a></li>
+  <li class="breadcrumb-item active">{% if object %}{{ object.code }}{% else %}New{% endif %}</li>
+</ol></nav>
+<div class="row">
+  <div class="col-lg-5">
+    <div class="card">
+      <div class="card-body">
+        <h1 class="h4">{% if object %}Edit {{ entity.label|lower }} {{ object.code }}{% else %}New {{ entity.label|lower }}{% endif %}</h1>
+        <form method="post">
+          {% csrf_token %}
+          {% include "partials/form_fields.html" with form=form %}
+          <button class="btn btn-primary" type="submit">Save</button>
+          <a class="btn btn-link" href="{% url entity.list_url %}">Cancel</a>
+        </form>
+      </div>
+    </div>
+  </div>
+  {% if object %}
+  <div class="col-lg-7">
+    <div class="card">
+      <div class="card-header">Positions using this {{ entity.label|lower }}</div>
+      <ul class="list-group list-group-flush">
+        {% for p in positions %}
+        <li class="list-group-item d-flex justify-content-between">
+          <a href="{{ p.get_absolute_url }}"><span class="text-mono">{{ p.code }}</span> {{ p.display_name }}</a>
+          {% if not p.is_active %}<span class="badge text-bg-secondary">Inactive</span>{% endif %}
+        </li>
+        {% empty %}
+        <li class="list-group-item text-body-secondary">None yet.</li>
+        {% endfor %}
+      </ul>
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

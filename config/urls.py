@@ -13,6 +13,7 @@ admin.site.site_title = "HealthIAM admin"
 urlpatterns = [
     path("", include("apps.core.urls")),
     path("", include("apps.accounts.urls")),
+    path("", include("apps.orgs.urls")),
     path("admin/", admin.site.urls),
 ]
 

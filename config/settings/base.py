@@ -38,6 +38,7 @@ INSTALLED_APPS = [
     "mozilla_django_oidc",
     "apps.core",
     "apps.accounts",
+    "apps.orgs",
 ]
 
 MIDDLEWARE = [

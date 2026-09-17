@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Positions · HealthIAM{% endblock %}
+{% block content %}
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+  <h1 class="h3 mb-0">Positions</h1>
+  {% if iam.can_manage_positions %}
+  <div>
+    <a class="btn btn-outline-secondary" href="{% url 'orgs:import_upload' %}?kind=positions"><i class="bi bi-upload me-1"></i>Import CSV</a>
+    <a class="btn btn-primary" href="{% url 'orgs:position_create' %}"><i class="bi bi-plus-lg me-1"></i>New position</a>
+  </div>
+  {% endif %}
+</div>
+<form class="row g-2 mb-3 js-autosubmit" method="get">
+  <div class="col-md-4">
+    <input class="form-control" type="search" name="q" value="{{ q }}" placeholder="Search code, department, or job title">
+  </div>
+  <div class="col-md-3">
+    <select class="form-select" name="department">
+      <option value="">All departments</option>
+      {% for d in departments %}<option value="{{ d.pk }}" {% if department_id == d.pk|stringformat:'s' %}selected{% endif %}>{{ d.code }} {{ d.name }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="col-md-2">
+    <select class="form-select" name="active">
+      <option value="1" {% if active == '1' %}selected{% endif %}>Active</option>
+      <option value="0" {% if active == '0' %}selected{% endif %}>Inactive</option>
+      <option value="all" {% if active == 'all' %}selected{% endif %}>All</option>
+    </select>
+  </div>
+  <div class="col-auto"><button class="btn btn-outline-secondary" type="submit">Filter</button></div>
+</form>
+<div class="table-responsive">
+<table class="table table-hover table-sm align-middle">
+  <thead><tr><th style="width:8rem">Code</th><th>Position</th><th>Department</th><th>Job code</th><th>Source</th><th>Status</th></tr></thead>
+  <tbody>
+  {% for p in object_list %}
+    <tr>
+      <td class="text-mono"><a href="{{ p.get_absolute_url }}">{{ p.code }}</a></td>
+      <td><a href="{{ p.get_absolute_url }}">{{ p.display_name }}</a></td>
+      <td>{{ p.department.name }}</td>
+      <td>{{ p.job_code.title }}</td>
+      <td><span class="badge text-bg-light border">{{ p.get_source_display }}</span></td>
+      <td>{% if p.is_active %}<span class="badge text-bg-success">Active</span>{% else %}<span class="badge text-bg-secondary">Inactive</span>{% endif %}</td>
+    </tr>
+  {% empty %}
+    <tr><td colspan="6" class="text-body-secondary">No positions found.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% include "partials/pagination.html" %}
+{% endblock %}
