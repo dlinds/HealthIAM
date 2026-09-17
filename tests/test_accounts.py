@@ -1,10 +1,12 @@
+import uuid
+
 import pytest
 from django.contrib.auth.models import Group
 from django.urls import reverse
 
 from apps.accounts import permissions as p
 from apps.accounts import roles
-from apps.accounts.backends import apply_group_roles
+from apps.accounts.backends import EntraOIDCBackend, apply_group_roles
 
 from . import factories
 
@@ -102,6 +104,84 @@ def test_entra_group_mapping_leaves_unmapped_roles_alone(plain_user):
     plain_user.groups.add(Group.objects.get(name=roles.AUDITOR))
     apply_group_roles(plain_user, [], mapping={"AAAA-1111": roles.ADMIN})
     assert set(plain_user.groups.values_list("name", flat=True)) == {roles.AUDITOR}
+
+
+def test_entra_group_mapping_keeps_baseline_for_ad_managed_users(settings):
+    settings.AD_BASELINE_ROLE = roles.HELP_DESK
+    user = factories.UserFactory(
+        username="alice@corp.example", ad_managed=True, groups=[roles.HELP_DESK, roles.ADMIN]
+    )
+    mapping = {"AAAA-1111": roles.ADMIN, "BBBB-2222": roles.HELP_DESK}
+
+    # Member of neither mapped group: Admin is revoked, the AD baseline stays.
+    apply_group_roles(user, [], mapping=mapping)
+    assert set(user.groups.values_list("name", flat=True)) == {roles.HELP_DESK}
+
+    # The mapping may still add the baseline to a managed user who lost it.
+    user.groups.clear()
+    apply_group_roles(user, ["bbbb-2222"], mapping=mapping)
+    assert set(user.groups.values_list("name", flat=True)) == {roles.HELP_DESK}
+
+    # A login the sync does not manage is treated as before.
+    other = factories.UserFactory(username="bob", groups=[roles.HELP_DESK])
+    apply_group_roles(other, [], mapping=mapping)
+    assert set(other.groups.values_list("name", flat=True)) == set()
+
+
+@pytest.fixture
+def entra_backend(settings):
+    """An EntraOIDCBackend with the minimum OIDC settings its constructor reads."""
+    settings.OIDC_OP_TOKEN_ENDPOINT = "https://login.test.invalid/oauth2/v2.0/token"
+    settings.OIDC_OP_USER_ENDPOINT = "https://graph.test.invalid/oidc/userinfo"
+    settings.OIDC_RP_CLIENT_ID = "test-client"
+    settings.OIDC_RP_CLIENT_SECRET = "test-client-secret-not-real"
+    settings.OIDC_RP_SIGN_ALGO = "HS256"
+    return EntraOIDCBackend()
+
+
+def test_entra_login_links_sync_created_user_by_preferred_username(entra_backend):
+    alice = factories.UserFactory(
+        username="alice@corp.example", email="alice@corp.example", ad_managed=True
+    )
+    claims = {
+        "oid": "11111111-2222-3333-4444-555555555555",
+        "preferred_username": "Alice@corp.example",
+        "email": "different@corp.example",
+    }
+    assert list(entra_backend.filter_users_by_claims(claims)) == [alice]
+
+
+def test_entra_login_prefers_oid_over_preferred_username(entra_backend):
+    oid = uuid.uuid4()
+    by_oid = factories.UserFactory(username="alice.old", entra_object_id=oid)
+    factories.UserFactory(username="alice@corp.example")
+    claims = {"oid": str(oid), "preferred_username": "alice@corp.example"}
+    assert list(entra_backend.filter_users_by_claims(claims)) == [by_oid]
+
+
+def test_entra_login_falls_back_to_email_without_username_match(entra_backend):
+    by_email = factories.UserFactory(username="someone", email="Alice@corp.example")
+    claims = {
+        "oid": str(uuid.uuid4()),
+        "preferred_username": "alice@corp.example",
+        "email": "alice@corp.example",
+    }
+    assert list(entra_backend.filter_users_by_claims(claims)) == [by_email]
+
+
+def test_entra_create_user_lowercases_username(entra_backend):
+    oid = uuid.uuid4()
+    claims = {
+        "oid": str(oid),
+        "preferred_username": "Alice@Corp.Example",
+        "email": "Alice@Corp.Example",
+        "name": "Alice Example",
+    }
+    user = entra_backend.create_user(claims)
+    assert user.username == "alice@corp.example"
+    assert user.email == "alice@corp.example"
+    user.refresh_from_db()
+    assert user.entra_object_id == oid
 
 
 def test_django_admin_requires_admin_role(as_user, admin_user, help_desk_user):

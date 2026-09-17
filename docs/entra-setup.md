@@ -54,6 +54,18 @@ that role. Roles that are not mapped can still be granted in-app and are left un
 Analyst and Application Owner are never mapped from groups; they are assigned per
 application in the catalog.
 
+### Together with the Active Directory sync
+
+If the on-prem AD sync is enabled (see `docs/ad-setup.md`), logins are usually created by
+the sync before the person ever signs in. Entra links to that login by the
+`preferred_username` claim (the UPN, compared case-insensitively) when no login carries
+the Entra object ID yet, so a first SSO sign-in does not create a duplicate account; the
+email address is only used when neither matches. Logins created by Entra get a lowercased
+username so the sync recognises them later. For a sync-managed login the AD baseline role
+(`AD_BASELINE_ROLE`, default `Help Desk`) is guaranteed by the sync and is never revoked
+at sign-in, even if `Help Desk` also appears in `ENTRA_GROUP_ROLE_MAP`; the other mapped
+roles are still granted and revoked from Entra groups as described above.
+
 ## 6. Verify
 
 Restart the app, open `/login/`, and use **Sign in with Microsoft**. The first admin can

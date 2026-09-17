@@ -1,8 +1,11 @@
 """Entra ID (Azure AD) OpenID Connect backend.
 
-Matches users by Entra object ID first, then email; creates users on first login;
-keeps names in sync; and applies the ENTRA_GROUP_ROLE_MAP so that membership in a
-mapped Entra group is the source of truth for that app role.
+Matches users by Entra object ID first, then username (the ``preferred_username``
+claim, which is the UPN the Active Directory sync stores as the login name), then
+email; creates users on first login with a lowercased username; keeps names in sync;
+and applies the ENTRA_GROUP_ROLE_MAP so that membership in a mapped Entra group is
+the source of truth for that app role. The AD baseline role (``AD_BASELINE_ROLE``)
+is owned by the directory sync for ``ad_managed`` logins and is never revoked here.
 """
 
 from __future__ import annotations
@@ -39,6 +42,11 @@ class EntraOIDCBackend(OIDCAuthenticationBackend):
             by_oid = self.UserModel.objects.filter(entra_object_id=oid)
             if by_oid.exists():
                 return by_oid
+        preferred_username = claims.get("preferred_username")
+        if preferred_username:
+            by_username = self.UserModel.objects.filter(username__iexact=preferred_username)
+            if by_username.exists():
+                return by_username
         email = _email_from(claims)
         if email:
             return self.UserModel.objects.filter(email__iexact=email)
@@ -46,7 +54,7 @@ class EntraOIDCBackend(OIDCAuthenticationBackend):
 
     def create_user(self, claims):
         email = _email_from(claims)
-        username = claims.get("preferred_username") or email or claims.get("oid")
+        username = (claims.get("preferred_username") or email or claims.get("oid")).lower()
         user = self.UserModel.objects.create_user(username=username, email=email)
         self._sync_profile(user, claims)
         user.save()
@@ -87,7 +95,9 @@ def apply_group_roles(user, entra_group_ids, mapping: dict | None = None) -> Non
     """Grant/revoke mapped roles based on Entra group membership.
 
     Only roles that appear in the mapping are touched; roles granted in-app that are
-    not mapped to an Entra group are left alone."""
+    not mapped to an Entra group are left alone. For a login managed by the Active
+    Directory sync (``ad_managed``) the AD baseline role is never revoked here, even
+    when it is mapped: the sync guarantees it to every IAM-Users member."""
     mapping = settings.ENTRA_GROUP_ROLE_MAP if mapping is None else mapping
     if not mapping:
         return
@@ -98,9 +108,10 @@ def apply_group_roles(user, entra_group_ids, mapping: dict | None = None) -> Non
         for gid, role in mapping.items()
         if role in roles.GROUP_ROLES and str(gid).lower() in member_of
     }
+    protected = {settings.AD_BASELINE_ROLE} if getattr(user, "ad_managed", False) else set()
     for role in managed_roles:
         group, _ = Group.objects.get_or_create(name=role)
         if role in should_have:
             user.groups.add(group)
-        else:
+        elif role not in protected:
             user.groups.remove(group)
