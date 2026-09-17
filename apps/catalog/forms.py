@@ -16,7 +16,7 @@ from .models import (
 
 
 class VendorForm(BootstrapModelForm):
-    class Meta:
+    class Meta(BootstrapModelForm.Meta):
         model = Vendor
         fields = [
             "name",
@@ -30,7 +30,7 @@ class VendorForm(BootstrapModelForm):
 
 
 class ContactForm(BootstrapModelForm):
-    class Meta:
+    class Meta(BootstrapModelForm.Meta):
         model = Contact
         fields = ["name", "title", "team", "email", "phone", "vendor", "user", "notes", "is_active"]
 
@@ -49,7 +49,7 @@ class ContactForm(BootstrapModelForm):
 
 
 class ApplicationForm(BootstrapModelForm):
-    class Meta:
+    class Meta(BootstrapModelForm.Meta):
         model = Application
         fields = [
             "name",
@@ -143,14 +143,14 @@ class ApplicationScopedForm(BootstrapModelForm):
 
 
 class AliasForm(ApplicationScopedForm):
-    class Meta:
+    class Meta(BootstrapModelForm.Meta):
         model = ApplicationAlias
         fields = ["alias"]
         widgets = {"alias": forms.TextInput(attrs={"placeholder": "Add an alias"})}
 
 
 class AccessLevelForm(ApplicationScopedForm):
-    class Meta:
+    class Meta(BootstrapModelForm.Meta):
         model = AccessLevel
         fields = [
             "name",
@@ -171,7 +171,7 @@ class AccessLevelForm(ApplicationScopedForm):
 
 
 class AnalystForm(ApplicationScopedForm):
-    class Meta:
+    class Meta(BootstrapModelForm.Meta):
         model = ApplicationAnalyst
         fields = ["user", "is_primary"]
 
@@ -190,7 +190,7 @@ class AnalystForm(ApplicationScopedForm):
 
 
 class SupportTierForm(ApplicationScopedForm):
-    class Meta:
+    class Meta(BootstrapModelForm.Meta):
         model = SupportTier
         fields = ["level", "name", "contact", "phone", "email", "hours", "notes"]
 
@@ -207,7 +207,7 @@ class SupportTierForm(ApplicationScopedForm):
 
 
 class ApplicationContactForm(ApplicationScopedForm):
-    class Meta:
+    class Meta(BootstrapModelForm.Meta):
         model = ApplicationContact
         fields = ["contact", "role", "notes"]
 

@@ -1,4 +1,11 @@
 from django import forms
+from django.db import models
+
+
+def _formfield_callback(model_field, **kwargs):
+    if isinstance(model_field, models.URLField):
+        kwargs.setdefault("assume_scheme", "https")
+    return model_field.formfield(**kwargs)
 
 
 class BootstrapFormMixin:
@@ -7,8 +14,6 @@ class BootstrapFormMixin:
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         for field in self.fields.values():
-            if isinstance(field, forms.URLField):
-                field.assume_scheme = "https"
             widget = field.widget
             if isinstance(widget, forms.CheckboxInput):
                 widget.attrs.setdefault("class", "form-check-input")
@@ -16,8 +21,6 @@ class BootstrapFormMixin:
                 widget.attrs.setdefault("class", "form-check-input")
             elif isinstance(widget, forms.Select | forms.SelectMultiple):
                 widget.attrs.setdefault("class", "form-select")
-            elif isinstance(widget, forms.ClearableFileInput):
-                widget.attrs.setdefault("class", "form-control")
             else:
                 widget.attrs.setdefault("class", "form-control")
             if isinstance(widget, forms.Textarea):
@@ -31,4 +34,8 @@ class BootstrapForm(BootstrapFormMixin, forms.Form):
 
 
 class BootstrapModelForm(BootstrapFormMixin, forms.ModelForm):
-    pass
+    """Subclasses declare `class Meta(BootstrapModelForm.Meta)` so URL fields default to
+    https and future per-field tweaks apply everywhere."""
+
+    class Meta:
+        formfield_callback = staticmethod(_formfield_callback)

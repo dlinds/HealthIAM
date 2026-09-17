@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load access_tags %}
 {% block title %}{{ position.code }} · HealthIAM{% endblock %}
 {% block content %}
 <nav aria-label="breadcrumb"><ol class="breadcrumb">
@@ -30,9 +31,7 @@
 
 <div class="row g-3">
   <div class="col-lg-8">
-    {% block position_defaults %}
-    <div class="card"><div class="card-body text-body-secondary">Default access will appear here.</div></div>
-    {% endblock %}
+    {% position_defaults position %}
   </div>
   <div class="col-lg-4">
     {% if position.notes %}

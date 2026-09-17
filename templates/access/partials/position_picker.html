@@ -1,0 +1,11 @@
+{% for p in results %}
+  <div class="form-check">
+    <input class="form-check-input" type="radio" name="{{ field }}" id="pos-{{ field }}-{{ p.pk }}" value="{{ p.pk }}">
+    <label class="form-check-label small" for="pos-{{ field }}-{{ p.pk }}">
+      <span class="text-mono">{{ p.code }}</span> {{ p.display_name }}
+      <span class="text-body-secondary">· {{ p.default_count }} default{{ p.default_count|pluralize }}</span>
+    </label>
+  </div>
+{% empty %}
+  <div class="small text-body-secondary">No matching active positions.</div>
+{% endfor %}

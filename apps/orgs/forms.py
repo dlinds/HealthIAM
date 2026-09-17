@@ -6,19 +6,19 @@ from .models import Department, ImportBatch, JobCode, Position
 
 
 class DepartmentForm(BootstrapModelForm):
-    class Meta:
+    class Meta(BootstrapModelForm.Meta):
         model = Department
         fields = ["code", "name", "source", "notes"]
 
 
 class JobCodeForm(BootstrapModelForm):
-    class Meta:
+    class Meta(BootstrapModelForm.Meta):
         model = JobCode
         fields = ["code", "title", "source", "notes"]
 
 
 class PositionCreateForm(BootstrapModelForm):
-    class Meta:
+    class Meta(BootstrapModelForm.Meta):
         model = Position
         fields = ["department", "job_code", "title_override", "description", "notes"]
 
@@ -32,13 +32,13 @@ class PositionUpdateForm(BootstrapModelForm):
     """Department and job code define the position's identity; to change them,
     inactivate this position and create a new one."""
 
-    class Meta:
+    class Meta(BootstrapModelForm.Meta):
         model = Position
         fields = ["title_override", "description", "notes"]
 
 
 class ImportUploadForm(BootstrapModelForm):
-    class Meta:
+    class Meta(BootstrapModelForm.Meta):
         model = ImportBatch
         fields = ["kind", "file", "deactivate_missing"]
         help_texts = {

@@ -1,0 +1,29 @@
+<div class="card border-primary mb-3">
+  <form hx-post="{% url 'access:default_add' position.pk %}" hx-target="#position-defaults" hx-swap="outerHTML">
+    {% csrf_token %}
+    <div class="card-body">
+      <h3 class="h6 mb-3">Add a default access level to {{ position.code }}</h3>
+      {% if form.non_field_errors %}<div class="alert alert-danger py-2">{{ form.non_field_errors|join:" " }}</div>{% endif %}
+      {% if form.access_level.errors %}<div class="alert alert-danger py-2">Pick an access level.</div>{% endif %}
+      <label class="form-label small" for="level-search">Application</label>
+      <input class="form-control form-control-sm mb-2" id="level-search" type="search" name="q" value="{{ q }}" placeholder="Type to search applications you manage…" autocomplete="off"
+        hx-get="{% url 'access:default_add' position.pk %}" hx-trigger="load, keyup changed delay:250ms" hx-target="#level-picker" hx-swap="innerHTML">
+      <div id="level-picker" class="border rounded p-2 mb-3" style="max-height:18rem; overflow-y:auto"></div>
+      <div class="row g-2">
+        <div class="col-md-7">
+          <label class="form-label small" for="{{ form.reason.id_for_label }}">Reason <span class="text-danger">*</span></label>
+          {{ form.reason }}
+          {% for e in form.reason.errors %}<div class="invalid-feedback d-block">{{ e }}</div>{% endfor %}
+        </div>
+        <div class="col-md-5">
+          <label class="form-label small" for="{{ form.notes.id_for_label }}">Note</label>
+          {{ form.notes }}
+        </div>
+      </div>
+    </div>
+    <div class="card-footer d-flex gap-2">
+      <button class="btn btn-primary btn-sm" type="submit">Add default</button>
+      <button class="btn btn-link btn-sm" type="button" onclick="document.getElementById('default-form-slot').innerHTML=''">Cancel</button>
+    </div>
+  </form>
+</div>

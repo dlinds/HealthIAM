@@ -102,6 +102,12 @@ def _detail_context(request, application):
     return {
         "application": application,
         "object": application,
+        "position_count": application.access_levels.filter(
+            position_defaults__position__is_active=True
+        )
+        .values("position_defaults__position")
+        .distinct()
+        .count(),
         "levels": application.access_levels.order_by("sort_order", "name"),
         "aliases": application.aliases.all(),
         "analysts": application.analyst_assignments.select_related("user"),

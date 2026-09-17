@@ -1,0 +1,75 @@
+<div id="application-positions">
+  <p class="text-body-secondary small">Positions that receive this application by default, grouped by access level.</p>
+  {% if notice %}<div class="alert alert-success py-2">{{ notice }}</div>{% endif %}
+  {% for e in errors %}<div class="alert alert-danger py-2">{{ e }}</div>{% endfor %}
+  {% if can_edit %}
+  <div class="card border-primary mb-3">
+    <form hx-post="{% url 'access:application_default_add' application.pk %}" hx-target="#application-positions" hx-swap="outerHTML">
+      {% csrf_token %}
+      <div class="card-body">
+        <div class="row g-2">
+          <div class="col-md-4">
+            <label class="form-label small" for="app-level">Access level</label>
+            <select class="form-select form-select-sm" id="app-level" name="access_level" required>
+              {% for level in active_levels %}<option value="{{ level.pk }}">{{ level.name }}</option>{% endfor %}
+            </select>
+            {% if not active_levels %}<div class="form-text text-warning-emphasis">Add an active access level first.</div>{% endif %}
+          </div>
+          <div class="col-md-8">
+            <label class="form-label small" for="app-pos-search">Position</label>
+            <input class="form-control form-control-sm mb-1" id="app-pos-search" type="search" name="q" placeholder="Search by code, department, or job title…" autocomplete="off"
+              hx-get="{% url 'access:application_default_add' application.pk %}" hx-trigger="keyup changed delay:250ms, focus once" hx-target="#app-pos-picker" hx-swap="innerHTML">
+            <div id="app-pos-picker" class="border rounded p-2" style="max-height:10rem; overflow-y:auto"><span class="small text-body-tertiary">Start typing to find a position.</span></div>
+          </div>
+          <div class="col-md-8">
+            <label class="form-label small" for="app-reason">Reason <span class="text-danger">*</span></label>
+            <input class="form-control form-control-sm" id="app-reason" name="reason" required placeholder="Why does this position get this level?">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label small" for="app-notes">Note</label>
+            <input class="form-control form-control-sm" id="app-notes" name="notes" maxlength="255">
+          </div>
+        </div>
+      </div>
+      <div class="card-footer"><button class="btn btn-primary btn-sm" type="submit" {% if not active_levels %}disabled{% endif %}>Add position</button></div>
+    </form>
+  </div>
+  {% endif %}
+  {% for level, defaults in level_rows %}
+  <div class="mb-3">
+    <div class="d-flex align-items-center gap-2 mb-1">
+      <span class="fw-semibold">{{ level.name }}</span>
+      <span class="badge text-bg-light border">{{ level.get_access_model_display }}</span>
+      {% if level.access_target and level.access_model != 'in_app' %}<span class="small text-body-secondary text-mono">{{ level.access_target }}</span>{% endif %}
+      {% if not level.is_active %}<span class="badge text-bg-secondary">Inactive</span>{% endif %}
+      <span class="badge rounded-pill text-bg-secondary">{{ defaults|length }}</span>
+    </div>
+    {% if defaults %}
+    <table class="table table-sm mb-0">
+      <tbody>
+      {% for d in defaults %}
+      <tr class="{% if not d.position.is_active %}text-body-tertiary{% endif %}">
+        <td style="width:9rem"><a class="text-mono" href="{{ d.position.get_absolute_url }}">{{ d.position.code }}</a></td>
+        <td>{{ d.position.display_name }}{% if not d.position.is_active %} <span class="badge text-bg-secondary">position inactive</span>{% endif %}</td>
+        <td class="small text-body-secondary">{{ d.notes }}</td>
+        <td class="small text-body-tertiary text-nowrap">{{ d.created_at|date:"Y-m-d" }}</td>
+        <td class="text-end">
+          {% if can_edit %}
+          <button class="btn btn-sm btn-link text-danger p-0" type="button"
+            hx-post="{% url 'access:default_remove' d.position.pk d.pk %}" hx-target="#application-positions" hx-swap="outerHTML"
+            hx-headers='{"X-Return": "application"}'
+            hx-prompt="Reason for removing {{ level.name }} from {{ d.position.code }}:">Remove</button>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="small text-body-tertiary ms-1">No positions.</div>
+    {% endif %}
+  </div>
+  {% empty %}
+  <p class="text-body-secondary">This application has no access levels yet.</p>
+  {% endfor %}
+</div>

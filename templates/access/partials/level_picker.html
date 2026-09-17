@@ -1,0 +1,18 @@
+{% for r in results %}
+  <div class="mb-2">
+    <div class="fw-semibold small">{{ r.application.name }} <span class="badge badge-tier-{{ r.application.tier }}">T{{ r.application.tier }}</span></div>
+    {% for level, taken in r.levels %}
+      <div class="form-check ms-2">
+        <input class="form-check-input" type="radio" name="access_level" id="lvl-{{ level.pk }}" value="{{ level.pk }}" {% if taken %}disabled{% endif %}>
+        <label class="form-check-label small {% if taken %}text-body-tertiary{% endif %}" for="lvl-{{ level.pk }}">
+          {{ level.name }} <span class="text-body-secondary">· {{ level.get_access_model_display }}{% if level.access_target %} · {{ level.access_target }}{% endif %}</span>
+          {% if taken %}<em>(already a default)</em>{% endif %}
+        </label>
+      </div>
+    {% empty %}
+      <div class="small text-body-tertiary ms-2">No active access levels defined.</div>
+    {% endfor %}
+  </div>
+{% empty %}
+  <div class="small text-body-secondary">No matching applications{% if not iam.is_admin %} that you manage{% endif %}.</div>
+{% endfor %}

@@ -40,6 +40,7 @@ INSTALLED_APPS = [
     "apps.accounts",
     "apps.orgs",
     "apps.catalog",
+    "apps.access",
 ]
 
 MIDDLEWARE = [
