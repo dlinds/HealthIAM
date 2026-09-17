@@ -1,0 +1,22 @@
+<div class="card border-primary mb-3">
+  <form hx-post="{{ form_url }}" hx-target="#support" hx-swap="outerHTML">
+    {% csrf_token %}
+    <div class="card-body">
+      <h3 class="h6 mb-3">{% if tier %}Edit support tier{% else %}New support tier{% endif %}</h3>
+      {% if form.non_field_errors %}<div class="alert alert-danger py-2">{{ form.non_field_errors }}</div>{% endif %}
+      <div class="row g-2">
+        <div class="col-md-2"><label class="form-label small" for="{{ form.level.id_for_label }}">Tier</label>{{ form.level }}{% for e in form.level.errors %}<div class="invalid-feedback d-block">{{ e }}</div>{% endfor %}</div>
+        <div class="col-md-5"><label class="form-label small" for="{{ form.name.id_for_label }}">Team / group</label>{{ form.name }}{% for e in form.name.errors %}<div class="invalid-feedback d-block">{{ e }}</div>{% endfor %}</div>
+        <div class="col-md-5"><label class="form-label small" for="{{ form.contact.id_for_label }}">Named contact</label>{{ form.contact }}</div>
+        <div class="col-md-4"><label class="form-label small" for="{{ form.phone.id_for_label }}">Phone</label>{{ form.phone }}</div>
+        <div class="col-md-4"><label class="form-label small" for="{{ form.email.id_for_label }}">Email</label>{{ form.email }}{% for e in form.email.errors %}<div class="invalid-feedback d-block">{{ e }}</div>{% endfor %}</div>
+        <div class="col-md-4"><label class="form-label small" for="{{ form.hours.id_for_label }}">Hours</label>{{ form.hours }}</div>
+        <div class="col-12"><label class="form-label small" for="{{ form.notes.id_for_label }}">Notes</label>{{ form.notes }}</div>
+      </div>
+    </div>
+    <div class="card-footer d-flex gap-2">
+      <button class="btn btn-primary btn-sm" type="submit">Save tier</button>
+      <button class="btn btn-link btn-sm" type="button" onclick="document.getElementById('support-tier-form-slot').innerHTML=''">Cancel</button>
+    </div>
+  </form>
+</div>

@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Vendors · HealthIAM{% endblock %}
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h1 class="h3 mb-0">Vendors</h1>
+  {% if iam.can_manage_vendors %}<a class="btn btn-primary" href="{% url 'catalog:vendor_create' %}"><i class="bi bi-plus-lg me-1"></i>New vendor</a>{% endif %}
+</div>
+<form class="row g-2 mb-3 js-autosubmit" method="get">
+  <div class="col-md-4"><input class="form-control" type="search" name="q" value="{{ q }}" placeholder="Search vendors"></div>
+  <div class="col-md-2"><select class="form-select" name="active"><option value="1" {% if active == '1' %}selected{% endif %}>Active</option><option value="all" {% if active == 'all' %}selected{% endif %}>All</option></select></div>
+</form>
+<div class="table-responsive"><table class="table table-hover table-sm align-middle">
+  <thead><tr><th>Vendor</th><th>Support</th><th class="text-end">Applications</th><th class="text-end">Contacts</th><th></th></tr></thead>
+  <tbody>
+  {% for v in object_list %}
+  <tr>
+    <td><a href="{{ v.get_absolute_url }}" class="fw-semibold">{{ v.name }}</a>{% if not v.is_active %} <span class="badge text-bg-secondary">Inactive</span>{% endif %}{% if v.website %}<div class="small"><a href="{{ v.website }}" target="_blank" rel="noopener">{{ v.website }}</a></div>{% endif %}</td>
+    <td class="small">{{ v.support_phone }}{% if v.support_email %}<br><a href="mailto:{{ v.support_email }}">{{ v.support_email }}</a>{% endif %}</td>
+    <td class="text-end">{{ v.app_count }}</td>
+    <td class="text-end">{{ v.contact_count }}</td>
+    <td class="text-end">{% if iam.can_manage_vendors %}<a class="btn btn-sm btn-outline-primary" href="{% url 'catalog:vendor_update' v.pk %}">Edit</a>{% endif %}</td>
+  </tr>
+  {% empty %}<tr><td colspan="5" class="text-body-secondary">No vendors.</td></tr>{% endfor %}
+  </tbody></table></div>
+{% include "partials/pagination.html" %}
+{% endblock %}

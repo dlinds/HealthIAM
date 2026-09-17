@@ -1,0 +1,54 @@
+{% load ui %}
+<div class="row g-3">
+  <div class="col-lg-7">
+    {% if application.description %}<p class="lead fs-6">{{ application.description|linebreaksbr }}</p>{% endif %}
+    <div class="card mb-3">
+      <div class="card-header">Data &amp; hosting</div>
+      <div class="card-body">
+        <dl class="row mb-0 small">
+          <dt class="col-sm-4">Holds PHI</dt><dd class="col-sm-8"><i class="bi {{ application.holds_phi|yesno_icon }}"></i> {{ application.holds_phi|bool_label }}</dd>
+          <dt class="col-sm-4">Holds PII</dt><dd class="col-sm-8"><i class="bi {{ application.holds_pii|yesno_icon }}"></i> {{ application.holds_pii|bool_label }}</dd>
+          <dt class="col-sm-4">Clinical records</dt><dd class="col-sm-8"><i class="bi {{ application.holds_clinical_records|yesno_icon }}"></i> {{ application.holds_clinical_records|bool_label }}</dd>
+          <dt class="col-sm-4">PCI</dt><dd class="col-sm-8"><i class="bi {{ application.holds_pci|yesno_icon }}"></i> {{ application.holds_pci|bool_label }}</dd>
+          <dt class="col-sm-4">Employee data</dt><dd class="col-sm-8"><i class="bi {{ application.holds_employee_data|yesno_icon }}"></i> {{ application.holds_employee_data|bool_label }}</dd>
+          <dt class="col-sm-4">Research data</dt><dd class="col-sm-8"><i class="bi {{ application.holds_research_data|yesno_icon }}"></i> {{ application.holds_research_data|bool_label }}</dd>
+          {% if application.data_description %}<dt class="col-sm-4">Data description</dt><dd class="col-sm-8">{{ application.data_description|linebreaksbr }}</dd>{% endif %}
+          <dt class="col-sm-4">Hosting</dt><dd class="col-sm-8">{{ application.get_host_location_display }}{% if application.host_details %} · {{ application.host_details }}{% endif %}</dd>
+          <dt class="col-sm-4">Authentication</dt><dd class="col-sm-8">{{ application.get_auth_method_display }} · MFA: {{ application.mfa_enforced|bool_label }}</dd>
+        </dl>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header">Operations</div>
+      <div class="card-body">
+        <dl class="row mb-0 small">
+          <dt class="col-sm-4">Lifecycle</dt><dd class="col-sm-8">{{ application.get_lifecycle_status_display }}{% if application.go_live_date %} · live {{ application.go_live_date }}{% endif %}{% if application.sunset_date %} · sunset {{ application.sunset_date }}{% endif %}</dd>
+          <dt class="col-sm-4">RTO</dt><dd class="col-sm-8">{% if application.rto_hours is not None %}{{ application.rto_hours }} h{% else %}—{% endif %}</dd>
+          <dt class="col-sm-4">DR status</dt><dd class="col-sm-8">{{ application.get_dr_status_display }}</dd>
+          <dt class="col-sm-4">Maintenance window</dt><dd class="col-sm-8">{{ application.maintenance_window|default:"—" }}</dd>
+          <dt class="col-sm-4">Contract renewal</dt><dd class="col-sm-8">{{ application.contract_renewal_date|default:"—" }}</dd>
+          <dt class="col-sm-4">Cost center</dt><dd class="col-sm-8">{{ application.cost_center|default:"—" }}</dd>
+          {% if application.admin_url %}<dt class="col-sm-4">Admin / support URL</dt><dd class="col-sm-8"><a href="{{ application.admin_url }}" target="_blank" rel="noopener">{{ application.admin_url }}</a></dd>{% endif %}
+        </dl>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-5">
+    <div class="card mb-3">
+      <div class="card-header">Owners</div>
+      <div class="card-body small">
+        <div class="mb-2"><span class="text-body-secondary">Business owner</span><br>
+          {% if application.business_owner %}<a href="{{ application.business_owner.get_absolute_url }}">{{ application.business_owner.name }}</a>{% if application.business_owner.title %} · {{ application.business_owner.title }}{% endif %}{% if application.business_owner.email %}<br><a href="mailto:{{ application.business_owner.email }}">{{ application.business_owner.email }}</a>{% endif %}{% else %}<span class="text-warning-emphasis">Not set</span>{% endif %}
+        </div>
+        <div><span class="text-body-secondary">Technical owner</span><br>
+          {% if application.technical_owner %}<a href="{{ application.technical_owner.get_absolute_url }}">{{ application.technical_owner.name }}</a>{% if application.technical_owner.title %} · {{ application.technical_owner.title }}{% endif %}{% if application.technical_owner.email %}<br><a href="mailto:{{ application.technical_owner.email }}">{{ application.technical_owner.email }}</a>{% endif %}{% else %}<span class="text-warning-emphasis">Not set</span>{% endif %}
+        </div>
+      </div>
+    </div>
+    {% include "catalog/partials/analysts.html" %}
+    {% if application.notes %}
+    <div class="card mt-3"><div class="card-header">Notes</div><div class="card-body small">{{ application.notes|linebreaksbr }}</div></div>
+    {% endif %}
+    <p class="small text-body-tertiary mt-3 mb-0">Created {{ application.created_at|date:"Y-m-d" }}{% if application.created_by %} by {{ application.created_by.display_name }}{% endif %} · updated {{ application.updated_at|date:"Y-m-d H:i" }}</p>
+  </div>
+</div>

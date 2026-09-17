@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}{% if object %}Edit {{ object.name }}{% else %}New vendor{% endif %} · HealthIAM{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb">
+  <li class="breadcrumb-item"><a href="{% url 'catalog:vendor_list' %}">Vendors</a></li>
+  <li class="breadcrumb-item active">{% if object %}{{ object.name }}{% else %}New{% endif %}</li>
+</ol></nav>
+<div class="row"><div class="col-lg-6"><div class="card"><div class="card-body">
+  <h1 class="h4">{% if object %}Edit vendor{% else %}New vendor{% endif %}</h1>
+  <form method="post">{% csrf_token %}
+    {% include "partials/form_fields.html" with form=form %}
+    <button class="btn btn-primary" type="submit">Save</button>
+    <a class="btn btn-link" href="{% if object %}{{ object.get_absolute_url }}{% else %}{% url 'catalog:vendor_list' %}{% endif %}">Cancel</a>
+  </form>
+</div></div></div></div>
+{% endblock %}

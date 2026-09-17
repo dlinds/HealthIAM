@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% load ui %}
+{% block title %}{{ application.name }} · HealthIAM{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb">
+  <li class="breadcrumb-item"><a href="{% url 'catalog:application_list' %}">Applications</a></li>
+  <li class="breadcrumb-item active">{{ application.name }}</li>
+</ol></nav>
+<div class="d-flex flex-wrap align-items-start justify-content-between gap-2 mb-2">
+  <div>
+    <h1 class="h3 mb-1">{{ application.name }}</h1>
+    <div class="d-flex flex-wrap align-items-center gap-2 small">
+      <span class="badge badge-tier-{{ application.tier }}">Tier {{ application.tier }}</span>
+      {% include "catalog/partials/lifecycle_badge.html" with app=application %}
+      {% for f in application.data_flags %}<span class="badge text-bg-warning-subtle border border-warning-subtle text-warning-emphasis">{{ f }}</span>{% endfor %}
+      {% if application.vendor %}<span class="text-body-secondary">by <a href="{{ application.vendor.get_absolute_url }}">{{ application.vendor.name }}</a></span>{% endif %}
+      <span class="text-body-secondary">· {{ application.get_host_location_display }}</span>
+    </div>
+    {% include "catalog/partials/aliases.html" %}
+  </div>
+  <div>
+    {% if application.website %}<a class="btn btn-outline-secondary" href="{{ application.website }}" target="_blank" rel="noopener"><i class="bi bi-box-arrow-up-right me-1"></i>Open app</a>{% endif %}
+    {% if can_edit %}<a class="btn btn-outline-primary" href="{% url 'catalog:application_update' application.pk %}"><i class="bi bi-pencil me-1"></i>Edit</a>{% endif %}
+  </div>
+</div>
+
+<ul class="nav nav-tabs" role="tablist" id="appTabs">
+  <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-overview" type="button">Overview</button></li>
+  <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-levels" type="button">Access levels <span class="badge text-bg-secondary">{{ levels|length }}</span></button></li>
+  <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-positions" type="button">Positions{% if position_count is not None %} <span class="badge text-bg-secondary">{{ position_count }}</span>{% endif %}</button></li>
+  <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-support" type="button">Contacts &amp; support</button></li>
+  {% if iam.can_view_history %}<li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-history" type="button">History</button></li>{% endif %}
+</ul>
+<div class="tab-content pt-3">
+  <div class="tab-pane fade show active" id="tab-overview">{% include "catalog/partials/overview.html" %}</div>
+  <div class="tab-pane fade" id="tab-levels">{% include "catalog/partials/access_levels.html" %}</div>
+  <div class="tab-pane fade" id="tab-positions">{% block application_positions %}<div class="text-body-secondary">Position defaults will appear here.</div>{% endblock %}</div>
+  <div class="tab-pane fade" id="tab-support">{% include "catalog/partials/support.html" %}</div>
+  {% if iam.can_view_history %}<div class="tab-pane fade" id="tab-history">{% block application_history %}{% endblock %}</div>{% endif %}
+</div>
+{% endblock %}

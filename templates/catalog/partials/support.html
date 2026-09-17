@@ -1,0 +1,80 @@
+<div id="support" class="row g-3">
+  <div class="col-lg-7">
+    <div class="card">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span>Support escalation</span>
+        {% if can_edit %}<button class="btn btn-sm btn-primary" type="button" hx-get="{% url 'catalog:support_tier_add' application.pk %}" hx-target="#support-tier-form-slot" hx-swap="innerHTML"><i class="bi bi-plus-lg me-1"></i>Add tier</button>{% endif %}
+      </div>
+      <div class="card-body">
+        <div id="support-tier-form-slot"></div>
+        {% for t in tiers %}
+        <div class="d-flex gap-3 py-2 {% if not forloop.last %}border-bottom{% endif %}">
+          <div class="text-center" style="width:3.5rem"><span class="badge rounded-pill text-bg-dark fs-6">T{{ t.level }}</span></div>
+          <div class="flex-grow-1 small">
+            <div class="fw-semibold">{{ t.name }}</div>
+            {% if t.contact %}<div>{{ t.contact.name }}{% if t.contact.title %} · {{ t.contact.title }}{% endif %}</div>{% endif %}
+            <div class="text-body-secondary">
+              {% if t.email or t.contact.email %}<a href="mailto:{{ t.email|default:t.contact.email }}">{{ t.email|default:t.contact.email }}</a>{% endif %}
+              {% if t.phone or t.contact.phone %} · {{ t.phone|default:t.contact.phone }}{% endif %}
+              {% if t.hours %} · {{ t.hours }}{% endif %}
+            </div>
+            {% if t.notes %}<div class="text-body-secondary">{{ t.notes }}</div>{% endif %}
+          </div>
+          {% if can_edit %}
+          <div class="text-nowrap">
+            <button class="btn btn-sm btn-link p-0 me-2" type="button" hx-get="{% url 'catalog:support_tier_edit' application.pk t.pk %}" hx-target="#support-tier-form-slot" hx-swap="innerHTML">Edit</button>
+            <button class="btn btn-sm btn-link text-danger p-0" type="button" hx-post="{% url 'catalog:support_tier_delete' application.pk t.pk %}" hx-target="#support" hx-swap="outerHTML" hx-confirm="Remove tier {{ t.level }}?">Remove</button>
+          </div>
+          {% endif %}
+        </div>
+        {% empty %}
+        <p class="text-body-secondary small mb-0">No support tiers documented.</p>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-5">
+    <div class="card">
+      <div class="card-header">Vendor &amp; other contacts</div>
+      <ul class="list-group list-group-flush small">
+        {% if application.vendor %}
+        <li class="list-group-item">
+          <div class="fw-semibold">{{ application.vendor.name }} <span class="text-body-secondary fw-normal">(vendor)</span></div>
+          {% if application.vendor.support_phone %}<div>{{ application.vendor.support_phone }}</div>{% endif %}
+          {% if application.vendor.support_email %}<div><a href="mailto:{{ application.vendor.support_email }}">{{ application.vendor.support_email }}</a></div>{% endif %}
+          {% if application.vendor.support_portal_url %}<div><a href="{{ application.vendor.support_portal_url }}" target="_blank" rel="noopener">Support portal</a></div>{% endif %}
+        </li>
+        {% endif %}
+        {% for link in app_contacts %}
+        <li class="list-group-item d-flex justify-content-between align-items-start">
+          <div>
+            <div class="fw-semibold">{{ link.contact.name }} <span class="badge text-bg-light border fw-normal">{{ link.get_role_display }}</span></div>
+            {% if link.contact.title or link.contact.team %}<div class="text-body-secondary">{{ link.contact.title }}{% if link.contact.title and link.contact.team %} · {% endif %}{{ link.contact.team }}</div>{% endif %}
+            {% if link.contact.email %}<div><a href="mailto:{{ link.contact.email }}">{{ link.contact.email }}</a></div>{% endif %}
+            {% if link.contact.phone %}<div>{{ link.contact.phone }}</div>{% endif %}
+            {% if link.notes %}<div class="text-body-secondary">{{ link.notes }}</div>{% endif %}
+          </div>
+          {% if can_edit %}<button class="btn btn-sm btn-link text-danger p-0" type="button" hx-post="{% url 'catalog:app_contact_remove' application.pk link.pk %}" hx-target="#support" hx-swap="outerHTML" hx-confirm="Remove this contact from the application?">Remove</button>{% endif %}
+        </li>
+        {% empty %}
+        <li class="list-group-item text-body-secondary">No additional contacts.</li>
+        {% endfor %}
+      </ul>
+      {% if can_edit %}
+      <div class="card-footer">
+        <form class="row g-2" hx-post="{% url 'catalog:app_contact_add' application.pk %}" hx-target="#support" hx-swap="outerHTML">
+          {% csrf_token %}
+          <div class="col-12">{{ app_contact_form.contact }}{% for e in app_contact_form.contact.errors %}<div class="invalid-feedback d-block">{{ e }}</div>{% endfor %}</div>
+          <div class="col-6">{{ app_contact_form.role }}{% for e in app_contact_form.role.errors %}<div class="invalid-feedback d-block">{{ e }}</div>{% endfor %}</div>
+          <div class="col-6">{{ app_contact_form.notes }}</div>
+          {% for e in app_contact_form.non_field_errors %}<div class="col-12 invalid-feedback d-block">{{ e }}</div>{% endfor %}
+          <div class="col-12 d-flex justify-content-between align-items-center">
+            <a class="small" href="{% url 'catalog:contact_create' %}?next={{ application.get_absolute_url|urlencode }}%23tab-support">New contact…</a>
+            <button class="btn btn-sm btn-outline-primary" type="submit">Add contact</button>
+          </div>
+        </form>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</div>

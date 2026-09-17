@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Contacts · HealthIAM{% endblock %}
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h1 class="h3 mb-0">Contacts</h1>
+  {% if iam.can_add_contacts %}<a class="btn btn-primary" href="{% url 'catalog:contact_create' %}"><i class="bi bi-plus-lg me-1"></i>New contact</a>{% endif %}
+</div>
+<form class="row g-2 mb-3 js-autosubmit" method="get">
+  <div class="col-md-4"><input class="form-control" type="search" name="q" value="{{ q }}" placeholder="Search name, email, team, vendor"></div>
+  <div class="col-md-2"><select class="form-select" name="kind"><option value="">Internal &amp; vendor</option><option value="internal" {% if kind == 'internal' %}selected{% endif %}>Internal</option><option value="vendor" {% if kind == 'vendor' %}selected{% endif %}>Vendor</option></select></div>
+  <div class="col-md-2"><select class="form-select" name="active"><option value="1" {% if active == '1' %}selected{% endif %}>Active</option><option value="all" {% if active == 'all' %}selected{% endif %}>All</option></select></div>
+</form>
+<div class="table-responsive"><table class="table table-hover table-sm align-middle">
+  <thead><tr><th>Name</th><th>Title / team</th><th>Vendor</th><th>Email</th><th>Phone</th><th>Login</th></tr></thead>
+  <tbody>
+  {% for c in object_list %}
+  <tr>
+    <td><a href="{{ c.get_absolute_url }}">{{ c.name }}</a>{% if not c.is_active %} <span class="badge text-bg-secondary">Inactive</span>{% endif %}</td>
+    <td class="small">{{ c.title }}{% if c.title and c.team %} · {% endif %}{{ c.team }}</td>
+    <td class="small">{% if c.vendor %}<a href="{{ c.vendor.get_absolute_url }}">{{ c.vendor.name }}</a>{% else %}<span class="text-body-tertiary">internal</span>{% endif %}</td>
+    <td class="small">{% if c.email %}<a href="mailto:{{ c.email }}">{{ c.email }}</a>{% endif %}</td>
+    <td class="small">{{ c.phone }}</td>
+    <td class="small">{% if c.user %}<i class="bi bi-person-check text-success" title="Linked to {{ c.user.username }}"></i> {{ c.user.username }}{% endif %}</td>
+  </tr>
+  {% empty %}<tr><td colspan="6" class="text-body-secondary">No contacts.</td></tr>{% endfor %}
+  </tbody></table></div>
+{% include "partials/pagination.html" %}
+{% endblock %}

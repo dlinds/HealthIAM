@@ -1,0 +1,4 @@
+{% if app.lifecycle_status == 'active' %}<span class="badge text-bg-success">Active</span>
+{% elif app.lifecycle_status == 'pilot' %}<span class="badge text-bg-info">Pilot</span>
+{% elif app.lifecycle_status == 'retiring' %}<span class="badge text-bg-warning">Retiring</span>
+{% else %}<span class="badge text-bg-secondary">Retired</span>{% endif %}

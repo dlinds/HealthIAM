@@ -1,0 +1,20 @@
+<div id="aliases" class="d-flex flex-wrap align-items-center gap-1 mt-2 small">
+  <span class="text-body-secondary">Also known as:</span>
+  {% for alias in aliases %}
+    <span class="badge rounded-pill text-bg-light border">
+      {{ alias.alias }}
+      {% if can_edit %}<button type="button" class="btn-close btn-close-sm ms-1 align-middle" style="font-size:.55em" aria-label="Remove alias"
+        hx-post="{% url 'catalog:alias_delete' application.pk alias.pk %}" hx-target="#aliases" hx-swap="outerHTML" hx-confirm="Remove alias '{{ alias.alias }}'?"></button>{% endif %}
+    </span>
+  {% empty %}
+    <span class="text-body-tertiary">none</span>
+  {% endfor %}
+  {% if can_edit %}
+  <form class="d-inline-flex align-items-center gap-1 ms-1" hx-post="{% url 'catalog:alias_add' application.pk %}" hx-target="#aliases" hx-swap="outerHTML">
+    {% csrf_token %}
+    <input class="form-control form-control-sm {% if alias_form.errors %}is-invalid{% endif %}" style="width:11rem" type="text" name="alias" placeholder="Add alias" value="{{ alias_form.alias.value|default:'' }}" required>
+    <button class="btn btn-sm btn-outline-secondary" type="submit"><i class="bi bi-plus"></i></button>
+    {% if alias_form.errors %}<span class="text-danger">{{ alias_form.alias.errors|join:" " }}{{ alias_form.non_field_errors|join:" " }}</span>{% endif %}
+  </form>
+  {% endif %}
+</div>

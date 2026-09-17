@@ -33,3 +33,20 @@
     if (form) form.requestSubmit();
   });
 })();
+
+// Remember the active Bootstrap tab in the URL hash so links can deep-link to a tab.
+(function () {
+  var tabs = document.querySelectorAll('[data-bs-toggle="tab"]');
+  if (!tabs.length) return;
+  function activate(hash) {
+    if (!hash) return;
+    var btn = document.querySelector('[data-bs-toggle="tab"][data-bs-target="' + hash + '"]');
+    if (btn) bootstrap.Tab.getOrCreateInstance(btn).show();
+  }
+  activate(window.location.hash);
+  tabs.forEach(function (btn) {
+    btn.addEventListener("shown.bs.tab", function (e) {
+      history.replaceState(null, "", e.target.getAttribute("data-bs-target"));
+    });
+  });
+})();

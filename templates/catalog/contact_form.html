@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}{% if object %}{{ object.name }}{% else %}New contact{% endif %} · HealthIAM{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb">
+  <li class="breadcrumb-item"><a href="{% url 'catalog:contact_list' %}">Contacts</a></li>
+  <li class="breadcrumb-item active">{% if object %}{{ object.name }}{% else %}New{% endif %}</li>
+</ol></nav>
+<div class="row g-3">
+  <div class="col-lg-6"><div class="card"><div class="card-body">
+    <h1 class="h4">{% if object %}Edit contact{% else %}New contact{% endif %}</h1>
+    <form method="post">{% csrf_token %}
+      <input type="hidden" name="next" value="{{ next }}">
+      {% include "partials/form_fields.html" with form=form %}
+      <button class="btn btn-primary" type="submit">Save</button>
+      <a class="btn btn-link" href="{{ next|default:'/contacts/' }}">Cancel</a>
+    </form>
+  </div></div></div>
+  {% if object %}
+  <div class="col-lg-6">
+    <div class="card"><div class="card-header">Where this contact is used</div>
+      <ul class="list-group list-group-flush small">
+        {% for a in usage.business_owned %}<li class="list-group-item">Business owner of <a href="{{ a.get_absolute_url }}">{{ a.name }}</a></li>{% endfor %}
+        {% for a in usage.technically_owned %}<li class="list-group-item">Technical owner of <a href="{{ a.get_absolute_url }}">{{ a.name }}</a></li>{% endfor %}
+        {% for t in usage.support_tiers %}<li class="list-group-item">Tier {{ t.level }} ({{ t.name }}) for <a href="{{ t.application.get_absolute_url }}">{{ t.application.name }}</a></li>{% endfor %}
+        {% for l in usage.application_links %}<li class="list-group-item">{{ l.get_role_display }} for <a href="{{ l.application.get_absolute_url }}">{{ l.application.name }}</a></li>{% endfor %}
+        {% if not usage.business_owned and not usage.technically_owned and not usage.support_tiers and not usage.application_links %}<li class="list-group-item text-body-secondary">Not referenced yet.</li>{% endif %}
+      </ul></div>
+    {% if object.user %}<p class="small text-body-secondary mt-2">Linked login: <strong>{{ object.user.username }}</strong>. This person has Application Owner rights on the applications they own.</p>{% endif %}
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

@@ -62,3 +62,46 @@ class PositionFactory(factory.django.DjangoModelFactory):
 
     department = factory.SubFactory(DepartmentFactory)
     job_code = factory.SubFactory(JobCodeFactory)
+
+
+class VendorFactory(factory.django.DjangoModelFactory):
+    class Meta:
+        model = "catalog.Vendor"
+        django_get_or_create = ("name",)
+
+    name = factory.Sequence(lambda n: f"Vendor {n}")
+
+
+class ContactFactory(factory.django.DjangoModelFactory):
+    class Meta:
+        model = "catalog.Contact"
+
+    name = factory.Sequence(lambda n: f"Contact {n}")
+    email = factory.LazyAttribute(lambda o: f"{o.name.lower().replace(' ', '.')}@example.org")
+
+
+class ApplicationFactory(factory.django.DjangoModelFactory):
+    class Meta:
+        model = "catalog.Application"
+        django_get_or_create = ("name",)
+
+    name = factory.Sequence(lambda n: f"Application {n}")
+    tier = 3
+
+
+class AccessLevelFactory(factory.django.DjangoModelFactory):
+    class Meta:
+        model = "catalog.AccessLevel"
+
+    application = factory.SubFactory(ApplicationFactory)
+    name = factory.Sequence(lambda n: f"Level {n}")
+    access_model = "ad_group"
+    ad_group_name = factory.LazyAttribute(lambda o: f"APP_{o.name.upper().replace(' ', '_')}")
+
+
+def make_analyst(application, user, is_primary=False):
+    from apps.catalog.models import ApplicationAnalyst
+
+    return ApplicationAnalyst.objects.create(
+        application=application, user=user, is_primary=is_primary
+    )

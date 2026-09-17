@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}{{ vendor.name }} · HealthIAM{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb">
+  <li class="breadcrumb-item"><a href="{% url 'catalog:vendor_list' %}">Vendors</a></li>
+  <li class="breadcrumb-item active">{{ vendor.name }}</li>
+</ol></nav>
+<div class="d-flex align-items-start justify-content-between mb-3">
+  <div>
+    <h1 class="h3 mb-1">{{ vendor.name }}{% if not vendor.is_active %} <span class="badge text-bg-secondary fs-6">Inactive</span>{% endif %}</h1>
+    <div class="small text-body-secondary">
+      {% if vendor.website %}<a href="{{ vendor.website }}" target="_blank" rel="noopener">{{ vendor.website }}</a> · {% endif %}
+      {% if vendor.support_phone %}{{ vendor.support_phone }} · {% endif %}
+      {% if vendor.support_email %}<a href="mailto:{{ vendor.support_email }}">{{ vendor.support_email }}</a> · {% endif %}
+      {% if vendor.support_portal_url %}<a href="{{ vendor.support_portal_url }}" target="_blank" rel="noopener">Support portal</a>{% endif %}
+    </div>
+  </div>
+  {% if iam.can_manage_vendors %}<a class="btn btn-outline-primary" href="{% url 'catalog:vendor_update' vendor.pk %}"><i class="bi bi-pencil me-1"></i>Edit</a>{% endif %}
+</div>
+{% if vendor.notes %}<p>{{ vendor.notes|linebreaksbr }}</p>{% endif %}
+<div class="row g-3">
+  <div class="col-lg-6">
+    <div class="card"><div class="card-header">Applications</div>
+      <ul class="list-group list-group-flush">
+        {% for a in applications %}<li class="list-group-item d-flex justify-content-between"><a href="{{ a.get_absolute_url }}">{{ a.name }}</a>{% include "catalog/partials/lifecycle_badge.html" with app=a %}</li>
+        {% empty %}<li class="list-group-item text-body-secondary">None.</li>{% endfor %}
+      </ul></div>
+  </div>
+  <div class="col-lg-6">
+    <div class="card"><div class="card-header d-flex justify-content-between"><span>Contacts</span>{% if iam.can_add_contacts %}<a class="small" href="{% url 'catalog:contact_create' %}?next={{ vendor.get_absolute_url|urlencode }}">Add</a>{% endif %}</div>
+      <ul class="list-group list-group-flush small">
+        {% for c in contacts %}<li class="list-group-item"><a href="{{ c.get_absolute_url }}">{{ c.name }}</a>{% if c.title %} · {{ c.title }}{% endif %}{% if c.email %}<br><a href="mailto:{{ c.email }}">{{ c.email }}</a>{% endif %}{% if c.phone %} · {{ c.phone }}{% endif %}</li>
+        {% empty %}<li class="list-group-item text-body-secondary">None.</li>{% endfor %}
+      </ul></div>
+  </div>
+</div>
+{% endblock %}

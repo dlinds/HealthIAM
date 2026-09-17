@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}{% if object %}Edit {{ object.name }}{% else %}New application{% endif %} · HealthIAM{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb">
+  <li class="breadcrumb-item"><a href="{% url 'catalog:application_list' %}">Applications</a></li>
+  {% if object %}<li class="breadcrumb-item"><a href="{{ object.get_absolute_url }}">{{ object.name }}</a></li>{% endif %}
+  <li class="breadcrumb-item active">{% if object %}Edit{% else %}New{% endif %}</li>
+</ol></nav>
+<h1 class="h3 mb-3">{% if object %}Edit {{ object.name }}{% else %}New application{% endif %}</h1>
+<form method="post" class="w-narrow">
+  {% csrf_token %}
+  {% if form.non_field_errors %}<div class="alert alert-danger">{{ form.non_field_errors }}</div>{% endif %}
+  {% for title, fields in form.fieldsets %}
+  <div class="card mb-3">
+    <div class="card-header">{{ title }}</div>
+    <div class="card-body">
+      <div class="row g-3">
+        {% for field in fields %}
+          {% if field.field.widget.input_type == 'checkbox' %}
+          <div class="col-md-4">
+            <div class="form-check">{{ field }}<label class="form-check-label" for="{{ field.id_for_label }}">{{ field.label }}</label></div>
+          </div>
+          {% else %}
+          <div class="{% if field.name in 'description,data_description,notes,in_app_instructions' %}col-12{% else %}col-md-6{% endif %}">
+            <label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}{% if field.field.required %} <span class="text-danger">*</span>{% endif %}</label>
+            {{ field }}
+            {% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}
+            {% for e in field.errors %}<div class="invalid-feedback d-block">{{ e }}</div>{% endfor %}
+          </div>
+          {% endif %}
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+  <p class="small text-body-secondary">Need an owner who isn't listed? <a href="{% url 'catalog:contact_create' %}?next={{ request.get_full_path|urlencode }}">Create a contact</a> first.</p>
+  <button class="btn btn-primary" type="submit">Save</button>
+  <a class="btn btn-link" href="{% if object %}{{ object.get_absolute_url }}{% else %}{% url 'catalog:application_list' %}{% endif %}">Cancel</a>
+</form>
+{% endblock %}

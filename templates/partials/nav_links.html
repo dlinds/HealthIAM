@@ -1,6 +1,14 @@
 {# Primary navigation. Each app adds its links here as it is built. #}
 {% with ns=request.resolver_match.namespace url=request.resolver_match.url_name %}
+<li class="nav-item"><a class="nav-link {% if ns == 'catalog' and 'application' in url %}active{% endif %}" href="{% url 'catalog:application_list' %}">Applications</a></li>
 <li class="nav-item"><a class="nav-link {% if ns == 'orgs' and 'position' in url %}active{% endif %}" href="{% url 'orgs:position_list' %}">Positions</a></li>
 <li class="nav-item"><a class="nav-link {% if ns == 'orgs' and 'department' in url %}active{% endif %}" href="{% url 'orgs:department_list' %}">Departments</a></li>
 <li class="nav-item"><a class="nav-link {% if ns == 'orgs' and 'job_code' in url %}active{% endif %}" href="{% url 'orgs:job_code_list' %}">Job codes</a></li>
+<li class="nav-item dropdown">
+  <a class="nav-link dropdown-toggle {% if ns == 'catalog' and 'application' not in url %}active{% endif %}" href="#" role="button" data-bs-toggle="dropdown">Vendors &amp; contacts</a>
+  <ul class="dropdown-menu">
+    <li><a class="dropdown-item" href="{% url 'catalog:vendor_list' %}">Vendors</a></li>
+    <li><a class="dropdown-item" href="{% url 'catalog:contact_list' %}">Contacts</a></li>
+  </ul>
+</li>
 {% endwith %}

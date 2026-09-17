@@ -1,0 +1,63 @@
+<div class="card border-primary mb-3">
+  <form hx-post="{{ form_url }}" hx-target="#access-levels" hx-swap="outerHTML">
+    {% csrf_token %}
+    <div class="card-body">
+      <h3 class="h6 mb-3">{% if level %}Edit access level{% else %}New access level{% endif %}</h3>
+      {% if form.non_field_errors %}<div class="alert alert-danger py-2">{{ form.non_field_errors }}</div>{% endif %}
+      <div class="row g-3">
+        <div class="col-md-4">
+          <label class="form-label" for="{{ form.name.id_for_label }}">Name <span class="text-danger">*</span></label>
+          {{ form.name }}
+          {% for e in form.name.errors %}<div class="invalid-feedback d-block">{{ e }}</div>{% endfor %}
+        </div>
+        <div class="col-md-4">
+          <label class="form-label" for="{{ form.access_model.id_for_label }}">Granted via <span class="text-danger">*</span></label>
+          {{ form.access_model }}
+          {% for e in form.access_model.errors %}<div class="invalid-feedback d-block">{{ e }}</div>{% endfor %}
+        </div>
+        <div class="col-md-2">
+          <label class="form-label" for="{{ form.sort_order.id_for_label }}">Sort order</label>
+          {{ form.sort_order }}
+        </div>
+        <div class="col-md-2 d-flex align-items-end">
+          <div class="form-check">{{ form.is_active }}<label class="form-check-label" for="{{ form.is_active.id_for_label }}">Active</label></div>
+        </div>
+        <div class="col-md-6" data-access-model="ad_group">
+          <label class="form-label" for="{{ form.ad_group_name.id_for_label }}">AD group name</label>
+          {{ form.ad_group_name }}
+          {% for e in form.ad_group_name.errors %}<div class="invalid-feedback d-block">{{ e }}</div>{% endfor %}
+        </div>
+        <div class="col-md-6" data-access-model="ticket">
+          <label class="form-label" for="{{ form.ticket_assignment_team.id_for_label }}">Ticket assignment team</label>
+          {{ form.ticket_assignment_team }}
+          {% for e in form.ticket_assignment_team.errors %}<div class="invalid-feedback d-block">{{ e }}</div>{% endfor %}
+        </div>
+        <div class="col-md-12" data-access-model="in_app">
+          <label class="form-label" for="{{ form.in_app_instructions.id_for_label }}">In-app instructions</label>
+          {{ form.in_app_instructions }}
+          {% for e in form.in_app_instructions.errors %}<div class="invalid-feedback d-block">{{ e }}</div>{% endfor %}
+        </div>
+        <div class="col-md-12">
+          <label class="form-label" for="{{ form.description.id_for_label }}">Description</label>
+          {{ form.description }}
+        </div>
+      </div>
+    </div>
+    <div class="card-footer d-flex gap-2">
+      <button class="btn btn-primary btn-sm" type="submit">Save level</button>
+      <button class="btn btn-link btn-sm" type="button" onclick="document.getElementById('access-level-form-slot').innerHTML=''">Cancel</button>
+    </div>
+  </form>
+</div>
+<script>
+  (function () {
+    var select = document.getElementById("{{ form.access_model.id_for_label }}");
+    function sync() {
+      document.querySelectorAll("[data-access-model]").forEach(function (el) {
+        el.classList.toggle("d-none", el.dataset.accessModel !== select.value);
+      });
+    }
+    select.addEventListener("change", sync);
+    sync();
+  })();
+</script>

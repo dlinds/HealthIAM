@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}Applications · HealthIAM{% endblock %}
+{% block content %}
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+  <h1 class="h3 mb-0">Applications</h1>
+  {% if iam.can_create_application %}
+  <a class="btn btn-primary" href="{% url 'catalog:application_create' %}"><i class="bi bi-plus-lg me-1"></i>New application</a>
+  {% endif %}
+</div>
+<form class="row g-2 mb-3 js-autosubmit" method="get">
+  <div class="col-md-3">
+    <input class="form-control" type="search" name="q" value="{{ q }}" placeholder="Search name, alias, or vendor">
+  </div>
+  <div class="col-md-2">
+    <select class="form-select" name="status">
+      <option value="current" {% if status == 'current' %}selected{% endif %}>Not retired</option>
+      {% for value, label in lifecycles %}<option value="{{ value }}" {% if status == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+      <option value="all" {% if status == 'all' %}selected{% endif %}>All</option>
+    </select>
+  </div>
+  <div class="col-md-2">
+    <select class="form-select" name="tier">
+      <option value="">Any tier</option>
+      {% for value, label in tiers %}<option value="{{ value }}" {% if tier == value|stringformat:'s' %}selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="col-md-2">
+    <select class="form-select" name="host">
+      <option value="">Any hosting</option>
+      {% for value, label in hosts %}<option value="{{ value }}" {% if host == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="col-md-2">
+    <select class="form-select" name="vendor">
+      <option value="">Any vendor</option>
+      {% for v in vendors %}<option value="{{ v.pk }}" {% if vendor_id == v.pk|stringformat:'s' %}selected{% endif %}>{{ v.name }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="col-12 d-flex flex-wrap gap-3 small">
+    {% for field, label, checked in data_flags %}
+    <label class="form-check-label"><input class="form-check-input me-1" type="checkbox" name="{{ field }}" value="1" {% if checked %}checked{% endif %}>{{ label }}</label>
+    {% endfor %}
+    {% if iam.is_analyst or iam.is_owner %}
+    <label class="form-check-label ms-auto"><input class="form-check-input me-1" type="checkbox" name="mine" value="1" {% if mine %}checked{% endif %}>My applications</label>
+    {% endif %}
+    <noscript><button class="btn btn-sm btn-outline-secondary" type="submit">Filter</button></noscript>
+  </div>
+</form>
+<div class="table-responsive">
+<table class="table table-hover table-sm align-middle">
+  <thead><tr><th>Application</th><th>Vendor</th><th>Tier</th><th>Status</th><th>Data</th><th>Hosting</th><th class="text-end">Levels</th></tr></thead>
+  <tbody>
+  {% for a in object_list %}
+    <tr>
+      <td>
+        <a href="{{ a.get_absolute_url }}" class="fw-semibold">{{ a.name }}</a>
+        {% if a.aliases.all %}<div class="small text-body-secondary">aka {{ a.aliases.all|join:", " }}</div>{% endif %}
+      </td>
+      <td>{{ a.vendor.name|default:"—" }}</td>
+      <td><span class="badge badge-tier-{{ a.tier }}">Tier {{ a.tier }}</span></td>
+      <td>{% include "catalog/partials/lifecycle_badge.html" with app=a %}</td>
+      <td>{% for f in a.data_flags %}<span class="badge text-bg-warning-subtle border border-warning-subtle text-warning-emphasis me-1">{{ f }}</span>{% endfor %}</td>
+      <td class="small">{{ a.get_host_location_display }}</td>
+      <td class="text-end">{{ a.level_count }}</td>
+    </tr>
+  {% empty %}
+    <tr><td colspan="7" class="text-body-secondary">No applications match.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% include "partials/pagination.html" %}
+{% endblock %}
