@@ -1,10 +1,14 @@
-# Builds the container image and pushes it to GitHub Container Registry.
-# Triggered by pushing a version tag (make release VERSION=v0.2.0), or manually
-# for an existing tag. The repository can stay private: the package inherits the
-# repository's visibility, and TrueNAS pulls it with a read-only token.
-name: Publish image
+# Lints and tests every pull request, and on a version tag also builds the
+# container image and pushes it to GitHub Container Registry.
+#
+# Publishing is triggered by pushing a version tag (make release VERSION=v0.2.0)
+# or by dispatching an existing tag manually; a pull request only ever runs the
+# checks. The repository can stay private: the package inherits the repository's
+# visibility, and TrueNAS pulls it with a read-only token.
+name: CI and publish
 
 on:
+  pull_request:
   push:
     tags:
       - "v*"
@@ -15,13 +19,15 @@ on:
         required: true
         type: string
 
+# The publish job adds packages: write for itself, so pull request runs hold a
+# read-only token.
 permissions:
   contents: read
-  packages: write
 
 concurrency:
-  group: publish-image-${{ inputs.ref || github.ref }}
-  cancel-in-progress: false
+  group: ci-${{ inputs.ref || github.ref }}
+  # Superseded pull request runs are wasted work; a release run is never cancelled.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
@@ -44,7 +50,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref || github.ref }}
+          # Empty on a tag push or pull request, which checks out whatever
+          # triggered the run; set only when republishing a tag by hand.
+          ref: ${{ inputs.ref }}
 
       - name: Install uv
         run: |
@@ -70,11 +78,18 @@ jobs:
   publish:
     name: Build and push
     needs: test
+    # Never on a pull request: a PR must not be able to publish an image.
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref || github.ref }}
+          # Empty on a tag push or pull request, which checks out whatever
+          # triggered the run; set only when republishing a tag by hand.
+          ref: ${{ inputs.ref }}
 
       - name: Resolve version and image name
         id: meta

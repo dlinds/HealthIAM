@@ -56,11 +56,16 @@ That tags the current commit and pushes the tag. The workflow lints, runs the
 test suite against PostgreSQL 16, builds the image, and pushes two tags:
 `0.2.0` and `latest`. The run summary prints the exact image reference.
 
+The same workflow runs the lint and test jobs on every pull request, so a broken
+test shows up in review rather than at release time. Pull request runs stop after
+the checks: the publish job is gated on the event type and only a tag push or a
+manual dispatch can push an image.
+
 Use `latest` for nothing. Pin the version so the running release is obvious and
 rollback is a one-line edit.
 
-To rebuild an existing tag, run the workflow manually: Actions > Publish image >
-Run workflow, and enter the tag.
+To rebuild an existing tag, run the workflow manually: Actions >
+CI and publish > Run workflow, and enter the tag.
 
 ## First install
 
