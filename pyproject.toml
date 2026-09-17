@@ -1,0 +1,42 @@
+[project]
+name = "healthiam"
+version = "0.1.0"
+description = "Position-based access defaults and application catalog for healthcare IAM"
+requires-python = ">=3.11"
+dependencies = [
+  "django>=5.2,<5.3",
+  "psycopg[binary]>=3.2",
+  "mozilla-django-oidc>=4.0",
+  "django-auditlog>=3.0",
+  "django-htmx>=1.19",
+  "django-environ>=0.11",
+  "whitenoise>=6.7",
+  "gunicorn>=23",
+  "openpyxl>=3.1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8",
+  "pytest-django>=4.9",
+  "factory-boy>=3.3",
+  "ruff>=0.6",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["migrations", ".venv", "staticfiles", "static/vendor"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "DJ"]
+ignore = ["B904"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["apps", "config"]
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "config.settings.test"
+python_files = ["test_*.py"]
+testpaths = ["tests"]
+addopts = "-q"

@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Forbidden · HealthIAM{% endblock %}
+{% block content %}
+<div class="text-center mt-5">
+  <i class="bi bi-slash-circle display-5 text-danger"></i>
+  <h1 class="h4 mt-3">You don't have permission to do that</h1>
+  <p class="text-body-secondary">If you think you should, contact {{ SUPPORT_CONTACT }}.</p>
+  <a class="btn btn-outline-secondary" href="{% url 'core:dashboard' %}">Back to dashboard</a>
+</div>
+{% endblock %}

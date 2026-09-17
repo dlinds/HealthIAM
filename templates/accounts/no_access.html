@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}No access · HealthIAM{% endblock %}
+{% block content %}
+<div class="row justify-content-center mt-5">
+  <div class="col-md-6">
+    <div class="card border-warning">
+      <div class="card-body text-center">
+        <i class="bi bi-person-lock display-5 text-warning"></i>
+        <h1 class="h4 mt-3">You're signed in, but you don't have a role yet</h1>
+        <p class="text-body-secondary">
+          HealthIAM access is limited to the security/IAM team, application analysts and owners,
+          the help desk, and auditors. To request access, contact {{ SUPPORT_CONTACT }}.
+        </p>
+        <p class="small text-body-secondary mb-3">Signed in as {{ user.display_name }} ({{ user.email|default:user.username }})</p>
+        <form method="post" action="{% url 'accounts:logout' %}">{% csrf_token %}
+          <button class="btn btn-outline-secondary" type="submit">Sign out</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

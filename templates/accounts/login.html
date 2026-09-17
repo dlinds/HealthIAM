@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Sign in · HealthIAM{% endblock %}
+{% block content %}
+<div class="row justify-content-center mt-5">
+  <div class="col-md-5 col-lg-4">
+    <div class="text-center mb-4">
+      <i class="bi bi-shield-lock display-4"></i>
+      <h1 class="h3 mt-2">HealthIAM</h1>
+      <p class="text-body-secondary">Position-based access defaults and application catalog</p>
+    </div>
+    <div class="card shadow-sm">
+      <div class="card-body">
+        {% if OIDC_ENABLED %}
+        <a class="btn btn-primary w-100 mb-3" href="{% url 'oidc_authentication_init' %}{% if request.GET.next %}?next={{ request.GET.next|urlencode }}{% endif %}">
+          <i class="bi bi-microsoft me-1"></i> Sign in with Microsoft
+        </a>
+        {% endif %}
+        {% if AUTH_LOCAL_LOGIN %}
+          {% if OIDC_ENABLED %}<div class="text-center text-body-secondary small mb-2">or use a local account</div>{% endif %}
+          <form method="post">
+            {% csrf_token %}
+            <input type="hidden" name="next" value="{{ next }}">
+            {% if form.errors %}<div class="alert alert-danger py-2">Invalid username or password.</div>{% endif %}
+            <div class="mb-3">
+              <label class="form-label" for="id_username">Username</label>
+              <input class="form-control" type="text" name="username" id="id_username" autofocus required>
+            </div>
+            <div class="mb-3">
+              <label class="form-label" for="id_password">Password</label>
+              <input class="form-control" type="password" name="password" id="id_password" required>
+            </div>
+            <button class="btn btn-outline-primary w-100" type="submit">Sign in</button>
+          </form>
+        {% endif %}
+        {% if not OIDC_ENABLED and not AUTH_LOCAL_LOGIN %}
+          <div class="alert alert-warning mb-0">No sign-in method is configured. Set ENTRA_TENANT_ID or AUTH_LOCAL_LOGIN.</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

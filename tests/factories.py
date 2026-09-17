@@ -1,0 +1,38 @@
+import factory
+from django.contrib.auth.models import Group
+
+from apps.accounts import roles
+from apps.accounts.models import User
+
+
+class UserFactory(factory.django.DjangoModelFactory):
+    class Meta:
+        model = User
+        django_get_or_create = ("username",)
+        skip_postgeneration_save = True
+
+    username = factory.Sequence(lambda n: f"user{n}")
+    email = factory.LazyAttribute(lambda o: f"{o.username}@example.org")
+    first_name = factory.Faker("first_name")
+    last_name = factory.Faker("last_name")
+    password = factory.django.Password("pass1234")
+
+    @factory.post_generation
+    def groups(self, create, extracted, **kwargs):
+        if not create or not extracted:
+            return
+        for name in extracted:
+            group, _ = Group.objects.get_or_create(name=name)
+            self.groups.add(group)
+
+
+def make_admin(**kwargs):
+    return UserFactory(groups=[roles.ADMIN], **kwargs)
+
+
+def make_help_desk(**kwargs):
+    return UserFactory(groups=[roles.HELP_DESK], **kwargs)
+
+
+def make_auditor(**kwargs):
+    return UserFactory(groups=[roles.AUDITOR], **kwargs)

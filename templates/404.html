@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Not found · HealthIAM{% endblock %}
+{% block content %}
+<div class="text-center mt-5">
+  <i class="bi bi-question-circle display-5 text-body-tertiary"></i>
+  <h1 class="h4 mt-3">Page not found</h1>
+  <a class="btn btn-outline-secondary" href="{% url 'core:dashboard' %}">Back to dashboard</a>
+</div>
+{% endblock %}

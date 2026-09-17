@@ -1,0 +1,28 @@
+/* HealthIAM application styles (Bootstrap 5 overrides and small utilities). */
+:root {
+  --iam-brand: #0d6efd;
+}
+body {
+  min-height: 100vh;
+}
+.form-control, .form-select {
+  max-width: 100%;
+}
+.table-sm td, .table-sm th {
+  vertical-align: middle;
+}
+.badge-tier-1 { background-color: #dc3545; }
+.badge-tier-2 { background-color: #fd7e14; }
+.badge-tier-3 { background-color: #0d6efd; }
+.badge-tier-4 { background-color: #6c757d; }
+.htmx-indicator { opacity: 0; transition: opacity 200ms ease-in; }
+.htmx-request .htmx-indicator, .htmx-request.htmx-indicator { opacity: 1; }
+.search-results {
+  position: absolute;
+  z-index: 1050;
+  min-width: 24rem;
+  max-height: 24rem;
+  overflow-y: auto;
+}
+.text-mono { font-family: var(--bs-font-monospace); }
+.w-narrow { max-width: 48rem; }

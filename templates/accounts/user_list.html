@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Users & roles · HealthIAM{% endblock %}
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h1 class="h3 mb-0">Users &amp; roles</h1>
+</div>
+<form class="row g-2 mb-3" method="get">
+  <div class="col-md-4">
+    <input class="form-control" type="search" name="q" value="{{ q }}" placeholder="Search name, username, email">
+  </div>
+  <div class="col-auto"><button class="btn btn-outline-secondary" type="submit">Search</button></div>
+</form>
+<div class="table-responsive">
+<table class="table table-hover align-middle">
+  <thead><tr><th>User</th><th>Email</th><th>Roles</th><th>Status</th><th></th></tr></thead>
+  <tbody>
+  {% for u in object_list %}
+    <tr>
+      <td>{{ u.display_name }}<div class="small text-body-secondary">{{ u.username }}</div></td>
+      <td>{{ u.email }}</td>
+      <td>{% for l in u.labels %}<span class="badge text-bg-secondary me-1">{{ l }}</span>{% empty %}<span class="text-body-tertiary">none</span>{% endfor %}</td>
+      <td>{% if u.is_active %}<span class="badge text-bg-success">Active</span>{% else %}<span class="badge text-bg-secondary">Inactive</span>{% endif %}</td>
+      <td class="text-end"><a class="btn btn-sm btn-outline-primary" href="{% url 'accounts:user_roles' u.pk %}">Edit roles</a></td>
+    </tr>
+  {% empty %}
+    <tr><td colspan="5" class="text-body-secondary">No users found.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% include "partials/pagination.html" %}
+<p class="small text-body-secondary mt-3">
+  Users are created on first SSO sign-in. Roles mapped from Entra groups are re-applied at each sign-in;
+  roles assigned here stay until changed here.
+</p>
+{% endblock %}

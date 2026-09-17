@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Roles for {{ subject.display_name }} · HealthIAM{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb">
+  <li class="breadcrumb-item"><a href="{% url 'accounts:user_list' %}">Users &amp; roles</a></li>
+  <li class="breadcrumb-item active">{{ subject.display_name }}</li>
+</ol></nav>
+<div class="row">
+  <div class="col-lg-6">
+    <div class="card">
+      <div class="card-body">
+        <h1 class="h4">{{ subject.display_name }}</h1>
+        <p class="text-body-secondary">{{ subject.email }} · {{ subject.username }}</p>
+        <p>Current: {% for l in labels %}<span class="badge text-bg-secondary me-1">{{ l }}</span>{% empty %}<span class="text-body-tertiary">no role</span>{% endfor %}</p>
+        <form method="post">
+          {% csrf_token %}
+          {% include "partials/form_fields.html" with form=form %}
+          <button class="btn btn-primary" type="submit">Save</button>
+          <a class="btn btn-link" href="{% url 'accounts:user_list' %}">Cancel</a>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
