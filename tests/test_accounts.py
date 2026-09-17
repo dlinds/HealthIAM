@@ -56,6 +56,9 @@ def test_permission_matrix(admin_user, help_desk_user, auditor_user, plain_user)
     assert p.can_export(help_desk_user)
     assert not p.has_any_role(plain_user)
     assert not p.can_manage_roles(auditor_user)
+    assert p.can_manage_directory(admin_user)
+    assert not p.can_manage_directory(help_desk_user)
+    assert not p.can_manage_directory(auditor_user)
 
 
 def test_inactive_user_has_no_role(admin_user):

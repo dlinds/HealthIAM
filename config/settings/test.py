@@ -16,3 +16,17 @@ WHITENOISE_AUTOREFRESH = True
 ENTRA_GROUP_ROLE_MAP = {}
 
 MEDIA_ROOT = tempfile.mkdtemp(prefix="healthiam-test-media-")
+
+# Active Directory is "configured" with unreachable dummy values so the directory URLs, nav
+# entries and checks are exercised; tests replace the LDAP client with a fake directory.
+AD_SERVER_URIS = ["ldaps://dc.test.invalid"]
+AD_BASE_DN = "DC=test,DC=invalid"
+AD_ENABLED = True
+AD_BIND_DN = "CN=svc-healthiam,OU=Service Accounts,DC=test,DC=invalid"
+AD_BIND_PASSWORD = "test-secret-not-real"  # grep target for secret-leak tests
+AD_CA_BUNDLE = ""
+AD_TIMEOUT = 10
+AD_USER_GROUP = "IAM-Users"
+AD_BASELINE_ROLE = "Help Desk"
+AD_GROUPS_SEARCH_BASES = ["OU=Groups,DC=test,DC=invalid"]
+AD_GROUPS_NAME_PATTERNS = ["APP_*", "LIC_*"]

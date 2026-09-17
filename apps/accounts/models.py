@@ -15,6 +15,23 @@ class User(AbstractUser):
     )
     job_title = models.CharField(max_length=150, blank=True)
     department_name = models.CharField(max_length=150, blank=True)
+    # Filled by the Active Directory sync (apps.directory). ad_managed marks logins whose
+    # active state and baseline role follow AD; it is never cleared by the sync.
+    ad_object_guid = models.UUIDField(
+        "AD objectGUID",
+        null=True,
+        blank=True,
+        unique=True,
+        help_text="objectGUID of the account in on-prem Active Directory; set by the AD sync.",
+    )
+    ad_sam_account_name = models.CharField("AD account name", max_length=256, blank=True)
+    ad_distinguished_name = models.CharField("AD distinguished name", max_length=1024, blank=True)
+    ad_synced_at = models.DateTimeField("Last AD sync", null=True, blank=True)
+    ad_managed = models.BooleanField(
+        "Managed by AD",
+        default=False,
+        help_text="Created or linked by the AD sync: IAM-Users membership controls the account.",
+    )
 
     class Meta:
         ordering = ["username"]

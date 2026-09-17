@@ -17,6 +17,16 @@ env = environ.Env(
     OIDC_RP_CLIENT_SECRET=(str, ""),
     ENTRA_GROUP_ROLE_MAP=(dict, {}),
     SUPPORT_CONTACT=(str, "the Information Security team"),
+    AD_SERVER_URIS=(list, []),
+    AD_BASE_DN=(str, ""),
+    AD_BIND_DN=(str, ""),
+    AD_BIND_PASSWORD=(str, ""),
+    AD_CA_BUNDLE=(str, ""),
+    AD_TIMEOUT=(int, 10),
+    AD_USER_GROUP=(str, "IAM-Users"),
+    AD_BASELINE_ROLE=(str, "Help Desk"),
+    AD_GROUPS_SEARCH_BASES=(str, ""),
+    AD_GROUPS_NAME_PATTERNS=(list, []),
 )
 environ.Env.read_env(BASE_DIR / ".env")
 
@@ -41,6 +51,7 @@ INSTALLED_APPS = [
     "apps.orgs",
     "apps.catalog",
     "apps.access",
+    "apps.directory",
 ]
 
 MIDDLEWARE = [
@@ -121,6 +132,23 @@ if OIDC_ENABLED:
     OIDC_STORE_ACCESS_TOKEN = False
     OIDC_AUTHENTICATION_CALLBACK_URL = "oidc_authentication_callback"
 
+# --- Active Directory (LDAPS) -----------------------------------------------------
+# Read-only directory sync: IAM-Users members become logins, and the AD group list feeds
+# the catalog. Leave AD_SERVER_URIS empty to disable the integration entirely.
+AD_SERVER_URIS = env("AD_SERVER_URIS")
+AD_BASE_DN = env("AD_BASE_DN")
+AD_ENABLED = bool(AD_SERVER_URIS and AD_BASE_DN)
+AD_BIND_DN = env("AD_BIND_DN")
+AD_BIND_PASSWORD = env("AD_BIND_PASSWORD")
+AD_CA_BUNDLE = env("AD_CA_BUNDLE")
+AD_TIMEOUT = env("AD_TIMEOUT")
+AD_USER_GROUP = env("AD_USER_GROUP")
+AD_BASELINE_ROLE = env("AD_BASELINE_ROLE")
+# Semicolon-separated because distinguished names contain commas. Empty = the base DN.
+AD_GROUPS_SEARCH_BASES = [b.strip() for b in env("AD_GROUPS_SEARCH_BASES").split(";") if b.strip()]
+# fnmatch globs matched case-insensitively against the group name. Empty = every group.
+AD_GROUPS_NAME_PATTERNS = env("AD_GROUPS_NAME_PATTERNS")
+
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
     {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
@@ -176,5 +204,6 @@ LOGGING = {
     "loggers": {
         "django.request": {"level": "WARNING"},
         "mozilla_django_oidc": {"level": "INFO"},
+        "apps.directory": {"level": "INFO"},
     },
 }
