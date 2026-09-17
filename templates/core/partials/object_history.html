@@ -1,5 +1,5 @@
 {% load ui %}
-<div class="card" id="object-history">
+<div class="card" id="object-history" hx-get="{{ history_url }}" hx-trigger="historyChanged from:body" hx-swap="outerHTML">
   <div class="card-header d-flex justify-content-between"><span>History</span>{% if iam.can_view_history %}<a class="small" href="{% url 'core:history_list' %}?q={{ target|urlencode }}">Full history</a>{% endif %}</div>
   <ul class="list-group list-group-flush small">
     {% for e in entries %}

@@ -2,7 +2,7 @@ from django.core.exceptions import PermissionDenied, ValidationError
 from django.db.models import Count, Q
 from django.shortcuts import get_object_or_404, render
 from django.views.decorators.http import require_POST
-from django_htmx.http import reswap, retarget
+from django_htmx.http import reswap, retarget, trigger_client_event
 
 from apps.accounts import permissions as perms
 from apps.accounts.mixins import role_required
@@ -66,13 +66,15 @@ def application_positions_context(request, application):
 def _section(request, position, **extra):
     ctx = position_defaults_context(request, position)
     ctx.update(extra)
-    return render(request, "access/partials/position_defaults.html", ctx)
+    resp = render(request, "access/partials/position_defaults.html", ctx)
+    return trigger_client_event(resp, "historyChanged")
 
 
 def _app_section(request, application, **extra):
     ctx = application_positions_context(request, application)
     ctx.update(extra)
-    return render(request, "access/partials/application_positions.html", ctx)
+    resp = render(request, "access/partials/application_positions.html", ctx)
+    return trigger_client_event(resp, "historyChanged")
 
 
 def _error_list(exc: ValidationError) -> list[str]:

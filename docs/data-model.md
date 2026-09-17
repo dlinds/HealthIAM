@@ -1,0 +1,137 @@
+# Data model
+
+HealthIAM stores two things: the **application catalog** (source of truth for what each
+system is, who owns it, and how access is granted) and the **position access defaults**
+(which access levels each department–job-code position receives by default).
+
+Nothing is hard-deleted. Departments, job codes, positions, applications, access levels,
+vendors and contacts carry an `is_active` flag; foreign keys use `PROTECT`; every change is
+written to the audit log (django-auditlog) with actor, timestamp and before/after values.
+
+## Organization (`apps/orgs`)
+
+### Department
+| Field | Notes |
+|---|---|
+| `code` | Exactly four digits, unique. |
+| `name` | Display name. |
+| `is_active`, `inactivated_at` | Inactive departments are hidden from pickers. |
+| `source` | `hr` (came from an import) or `manual`. Imports never touch manual records. |
+| `notes` | Free text. |
+
+### JobCode
+Same shape as Department with `title` instead of `name`.
+
+### Position
+A department + job code pair. The unit that receives default access.
+
+| Field | Notes |
+|---|---|
+| `department`, `job_code` | Foreign keys; the pair is unique. |
+| `code` | Denormalized `DDDD-JJJJ`, unique, maintained on save. |
+| `title_override` | Optional friendlier name; otherwise `"<department> – <job title>"`. |
+| `description`, `notes` | Free text. |
+| `is_active`, `inactivated_at`, `source` | As above. Inactive positions keep their defaults and history. |
+
+### ImportBatch
+One uploaded HR file: `kind` (departments / job_codes / positions), `file`, `status`
+(pending → previewed → completed / failed), `deactivate_missing`, `summary` and per-row `log`.
+See `docs/import-format.md`.
+
+## Catalog (`apps/catalog`)
+
+### Vendor
+`name` (unique), `website`, `support_phone`, `support_email`, `support_portal_url`, `notes`, `is_active`.
+
+### Contact
+A person or team that can be named as owner, support tier or vendor contact.
+
+| Field | Notes |
+|---|---|
+| `name`, `title`, `team`, `email`, `phone` | |
+| `vendor` | Set for vendor-side contacts; empty for internal staff. |
+| `user` | Optional link to a login. A linked user gets **Application Owner** rights on every application where the contact is business or technical owner. |
+| `notes`, `is_active` | |
+
+### Application
+| Group | Fields |
+|---|---|
+| Identity | `name` (unique), `description`, `vendor`, `website`, `admin_url`, aliases (separate table) |
+| Classification | `tier` 1–4 (1 = mission critical), `lifecycle_status` pilot / active / retiring / retired, `go_live_date`, `sunset_date` |
+| Data sensitivity | `holds_phi`, `holds_pii`, `holds_clinical_records`, `holds_pci`, `holds_employee_data`, `holds_research_data`, `data_description` |
+| Hosting | `host_location` onsite / colo / aws / azure / gcp / vendor_hosted / hybrid / other, `host_details` |
+| Security | `auth_method` sso_saml / sso_oidc / ad_ldap / local / none / other, `mfa_enforced` (yes / no / unknown) |
+| Operations | `rto_hours`, `maintenance_window`, `dr_status` none / planned / tested / na, `contract_renewal_date`, `cost_center` |
+| People | `business_owner`, `technical_owner` (contacts), analysts (through `ApplicationAnalyst`, one may be primary) |
+| Other | `notes`, `created_by`, timestamps |
+
+Retired applications cannot be added as defaults; existing defaults are kept for history.
+
+### ApplicationAlias
+`alias`, unique per application (case-insensitive). Global search and the application
+list search match aliases.
+
+### AccessLevel
+A grantable unit of access within an application. Position defaults point at levels, never
+at applications directly.
+
+| Field | Notes |
+|---|---|
+| `name` | Unique per application. |
+| `description` | |
+| `access_model` | `ad_group`, `in_app`, `ticket`, `other`. |
+| `ad_group_name` | Required for `ad_group`. |
+| `in_app_instructions` | Required for `in_app`. |
+| `ticket_assignment_team` | Required for `ticket`. |
+| `is_active`, `sort_order` | Inactive levels stay on existing defaults but cannot be added. |
+
+### SupportTier
+Ordered escalation: `level` (1 = first line, unique per application), `name` (team),
+optional `contact`, `phone`, `email`, `hours`, `notes`.
+
+### ApplicationContact
+Extra contacts on an application: `contact`, `role` (vendor_support, vendor_account_manager,
+vendor_technical, internal_sme, other), `notes`.
+
+## Access defaults (`apps/access`)
+
+### PositionDefault
+| Field | Notes |
+|---|---|
+| `position`, `access_level` | Unique pair. |
+| `notes` | Short note shown on the position page. |
+| `created_by`, timestamps | |
+
+All writes go through `apps/access/services.py` (`add_default`, `remove_default`,
+`copy_defaults`), which require a **reason**, enforce analyst scope, and store the reason
+plus position / application / level context on the audit entry.
+
+## Accounts and roles (`apps/accounts`)
+
+`User` extends Django's user with `entra_object_id`, `job_title`, `department_name`.
+
+| Role | How it is granted | Can |
+|---|---|---|
+| Admin | Group `Admin` (security / IAM team) or superuser | Everything: positions, departments, job codes, imports, applications, levels, analysts, defaults, vendors, contacts, user roles, Django admin |
+| Analyst | Assigned on an application | Edit that application, its access levels, and add/remove its levels on any position |
+| Application Owner | Contact linked to the user is business or technical owner | Edit that application's descriptive, contact and support fields |
+| Help Desk | Group `Help Desk` | Read everything, use search and reports |
+| Auditor | Group `Auditor` | Read everything plus the global change history and exports |
+
+All authorization decisions live in `apps/accounts/permissions.py`.
+
+## Audit log
+
+django-auditlog records create / update / delete for every model above. Entries carry
+`additional_data` with `reason` (for defaults), `application_id` (for application children)
+and `position_id` (for defaults) so the History tab on an application or position shows
+related changes, including deletions.
+
+## Future hooks
+
+- **Employees**: an `Employee` model with a foreign key to `Position` lets the help desk
+  answer "what should this person have?" without touching defaults.
+- **Exceptions / requests**: a model linking a person to an `AccessLevel` with an approval
+  trail sits beside `PositionDefault`.
+- **HR feed**: the `import_hr` management command already performs the same import as the
+  upload page; schedule it once the feed exists.

@@ -7,8 +7,8 @@ class AccessConfig(AppConfig):
     verbose_name = "Position access defaults"
 
     def ready(self):
-        from auditlog.registry import auditlog
+        from apps.core.auditing import register_for_audit
 
         from . import models
 
-        auditlog.register(models.PositionDefault)
+        register_for_audit(models.PositionDefault)

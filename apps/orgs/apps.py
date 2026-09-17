@@ -7,10 +7,8 @@ class OrgsConfig(AppConfig):
     verbose_name = "Departments, job codes & positions"
 
     def ready(self):
-        from auditlog.registry import auditlog
+        from apps.core.auditing import register_for_audit
 
         from . import models
 
-        auditlog.register(models.Department)
-        auditlog.register(models.JobCode)
-        auditlog.register(models.Position)
+        register_for_audit(models.Department, models.JobCode, models.Position)

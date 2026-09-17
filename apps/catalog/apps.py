@@ -7,11 +7,11 @@ class CatalogConfig(AppConfig):
     verbose_name = "Application catalog"
 
     def ready(self):
-        from auditlog.registry import auditlog
+        from apps.core.auditing import register_for_audit
 
         from . import models
 
-        for model in (
+        register_for_audit(
             models.Vendor,
             models.Contact,
             models.Application,
@@ -20,5 +20,4 @@ class CatalogConfig(AppConfig):
             models.AccessLevel,
             models.SupportTier,
             models.ApplicationContact,
-        ):
-            auditlog.register(model)
+        )

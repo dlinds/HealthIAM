@@ -175,5 +175,11 @@ def object_history(request, app_label, model, pk):
     return render(
         request,
         "core/partials/object_history.html",
-        {"entries": entries, "action_labels": audit.ACTION_LABELS, "target": obj},
+        {
+            "entries": entries,
+            "action_labels": audit.ACTION_LABELS,
+            "target": obj,
+            "history_url": audit.object_history_url(obj, limit),
+            "limit": limit,
+        },
     )

@@ -7,7 +7,7 @@
       {% if form.access_level.errors %}<div class="alert alert-danger py-2">Pick an access level.</div>{% endif %}
       <label class="form-label small" for="level-search">Application</label>
       <input class="form-control form-control-sm mb-2" id="level-search" type="search" name="q" value="{{ q }}" placeholder="Type to search applications you manage…" autocomplete="off"
-        hx-get="{% url 'access:default_add' position.pk %}" hx-trigger="load, keyup changed delay:250ms" hx-target="#level-picker" hx-swap="innerHTML">
+        hx-get="{% url 'access:default_add' position.pk %}" hx-trigger="load, input changed delay:250ms" hx-target="#level-picker" hx-swap="innerHTML">
       <div id="level-picker" class="border rounded p-2 mb-3" style="max-height:18rem; overflow-y:auto"></div>
       <div class="row g-2">
         <div class="col-md-7">

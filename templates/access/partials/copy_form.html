@@ -8,7 +8,7 @@
       {% if form.source.errors %}<div class="alert alert-danger py-2">Pick a source position.</div>{% endif %}
       <label class="form-label small" for="source-search">Source position</label>
       <input class="form-control form-control-sm mb-2" id="source-search" type="search" name="q" value="{{ q }}" placeholder="Search by code, department, or job title…" autocomplete="off"
-        hx-get="{% url 'access:default_copy' position.pk %}" hx-trigger="load, keyup changed delay:250ms" hx-target="#source-picker" hx-swap="innerHTML">
+        hx-get="{% url 'access:default_copy' position.pk %}" hx-trigger="load, input changed delay:250ms" hx-target="#source-picker" hx-swap="innerHTML">
       <div id="source-picker" class="border rounded p-2 mb-3" style="max-height:14rem; overflow-y:auto"></div>
       <label class="form-label small" for="{{ form.reason.id_for_label }}">Reason <span class="text-danger">*</span></label>
       {{ form.reason }}

@@ -6,7 +6,7 @@ from django.urls import reverse
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_POST
 from django.views.generic import CreateView, DetailView, ListView, UpdateView
-from django_htmx.http import reswap, retarget
+from django_htmx.http import reswap, retarget, trigger_client_event
 
 from apps.accounts import permissions as perms
 from apps.accounts.mixins import PermissionCheckMixin, role_required
@@ -178,7 +178,10 @@ def _app_for(request, pk, check):
 def _section(request, application, template, **extra):
     ctx = _detail_context(request, application)
     ctx.update(extra)
-    return render(request, template, ctx)
+    resp = render(request, template, ctx)
+    if request.method == "POST":
+        resp = trigger_client_event(resp, "historyChanged")
+    return resp
 
 
 def _form_error_response(request, application, template, slot, **extra):

@@ -15,5 +15,7 @@ def object_history(context, obj, limit=15):
         "entries": entries,
         "action_labels": audit.ACTION_LABELS,
         "target": obj,
+        "history_url": audit.object_history_url(obj, limit),
+        "limit": limit,
         "request": context["request"],
     }

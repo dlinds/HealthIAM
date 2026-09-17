@@ -25,6 +25,13 @@ def audited_models():
     return [(cts[m], m._meta.verbose_name.title()) for m in models]
 
 
+def object_history_url(obj, limit=15) -> str:
+    from django.urls import reverse
+
+    url = reverse("core:object_history", args=[obj._meta.app_label, obj._meta.model_name, obj.pk])
+    return f"{url}?limit={limit}"
+
+
 def base_queryset():
     return LogEntry.objects.select_related("actor", "content_type").order_by("-timestamp", "-pk")
 
@@ -41,8 +48,15 @@ def entries_for_object(obj):
     return base_queryset().filter(cond)
 
 
+EMPTY = {"", "None", "[]", "{}"}
+
+
 def describe_changes(entry: LogEntry) -> list[tuple[str, str, str]]:
-    """[(field, old, new)] with human labels where possible."""
+    """[(field, old, new)] with human labels. Creates list only the values that were
+    set; deletes list nothing (the object repr says what went away); updates show
+    old -> new."""
+    if entry.action == LogEntry.Action.DELETE:
+        return []
     try:
         display = entry.changes_display_dict
     except Exception:  # noqa: BLE001 - model may have been removed
@@ -50,9 +64,14 @@ def describe_changes(entry: LogEntry) -> list[tuple[str, str, str]]:
     out = []
     for field, values in (display or {}).items():
         if isinstance(values, list | tuple) and len(values) == 2:
-            out.append((field, str(values[0]), str(values[1])))
+            old, new = str(values[0]), str(values[1])
         else:
-            out.append((field, "", str(values)))
+            old, new = "", str(values)
+        if entry.action == LogEntry.Action.CREATE and new in EMPTY:
+            continue
+        if old in EMPTY:
+            old = ""
+        out.append((field, old, new))
     return out
 
 

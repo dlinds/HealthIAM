@@ -18,7 +18,7 @@
           <div class="col-md-8">
             <label class="form-label small" for="app-pos-search">Position</label>
             <input class="form-control form-control-sm mb-1" id="app-pos-search" type="search" name="q" placeholder="Search by code, department, or job title…" autocomplete="off"
-              hx-get="{% url 'access:application_default_add' application.pk %}" hx-trigger="keyup changed delay:250ms, focus once" hx-target="#app-pos-picker" hx-swap="innerHTML">
+              hx-get="{% url 'access:application_default_add' application.pk %}" hx-trigger="input changed delay:250ms, focus once" hx-target="#app-pos-picker" hx-swap="innerHTML">
             <div id="app-pos-picker" class="border rounded p-2" style="max-height:10rem; overflow-y:auto"><span class="small text-body-tertiary">Start typing to find a position.</span></div>
           </div>
           <div class="col-md-8">
