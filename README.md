@@ -103,6 +103,9 @@ tests/           pytest suite with factories
 
 ## Deployment notes
 
+- **TrueNAS 25.10**: see `docs/deploy-truenas.md`. Pushing a version tag
+  (`make release VERSION=v0.2.0`) builds the image and pushes it to GHCR; the NAS
+  pulls a pinned tag, so the repository can stay private.
 - `Dockerfile` runs `collectstatic` (whitenoise) and starts gunicorn; the entrypoint
   applies migrations and creates the role groups.
 - `config/settings/prod.py` enforces secure cookies, HSTS and requires `SECRET_KEY` and at

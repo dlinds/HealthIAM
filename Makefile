@@ -2,7 +2,7 @@ VENV ?= .venv
 PY := $(VENV)/bin/python
 RUFF := $(VENV)/bin/ruff
 
-.PHONY: install run migrate makemigrations seed roles test lint fmt up down logs shell
+.PHONY: install run migrate makemigrations seed roles test lint fmt up down logs shell release
 
 install:
 	uv venv $(VENV) --python 3.11 || python3 -m venv $(VENV)
@@ -45,3 +45,13 @@ logs:
 
 shell:
 	$(PY) manage.py shell
+
+# Tag and push a release; GitHub Actions builds and pushes the image to GHCR.
+# Usage: make release VERSION=v0.2.0
+release:
+	@echo "$(VERSION)" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$$' || \
+		{ echo "usage: make release VERSION=v1.2.3"; exit 1; }
+	@test -z "$$(git status --porcelain)" || { echo "working tree is dirty"; exit 1; }
+	git tag -a $(VERSION) -m "HealthIAM $(VERSION)"
+	git push origin $(VERSION)
+	@echo "Pushed $(VERSION). Watch Actions, then set the TrueNAS app image tag to $(VERSION:v%=%)."
