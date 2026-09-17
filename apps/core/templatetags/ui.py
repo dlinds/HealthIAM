@@ -33,3 +33,11 @@ def bool_label(value):
     if value is False:
         return "No"
     return "Unknown"
+
+
+@register.filter
+def dict_get(mapping, key):
+    try:
+        return mapping.get(key, "")
+    except AttributeError:
+        return ""

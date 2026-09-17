@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% load ui %}
+{% block title %}History · HealthIAM{% endblock %}
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h1 class="h3 mb-0">Change history</h1>
+  <a class="btn btn-outline-primary btn-sm" href="?{% query_replace export='csv' page=None %}"><i class="bi bi-filetype-csv me-1"></i>Export CSV (filtered)</a>
+</div>
+<form class="row g-2 mb-3 js-autosubmit" method="get">
+  <div class="col-md-3"><input class="form-control form-control-sm" type="search" name="q" value="{{ filters.q }}" placeholder="Object, reason, application, position"></div>
+  <div class="col-md-2"><select class="form-select form-select-sm" name="model"><option value="">Any type</option>{% for ct, label in models %}<option value="{{ ct.pk }}" {% if filters.model == ct.pk|stringformat:'s' %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
+  <div class="col-md-2"><select class="form-select form-select-sm" name="action"><option value="">Any action</option>{% for value, label in actions %}<option value="{{ value }}" {% if filters.action == value|stringformat:'s' %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
+  <div class="col-md-2"><select class="form-select form-select-sm" name="actor"><option value="">Anyone</option>{% for u in actors %}<option value="{{ u.pk }}" {% if filters.actor == u.pk|stringformat:'s' %}selected{% endif %}>{{ u.display_name }}</option>{% endfor %}</select></div>
+  <div class="col-md-3 d-flex gap-1"><input class="form-control form-control-sm" type="date" name="from" value="{{ filters.from }}" title="From"><input class="form-control form-control-sm" type="date" name="to" value="{{ filters.to }}" title="To"></div>
+</form>
+<div class="table-responsive">
+<table class="table table-sm align-middle">
+  <thead><tr><th>When</th><th>Who</th><th>Action</th><th>What</th><th>Changes</th><th>Reason</th></tr></thead>
+  <tbody>
+  {% for e in object_list %}
+  <tr>
+    <td class="text-nowrap small">{{ e.timestamp|date:"Y-m-d H:i:s" }}</td>
+    <td class="small">{{ e.actor.display_name|default:"system" }}</td>
+    <td><span class="badge {% if e.action == 0 %}text-bg-success{% elif e.action == 2 %}text-bg-danger{% else %}text-bg-info{% endif %}">{{ action_labels|dict_get:e.action }}</span></td>
+    <td class="small"><span class="text-body-secondary">{{ e.content_type.name }}</span><br>{{ e.object_repr|truncatechars:80 }}</td>
+    <td class="small">
+      {% for field, old, new in e.change_rows %}
+        <div><span class="text-body-secondary">{{ field }}:</span> {% if old and old != 'None' %}<s class="text-body-tertiary">{{ old|truncatechars:40 }}</s> → {% endif %}{{ new|truncatechars:60 }}</div>
+      {% endfor %}
+    </td>
+    <td class="small">{{ e.reason }}</td>
+  </tr>
+  {% empty %}<tr><td colspan="6" class="text-body-secondary">No entries match.</td></tr>{% endfor %}
+  </tbody>
+</table>
+</div>
+{% include "partials/pagination.html" %}
+{% endblock %}

@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block title %}Search · HealthIAM{% endblock %}
+{% block content %}
+<h1 class="h3 mb-3">Search</h1>
+<form class="mb-3" method="get"><div class="input-group w-narrow"><input class="form-control" type="search" name="q" value="{{ q }}" placeholder="Application, alias, position code, department, job title, vendor" autofocus><button class="btn btn-primary" type="submit">Search</button></div></form>
+<div class="w-narrow">{% include "core/partials/search_results.html" with full=True %}</div>
+{% endblock %}

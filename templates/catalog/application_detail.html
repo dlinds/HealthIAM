@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% load ui access_tags %}
+{% load ui access_tags history_tags %}
 {% block title %}{{ application.name }} · HealthIAM{% endblock %}
 {% block content %}
 <nav aria-label="breadcrumb"><ol class="breadcrumb">
@@ -29,13 +29,13 @@
   <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-levels" type="button">Access levels <span class="badge text-bg-secondary">{{ levels|length }}</span></button></li>
   <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-positions" type="button">Positions{% if position_count is not None %} <span class="badge text-bg-secondary">{{ position_count }}</span>{% endif %}</button></li>
   <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-support" type="button">Contacts &amp; support</button></li>
-  {% if iam.can_view_history %}<li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-history" type="button">History</button></li>{% endif %}
+  <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-history" type="button">History</button></li>
 </ul>
 <div class="tab-content pt-3">
   <div class="tab-pane fade show active" id="tab-overview">{% include "catalog/partials/overview.html" %}</div>
   <div class="tab-pane fade" id="tab-levels">{% include "catalog/partials/access_levels.html" %}</div>
   <div class="tab-pane fade" id="tab-positions">{% application_positions application %}</div>
   <div class="tab-pane fade" id="tab-support">{% include "catalog/partials/support.html" %}</div>
-  {% if iam.can_view_history %}<div class="tab-pane fade" id="tab-history">{% block application_history %}{% endblock %}</div>{% endif %}
+  <div class="tab-pane fade" id="tab-history">{% object_history application 40 %}</div>
 </div>
 {% endblock %}

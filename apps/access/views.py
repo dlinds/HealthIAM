@@ -292,3 +292,66 @@ def application_default_add(request, pk):
         "access/partials/position_picker.html",
         {"results": results, "q": q, "field": "position"},
     )
+
+
+# --- Reports ------------------------------------------------------------------------
+
+
+@role_required("can_export")
+def reports_index(request):
+    from apps.orgs.models import Department
+
+    from . import reports
+
+    g = request.GET
+    if g.get("report") == "matrix":
+        dept_ids = [d for d in g.getlist("departments") if d]
+        departments = Department.objects.filter(pk__in=dept_ids) if dept_ids else None
+        include_inactive = bool(g.get("include_inactive"))
+        rows = reports.position_matrix_rows(departments, include_inactive)
+        suffix = "-".join(d.code for d in departments) if departments else "all"
+        name = f"position-access-matrix-{suffix}"
+        if g.get("format") == "xlsx":
+            return reports.xlsx_response(
+                reports.MATRIX_COLUMNS, rows, f"{name}.xlsx", "Position access"
+            )
+        return reports.csv_response(reports.MATRIX_COLUMNS, rows, f"{name}.csv")
+    return render(
+        request,
+        "access/reports/index.html",
+        {
+            "departments": Department.objects.filter(is_active=True).order_by("code"),
+            "applications": Application.objects.exclude(
+                lifecycle_status=Application.Lifecycle.RETIRED
+            ).order_by("name"),
+        },
+    )
+
+
+@role_required("can_export")
+def who_gets_report(request, pk):
+    from . import reports
+
+    application = get_object_or_404(Application, pk=pk)
+    if request.GET.get("format") in ("csv", "xlsx"):
+        rows = reports.who_gets_rows(application)
+        slug = "".join(c if c.isalnum() else "-" for c in application.name.lower())
+        if request.GET["format"] == "xlsx":
+            return reports.xlsx_response(
+                reports.WHO_GETS_COLUMNS, rows, f"who-gets-{slug}.xlsx", "Who gets it"
+            )
+        return reports.csv_response(reports.WHO_GETS_COLUMNS, rows, f"who-gets-{slug}.csv")
+    grouped = reports.who_gets(application)
+    total = sum(len(v) for v in grouped.values())
+    return render(
+        request,
+        "access/reports/who_gets.html",
+        {
+            "application": application,
+            "grouped": grouped.items(),
+            "total": total,
+            "applications": Application.objects.exclude(
+                lifecycle_status=Application.Lifecycle.RETIRED
+            ).order_by("name"),
+        },
+    )

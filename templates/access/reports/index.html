@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Reports · HealthIAM{% endblock %}
+{% block content %}
+<h1 class="h3 mb-3">Reports</h1>
+<div class="row g-3">
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-header"><i class="bi bi-grid-3x3 me-1"></i>Position access matrix</div>
+      <div class="card-body">
+        <p class="text-body-secondary small">Every position with each application and access level it receives by default. Positions with no defaults are included so gaps are visible.</p>
+        <form method="get">
+          <input type="hidden" name="report" value="matrix">
+          <div class="mb-3">
+            <label class="form-label" for="departments">Departments</label>
+            <select class="form-select" id="departments" name="departments" multiple size="8">
+              {% for d in departments %}<option value="{{ d.pk }}">{{ d.code }} {{ d.name }}</option>{% endfor %}
+            </select>
+            <div class="form-text">Leave empty for all departments. Ctrl/Cmd-click to select several.</div>
+          </div>
+          <div class="form-check mb-3">
+            <input class="form-check-input" type="checkbox" id="include_inactive" name="include_inactive" value="1">
+            <label class="form-check-label" for="include_inactive">Include inactive positions</label>
+          </div>
+          <button class="btn btn-primary" type="submit" name="format" value="xlsx"><i class="bi bi-file-earmark-excel me-1"></i>Download Excel</button>
+          <button class="btn btn-outline-primary" type="submit" name="format" value="csv"><i class="bi bi-filetype-csv me-1"></i>Download CSV</button>
+        </form>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-header"><i class="bi bi-people me-1"></i>Who gets an application</div>
+      <div class="card-body">
+        <p class="text-body-secondary small">For one application, every position and access level that receives it by default.</p>
+        <form method="get" id="whoGetsForm" onsubmit="event.preventDefault(); var v=this.app.value; if(v) window.location='/reports/who-gets/'+v+'/';">
+          <div class="mb-3">
+            <label class="form-label" for="app">Application</label>
+            <select class="form-select" id="app" name="app" required>
+              <option value="">Choose…</option>
+              {% for a in applications %}<option value="{{ a.pk }}">{{ a.name }}</option>{% endfor %}
+            </select>
+          </div>
+          <button class="btn btn-primary" type="submit">View</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

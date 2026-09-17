@@ -5,6 +5,8 @@ from . import views
 app_name = "access"
 
 urlpatterns = [
+    path("reports/", views.reports_index, name="reports_index"),
+    path("reports/who-gets/<int:pk>/", views.who_gets_report, name="who_gets"),
     path("positions/<int:pk>/defaults/", views.position_defaults, name="position_defaults"),
     path("positions/<int:pk>/defaults/add/", views.default_add, name="default_add"),
     path(

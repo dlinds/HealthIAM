@@ -1,0 +1,11 @@
+{% if q|length < 2 %}
+  {% if full %}<p class="text-body-secondary">Type at least two characters.</p>{% endif %}
+{% elif not any %}
+  <div class="list-group-item text-body-secondary">No matches for “{{ q }}”.</div>
+{% else %}
+  {% for a in results.applications %}<a class="list-group-item list-group-item-action" href="{{ a.get_absolute_url }}"><span class="badge text-bg-primary me-2">App</span>{{ a.name }}</a>{% endfor %}
+  {% for p in results.positions %}<a class="list-group-item list-group-item-action" href="{{ p.get_absolute_url }}"><span class="badge text-bg-success me-2">Position</span><span class="text-mono">{{ p.code }}</span> {{ p.display_name }}</a>{% endfor %}
+  {% for d in results.departments %}<a class="list-group-item list-group-item-action" href="{% url 'orgs:position_list' %}?department={{ d.pk }}"><span class="badge text-bg-secondary me-2">Dept</span>{{ d.code }} {{ d.name }}</a>{% endfor %}
+  {% for j in results.job_codes %}<a class="list-group-item list-group-item-action" href="{% url 'orgs:position_list' %}?q={{ j.code }}"><span class="badge text-bg-secondary me-2">Job</span>{{ j.code }} {{ j.title }}</a>{% endfor %}
+  {% for v in results.vendors %}<a class="list-group-item list-group-item-action" href="{{ v.get_absolute_url }}"><span class="badge text-bg-info me-2">Vendor</span>{{ v.name }}</a>{% endfor %}
+{% endif %}

@@ -1,0 +1,17 @@
+{% load ui %}
+<div class="card" id="object-history">
+  <div class="card-header d-flex justify-content-between"><span>History</span>{% if iam.can_view_history %}<a class="small" href="{% url 'core:history_list' %}?q={{ target|urlencode }}">Full history</a>{% endif %}</div>
+  <ul class="list-group list-group-flush small">
+    {% for e in entries %}
+    <li class="list-group-item">
+      <div class="d-flex justify-content-between">
+        <span><strong>{{ e.actor.display_name|default:"system" }}</strong> {{ action_labels|dict_get:e.action|lower }} {{ e.content_type.name }}</span>
+        <span class="text-body-tertiary text-nowrap">{{ e.timestamp|date:"Y-m-d H:i" }}</span>
+      </div>
+      <div class="text-body-secondary">{{ e.object_repr|truncatechars:90 }}</div>
+      {% for field, old, new in e.change_rows %}<div class="ms-2"><span class="text-body-secondary">{{ field }}:</span> {% if old and old != 'None' %}<s class="text-body-tertiary">{{ old|truncatechars:30 }}</s> → {% endif %}{{ new|truncatechars:50 }}</div>{% endfor %}
+      {% if e.reason %}<div class="ms-2 fst-italic">“{{ e.reason }}”</div>{% endif %}
+    </li>
+    {% empty %}<li class="list-group-item text-body-secondary">No changes recorded.</li>{% endfor %}
+  </ul>
+</div>

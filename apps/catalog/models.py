@@ -217,7 +217,19 @@ class Application(TimeStampedModel):
         return self.holds_phi or self.holds_pii or self.holds_clinical_records or self.holds_pci
 
 
-class ApplicationAlias(TimeStampedModel):
+class ApplicationChildAuditMixin:
+    """Stamp audit entries with the parent application so its history view can find
+    changes to aliases, levels, tiers, contacts, and analysts, including deletions."""
+
+    def get_additional_data(self):
+        return {
+            "application_id": self.application_id,
+            "application": self.application.name,
+            "kind": self._meta.verbose_name,
+        }
+
+
+class ApplicationAlias(ApplicationChildAuditMixin, TimeStampedModel):
     application = models.ForeignKey(Application, on_delete=models.CASCADE, related_name="aliases")
     alias = models.CharField(max_length=150)
 
@@ -237,7 +249,7 @@ class ApplicationAlias(TimeStampedModel):
         return self.alias
 
 
-class ApplicationAnalyst(TimeStampedModel):
+class ApplicationAnalyst(ApplicationChildAuditMixin, TimeStampedModel):
     application = models.ForeignKey(
         Application, on_delete=models.CASCADE, related_name="analyst_assignments"
     )
@@ -258,7 +270,7 @@ class ApplicationAnalyst(TimeStampedModel):
         return f"{self.user} on {self.application}"
 
 
-class AccessLevel(TimeStampedModel):
+class AccessLevel(ApplicationChildAuditMixin, TimeStampedModel):
     """A grantable unit of access within an application, e.g. 'Nurse template'. Position
     defaults point at access levels, never at applications directly."""
 
@@ -317,7 +329,7 @@ class AccessLevel(TimeStampedModel):
         return "See description"
 
 
-class SupportTier(TimeStampedModel):
+class SupportTier(ApplicationChildAuditMixin, TimeStampedModel):
     application = models.ForeignKey(
         Application, on_delete=models.CASCADE, related_name="support_tiers"
     )
@@ -345,7 +357,7 @@ class SupportTier(TimeStampedModel):
         return f"{self.application.name} · Tier {self.level}: {self.name}"
 
 
-class ApplicationContact(TimeStampedModel):
+class ApplicationContact(ApplicationChildAuditMixin, TimeStampedModel):
     class Role(models.TextChoices):
         VENDOR_SUPPORT = "vendor_support", "Vendor support"
         VENDOR_ACCOUNT = "vendor_account_manager", "Vendor account manager"

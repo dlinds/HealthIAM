@@ -11,4 +11,6 @@
     <li><a class="dropdown-item" href="{% url 'catalog:contact_list' %}">Contacts</a></li>
   </ul>
 </li>
+<li class="nav-item"><a class="nav-link {% if ns == 'access' %}active{% endif %}" href="{% url 'access:reports_index' %}">Reports</a></li>
+{% if iam.can_view_history %}<li class="nav-item"><a class="nav-link {% if url == 'history_list' %}active{% endif %}" href="{% url 'core:history_list' %}">History</a></li>{% endif %}
 {% endwith %}

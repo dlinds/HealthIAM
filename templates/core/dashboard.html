@@ -1,6 +1,66 @@
 {% extends "base.html" %}
+{% load ui %}
 {% block title %}Dashboard · HealthIAM{% endblock %}
 {% block content %}
 <h1 class="h3 mb-3">Dashboard</h1>
-<p class="text-body-secondary">Welcome, {{ user.display_name }}.</p>
+<div class="row g-3 mb-3">
+  <div class="col-6 col-lg-3"><a class="card text-decoration-none h-100" href="{% url 'catalog:application_list' %}"><div class="card-body"><div class="fs-2 fw-semibold">{{ stats.applications }}</div><div class="text-body-secondary">Applications</div></div></a></div>
+  <div class="col-6 col-lg-3"><a class="card text-decoration-none h-100" href="{% url 'catalog:application_list' %}?holds_phi=1"><div class="card-body"><div class="fs-2 fw-semibold">{{ stats.phi_applications }}</div><div class="text-body-secondary">Applications holding PHI</div></div></a></div>
+  <div class="col-6 col-lg-3"><a class="card text-decoration-none h-100" href="{% url 'orgs:position_list' %}"><div class="card-body"><div class="fs-2 fw-semibold">{{ stats.positions }}</div><div class="text-body-secondary">Active positions</div></div></a></div>
+  <div class="col-6 col-lg-3"><a class="card text-decoration-none h-100" href="{% url 'access:reports_index' %}"><div class="card-body"><div class="fs-2 fw-semibold">{{ stats.defaults }}</div><div class="text-body-secondary">Position defaults</div></div></a></div>
+</div>
+<div class="row g-3">
+  <div class="col-lg-7">
+    {% if mine %}
+    <div class="card mb-3">
+      <div class="card-header">My applications</div>
+      <ul class="list-group list-group-flush">
+        {% for a in mine %}<li class="list-group-item d-flex justify-content-between align-items-center"><a href="{{ a.get_absolute_url }}">{{ a.name }}</a><span><span class="badge badge-tier-{{ a.tier }}">Tier {{ a.tier }}</span> {% include "catalog/partials/lifecycle_badge.html" with app=a %}</span></li>{% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+    <div class="card">
+      <div class="card-header d-flex justify-content-between"><span>Recent changes</span>{% if iam.can_view_history %}<a class="small" href="{% url 'core:history_list' %}">Full history</a>{% endif %}</div>
+      <ul class="list-group list-group-flush small">
+        {% for e in recent %}
+        <li class="list-group-item">
+          <span class="text-body-tertiary text-nowrap">{{ e.timestamp|date:"M j H:i" }}</span>
+          · <strong>{{ e.actor.display_name|default:"system" }}</strong>
+          {{ action_labels|dict_get:e.action|lower }} {{ e.content_type.name }} <em>{{ e.object_repr|truncatechars:70 }}</em>
+          {% if e.reason %}<div class="text-body-secondary ms-4">“{{ e.reason }}”</div>{% endif %}
+        </li>
+        {% empty %}<li class="list-group-item text-body-secondary">No changes yet.</li>{% endfor %}
+      </ul>
+    </div>
+  </div>
+  <div class="col-lg-5">
+    <div class="card">
+      <div class="card-header">Data quality</div>
+      <div class="accordion accordion-flush" id="quality">
+        {% for key, item in quality.items %}
+        {% with count=item.0 sample=item.1 %}
+        <div class="accordion-item">
+          <h2 class="accordion-header">
+            <button class="accordion-button collapsed py-2 small" type="button" data-bs-toggle="collapse" data-bs-target="#q-{{ key }}">
+              <span class="badge rounded-pill {% if count %}text-bg-warning{% else %}text-bg-success{% endif %} me-2">{{ count }}</span>
+              {% if key == 'apps_without_levels' %}Applications without an active access level
+              {% elif key == 'apps_without_owner' %}Applications without an owner
+              {% elif key == 'apps_without_analyst' %}Applications without an analyst
+              {% else %}Active positions with no defaults{% endif %}
+            </button>
+          </h2>
+          <div id="q-{{ key }}" class="accordion-collapse collapse" data-bs-parent="#quality">
+            <ul class="list-group list-group-flush small">
+              {% for obj in sample %}<li class="list-group-item"><a href="{{ obj.get_absolute_url }}">{% if key == 'positions_without_defaults' %}<span class="text-mono">{{ obj.code }}</span> {{ obj.display_name }}{% else %}{{ obj.name }}{% endif %}</a></li>{% endfor %}
+              {% if count > sample|length %}<li class="list-group-item text-body-tertiary">… and {{ count|add:"-8" }} more</li>{% endif %}
+              {% if not count %}<li class="list-group-item text-body-secondary">Nothing to fix.</li>{% endif %}
+            </ul>
+          </div>
+        </div>
+        {% endwith %}
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
 {% endblock %}

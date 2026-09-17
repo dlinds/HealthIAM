@@ -55,7 +55,9 @@ class PositionDefault(TimeStampedModel):
     def get_additional_data(self):
         return {
             "reason": getattr(self, "_audit_reason", ""),
+            "position_id": self.position_id,
             "position": self.position.code,
+            "application_id": self.access_level.application_id,
             "application": self.access_level.application.name,
             "access_level": self.access_level.name,
         }

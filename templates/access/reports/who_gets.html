@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Who gets {{ application.name }} · HealthIAM{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb">
+  <li class="breadcrumb-item"><a href="{% url 'access:reports_index' %}">Reports</a></li>
+  <li class="breadcrumb-item active">Who gets {{ application.name }}</li>
+</ol></nav>
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+  <div>
+    <h1 class="h3 mb-1">Who gets <a href="{{ application.get_absolute_url }}">{{ application.name }}</a></h1>
+    <div class="text-body-secondary small">{{ total }} position default{{ total|pluralize }} across {{ grouped|length }} access level{{ grouped|length|pluralize }}</div>
+  </div>
+  <div class="d-flex gap-2 align-items-center">
+    <form method="get" onsubmit="event.preventDefault(); window.location='/reports/who-gets/'+this.app.value+'/';">
+      <select class="form-select form-select-sm" name="app" onchange="this.form.requestSubmit()">
+        {% for a in applications %}<option value="{{ a.pk }}" {% if a.pk == application.pk %}selected{% endif %}>{{ a.name }}</option>{% endfor %}
+      </select>
+    </form>
+    <a class="btn btn-sm btn-primary" href="?format=xlsx"><i class="bi bi-file-earmark-excel me-1"></i>Excel</a>
+    <a class="btn btn-sm btn-outline-primary" href="?format=csv"><i class="bi bi-filetype-csv me-1"></i>CSV</a>
+  </div>
+</div>
+{% for level, defaults in grouped %}
+<div class="card mb-3">
+  <div class="card-header d-flex align-items-center gap-2">
+    <span class="fw-semibold">{{ level.name }}</span>
+    <span class="badge text-bg-light border">{{ level.get_access_model_display }}</span>
+    {% if level.access_model != 'in_app' %}<span class="small text-mono text-body-secondary">{{ level.access_target }}</span>{% endif %}
+    {% if not level.is_active %}<span class="badge text-bg-secondary">Inactive</span>{% endif %}
+    <span class="badge rounded-pill text-bg-secondary ms-auto">{{ defaults|length }}</span>
+  </div>
+  {% if defaults %}
+  <div class="table-responsive"><table class="table table-sm mb-0">
+    <thead><tr><th>Position</th><th>Name</th><th>Department</th><th>Job title</th><th>Note</th><th>Added</th></tr></thead>
+    <tbody>
+    {% for d in defaults %}
+    <tr class="{% if not d.position.is_active %}text-body-tertiary{% endif %}">
+      <td><a class="text-mono" href="{{ d.position.get_absolute_url }}">{{ d.position.code }}</a></td>
+      <td>{{ d.position.display_name }}{% if not d.position.is_active %} <span class="badge text-bg-secondary">inactive</span>{% endif %}</td>
+      <td>{{ d.position.department.name }}</td>
+      <td>{{ d.position.job_code.title }}</td>
+      <td class="small text-body-secondary">{{ d.notes }}</td>
+      <td class="small text-body-tertiary">{{ d.created_at|date:"Y-m-d" }}</td>
+    </tr>
+    {% endfor %}
+    </tbody></table></div>
+  {% else %}
+  <div class="card-body text-body-secondary small">No positions receive this level by default.</div>
+  {% endif %}
+</div>
+{% empty %}
+<p class="text-body-secondary">This application has no access levels defined.</p>
+{% endfor %}
+{% endblock %}

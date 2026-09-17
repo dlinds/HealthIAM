@@ -1,1 +1,5 @@
-{# Global search (wired in a later phase). #}
+<form class="position-relative me-2" role="search" method="get" action="{% url 'core:search' %}" autocomplete="off">
+  <input class="form-control form-control-sm" type="search" name="q" placeholder="Search…" style="width:16rem"
+    hx-get="{% url 'core:search' %}" hx-trigger="keyup changed delay:250ms, focus" hx-target="#global-search-results" hx-swap="innerHTML">
+  <div id="global-search-results" class="list-group shadow search-results mt-1 end-0"></div>
+</form>
