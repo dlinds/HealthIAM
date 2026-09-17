@@ -16,8 +16,10 @@ COPY . .
 # the image; both come from the environment at runtime.
 RUN SECRET_KEY=build-only AUTH_LOCAL_LOGIN=true python manage.py collectstatic --noinput
 
-# Fixed uid so bind-mounted media datasets can be chowned to a known owner.
-RUN useradd --create-home --uid 1000 app && chown -R app:app /app
+# Fixed uid 568, matching the TrueNAS apps user, so a bind-mounted media
+# dataset can be owned by an account that exists on the host too. A bind mount
+# does no uid mapping, so this uid is what reaches the dataset.
+RUN useradd --create-home --uid 568 app && chown -R app:app /app
 USER app
 
 EXPOSE 8000

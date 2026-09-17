@@ -1,5 +1,5 @@
-# Lints and tests every pull request, and on a version tag also builds the
-# container image and pushes it to GitHub Container Registry.
+# Lints, tests and builds the image on every pull request, and on a version tag
+# also pushes that image to GitHub Container Registry.
 #
 # Publishing is triggered by pushing a version tag (make release VERSION=0.2.0)
 # or by dispatching an existing tag manually; a pull request only ever runs the
@@ -77,6 +77,26 @@ jobs:
           DATABASE_URL: postgres://healthiam:healthiam@127.0.0.1:5432/healthiam
           SECRET_KEY: ci-only-not-a-real-secret
         run: .venv/bin/python -m pytest
+
+  image:
+    name: Build image
+    # A pull request otherwise never builds the image, so a Dockerfile change
+    # could only fail at release time. Runs alongside the checks rather than
+    # after them; on a tag push the publish job below builds it anyway.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          platforms: linux/amd64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
   publish:
     name: Build and push
