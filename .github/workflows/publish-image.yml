@@ -1,7 +1,7 @@
 # Lints and tests every pull request, and on a version tag also builds the
 # container image and pushes it to GitHub Container Registry.
 #
-# Publishing is triggered by pushing a version tag (make release VERSION=v0.2.0)
+# Publishing is triggered by pushing a version tag (make release VERSION=0.2.0)
 # or by dispatching an existing tag manually; a pull request only ever runs the
 # checks. The repository can stay private: the package inherits the repository's
 # visibility, and TrueNAS pulls it with a read-only token.
@@ -11,11 +11,14 @@ on:
   pull_request:
   push:
     tags:
-      - "v*"
+      # Deliberately loose globs (these are glob, not regex): both the bare
+      # 0.2.0 convention and v0.2.0. The version is validated properly below.
+      - "[0-9]*"
+      - "v[0-9]*"
   workflow_dispatch:
     inputs:
       ref:
-        description: "Existing version tag to (re)publish, e.g. v0.2.0"
+        description: "Existing version tag to (re)publish, e.g. 0.2.0"
         required: true
         type: string
 
@@ -97,10 +100,11 @@ jobs:
           RAW_REF: ${{ inputs.ref || github.ref_name }}
           REPOSITORY: ${{ github.repository }}
         run: |
-          case "$RAW_REF" in
-            v[0-9]*) ;;
-            *) echo "::error::Expected a version tag like v1.2.3, got '$RAW_REF'"; exit 1 ;;
-          esac
+          # Tags may be written either way; the image tag never carries the v.
+          if ! printf '%s' "$RAW_REF" | grep -Eq '^v?[0-9]+(\.[0-9]+){1,2}([-.+][0-9A-Za-z.-]+)?$'; then
+            echo "::error::Expected a version tag like 0.2.0 or v0.2.0, got '$RAW_REF'"
+            exit 1
+          fi
           {
             echo "version=${RAW_REF#v}"
             echo "image=ghcr.io/$(printf '%s' "$REPOSITORY" | tr '[:upper:]' '[:lower:]')"
