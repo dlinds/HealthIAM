@@ -30,11 +30,19 @@ Create the datasets (replace `tank` with your pool):
 - `tank/apps/healthiam/pgdata` — database
 - `tank/apps/healthiam/media` — uploaded CSV import files
 
-The web container runs as uid 1000, so give it the media dataset:
+The web container runs as uid 568, the same uid as the TrueNAS apps user, so
+give it the media dataset:
 
 ```sh
-chown -R 1000:1000 /mnt/tank/apps/healthiam/media
+chown -R 568:568 /mnt/tank/apps/healthiam/media
 ```
+
+Leave `pgdata` alone. The Postgres image starts as root and chowns its data
+directory to its own internal user, so setting that one to 568 gets undone on
+the first start.
+
+Media is the only path the app writes at run time. Logging goes to the console
+and static files are collected during the image build.
 
 Log the NAS in to GHCR, from System > Shell or over SSH:
 

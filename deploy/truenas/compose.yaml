@@ -27,7 +27,7 @@ services:
   web:
     # Pinned release. Bump this line and Save to upgrade; TrueNAS pulls the new
     # digest and the entrypoint runs migrations on start.
-    image: ghcr.io/dlinds/healthiam:0.1.0
+    image: ghcr.io/dlinds/healthiam:0.4.0
     restart: unless-stopped
     depends_on:
       db:
@@ -47,7 +47,7 @@ services:
       SUPPORT_CONTACT: "the Information Security team (infosec@example.org)"
     volumes:
       # CSV import batches keep their uploaded file; without this they vanish on
-      # redeploy. Dataset must be owned by uid 1000 (see docs).
+      # redeploy. Dataset must be owned by 568:568 (see docs).
       - /mnt/tank/apps/healthiam/media:/app/media
     ports:
       - "8000:8000"
