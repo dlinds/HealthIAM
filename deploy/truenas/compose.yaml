@@ -1,0 +1,53 @@
+# HealthIAM stack for TrueNAS 25.10.
+#
+# Apps > Discover Apps > (three-dot menu) > Install via YAML, name the app
+# "healthiam", and paste this into Custom Config. See docs/deploy-truenas.md.
+#
+# Before pasting, replace every CHANGE_ME value and adjust:
+#   - the image tag (the whole point: pin an exact release)
+#   - /mnt/tank/... paths to match your pool and datasets
+name: healthiam
+
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: healthiam
+      POSTGRES_USER: healthiam
+      POSTGRES_PASSWORD: CHANGE_ME_DB_PASSWORD
+    volumes:
+      - /mnt/tank/apps/healthiam/pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U healthiam -d healthiam"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  web:
+    # Pinned release. Bump this line and Save to upgrade; TrueNAS pulls the new
+    # digest and the entrypoint runs migrations on start.
+    image: ghcr.io/dlinds/healthiam:0.1.0
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      SECRET_KEY: CHANGE_ME_LONG_RANDOM_STRING
+      DATABASE_URL: postgres://healthiam:CHANGE_ME_DB_PASSWORD@db:5432/healthiam
+      # Hostnames this app answers on. No scheme, comma separated.
+      ALLOWED_HOSTS: CHANGE_ME_HOSTNAME
+      # Origins of the TLS proxy in front. With scheme, comma separated.
+      CSRF_TRUSTED_ORIGINS: https://CHANGE_ME_HOSTNAME
+      # The proxy terminates TLS and sets X-Forwarded-Proto, so gunicorn must not
+      # redirect again. Cookies stay Secure regardless: reach the app over https.
+      SECURE_SSL_REDIRECT: "false"
+      AUTH_LOCAL_LOGIN: "true"
+      TIME_ZONE: America/Chicago
+      SUPPORT_CONTACT: "the Information Security team (infosec@example.org)"
+    volumes:
+      # CSV import batches keep their uploaded file; without this they vanish on
+      # redeploy. Dataset must be owned by uid 1000 (see docs).
+      - /mnt/tank/apps/healthiam/media:/app/media
+    ports:
+      - "8000:8000"
