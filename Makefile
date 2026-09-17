@@ -47,10 +47,10 @@ shell:
 	$(PY) manage.py shell
 
 # Tag and push a release; GitHub Actions builds and pushes the image to GHCR.
-# Usage: make release VERSION=v0.2.0
+# Usage: make release VERSION=0.2.0 (a leading v is accepted too)
 release:
-	@echo "$(VERSION)" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$$' || \
-		{ echo "usage: make release VERSION=v1.2.3"; exit 1; }
+	@echo "$(VERSION)" | grep -Eq '^v?[0-9]+\.[0-9]+\.[0-9]+$$' || \
+		{ echo "usage: make release VERSION=1.2.3"; exit 1; }
 	@test -z "$$(git status --porcelain)" || { echo "working tree is dirty"; exit 1; }
 	git tag -a $(VERSION) -m "HealthIAM $(VERSION)"
 	git push origin $(VERSION)

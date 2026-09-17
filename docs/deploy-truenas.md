@@ -49,18 +49,26 @@ login again.
 ## Cutting a release
 
 ```sh
-make release VERSION=v0.2.0
+make release VERSION=0.2.0
 ```
 
 That tags the current commit and pushes the tag. The workflow lints, runs the
 test suite against PostgreSQL 16, builds the image, and pushes two tags:
 `0.2.0` and `latest`. The run summary prints the exact image reference.
 
+Git tags may be written `0.2.0` or `v0.2.0`; both trigger a release, and the
+image tag is always the bare version.
+
+The same workflow runs the lint and test jobs on every pull request, so a broken
+test shows up in review rather than at release time. Pull request runs stop after
+the checks: the publish job is gated on the event type and only a tag push or a
+manual dispatch can push an image.
+
 Use `latest` for nothing. Pin the version so the running release is obvious and
 rollback is a one-line edit.
 
-To rebuild an existing tag, run the workflow manually: Actions > Publish image >
-Run workflow, and enter the tag.
+To rebuild an existing tag, run the workflow manually: Actions >
+CI and publish > Run workflow, and enter the tag.
 
 ## First install
 
@@ -111,8 +119,8 @@ well as the catalog, so it is the record of who changed what.
 - **`denied` or `unauthorized` on pull** — the NAS login expired or the token
   was revoked. Re-run the `docker login` above.
 - **`manifest unknown`** — the tag does not exist in GHCR. Check the workflow run
-  finished and that the tag in the YAML has no leading `v` (image tags are
-  `0.2.0`, git tags are `v0.2.0`).
+  finished, and that the tag in the YAML has no leading `v`. Git tags may be
+  written `0.2.0` or `v0.2.0`; the image tag is always the bare version.
 - **Login page loops or rejects the password** — you are reaching the app over
   HTTP, or the origin is missing from `CSRF_TRUSTED_ORIGINS`.
 - **App stuck in Deploying** — check `docker logs ix-healthiam-web-1`. A bad
