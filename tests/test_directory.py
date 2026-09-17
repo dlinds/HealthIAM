@@ -15,9 +15,10 @@ from django.core.management.base import CommandError
 from django.test import override_settings
 from django.utils import timezone
 
+from apps.access.models import PositionDefault
 from apps.accounts import roles
 from apps.accounts.models import User
-from apps.directory import checks, ldap_client, sync
+from apps.directory import checks, ldap_client, references, sync
 from apps.directory.config import DirectorySettings
 from apps.directory.ldap_client import (
     ConnectionInfo,
@@ -1509,3 +1510,186 @@ def test_all_directory_checks_are_warnings_and_silent_when_disabled(tmp_path):
     with override_settings(**broken, AD_ENABLED=False):
         assert run_directory_checks() == []
         assert all(check(None) == [] for check in ALL_CHECKS)
+
+
+# --- Broken-reference rule (apps/directory/references.py) ----------------------------------
+
+
+def groups_run(status="completed", scope="groups"):
+    return DirectorySyncRun.objects.create(scope=scope, status=status)
+
+
+def level_for(group_name, **kwargs):
+    return factories.AccessLevelFactory(ad_group_name=group_name, **kwargs)
+
+
+def test_in_scope_follows_the_name_patterns(settings):
+    assert references.in_scope("APP_PACS_VIEW") is True
+    assert references.in_scope("lic_m365_e3") is True
+    assert references.in_scope("Domain Users") is False
+    settings.AD_GROUPS_NAME_PATTERNS = []
+    assert references.in_scope("Domain Users") is True
+
+
+def test_groups_synced_needs_a_completed_run_with_groups_in_scope():
+    assert references.groups_synced() is False
+    groups_run(status="previewed")
+    groups_run(status="failed")
+    groups_run(status="completed", scope="users")
+    assert references.groups_synced() is False
+    groups_run(status="completed", scope="all")
+    assert references.groups_synced() is True
+
+
+def test_status_for_levels_covers_the_five_states(django_assert_num_queries):
+    groups_run()
+    factories.ADGroupFactory(name="APP_PACS_VIEW")
+    old = factories.ADGroupFactory(name="APP_OLD_VIEW")
+    old.deactivate()
+    domain_users = factories.ADGroupFactory(name="Domain Users")
+    domain_users.deactivate()
+
+    ok = level_for("app_pacs_view")  # case-insensitive match
+    inactive = level_for("APP_OLD_VIEW")
+    missing = level_for("APP_GONE")
+    out_of_pattern = level_for("SG-Custom")
+    inactive_out_of_pattern = level_for("Domain Users")
+    ticket = factories.AccessLevelFactory(
+        access_model="ticket", ad_group_name="", ticket_assignment_team="Desk"
+    )
+    levels = [ok, inactive, missing, out_of_pattern, inactive_out_of_pattern, ticket]
+
+    with django_assert_num_queries(2):  # run existence + one Lower(name) lookup
+        statuses = references.status_for_levels(levels)
+
+    assert {pk: ref.status for pk, ref in statuses.items()} == {
+        ok.pk: references.Status.OK,
+        inactive.pk: references.Status.INACTIVE,
+        missing.pk: references.Status.MISSING,
+        out_of_pattern.pk: references.Status.UNVERIFIED,
+        inactive_out_of_pattern.pk: references.Status.UNVERIFIED,
+    }
+    assert statuses[ok.pk].group.name == "APP_PACS_VIEW"
+    assert statuses[inactive.pk].group == old
+    assert statuses[inactive.pk].last_seen == old.last_seen_at
+    assert statuses[missing.pk].group is None and statuses[missing.pk].last_seen is None
+    assert [ref.is_broken for ref in (statuses[pk] for pk in (ok.pk, inactive.pk, missing.pk))] == [
+        False,
+        True,
+        True,
+    ]
+    assert statuses[out_of_pattern.pk].is_broken is False
+    assert statuses[ok.pk].label == "In AD"
+    assert statuses[inactive.pk].label == "Not returned by the last sync"
+    assert statuses[missing.pk].label == "Not found in AD"
+    assert statuses[out_of_pattern.pk].label == "Outside sync filter"
+
+
+def test_status_for_levels_is_unknown_before_the_first_completed_groups_run():
+    factories.ADGroupFactory(name="APP_PACS_VIEW")
+    level = level_for("APP_PACS_VIEW")
+    assert references.status_for_levels([level]) == {
+        level.pk: references.Reference(references.Status.UNKNOWN)
+    }
+    groups_run(status="previewed")
+    groups_run(status="completed", scope="users")
+    assert references.status_for_levels([level])[level.pk].status == references.Status.UNKNOWN
+    assert references.status_for_levels([level])[level.pk].label == ""
+    groups_run(status="completed", scope="all")
+    assert references.status_for_levels([level])[level.pk].status == references.Status.OK
+
+
+def test_status_for_levels_runs_no_query_when_disabled_or_irrelevant(
+    settings, django_assert_num_queries
+):
+    groups_run()
+    ad_level = level_for("APP_PACS_VIEW")
+    ticket = factories.AccessLevelFactory(
+        access_model="ticket", ad_group_name="", ticket_assignment_team="Desk"
+    )
+    with django_assert_num_queries(0):
+        assert references.status_for_levels([ticket]) == {}
+        assert references.status_for_levels([]) == {}
+    settings.AD_ENABLED = False
+    with django_assert_num_queries(0):
+        assert references.status_for_levels([ad_level, ticket]) == {}
+        assert references.broken_references() == []
+
+
+def test_status_for_levels_prefers_an_active_row_and_the_latest_inactive_one():
+    groups_run()
+    stale = factories.ADGroupFactory(
+        name="APP_PACS_VIEW", last_seen_at=timezone.now() - timedelta(days=30)
+    )
+    stale.deactivate()
+    fresh = factories.ADGroupFactory(name="app_pacs_view")
+    level = level_for("APP_PACS_VIEW")
+    ref = references.status_for_levels([level])[level.pk]
+    assert ref.status == references.Status.OK and ref.group == fresh
+
+    fresh.deactivate()
+    newer = factories.ADGroupFactory(name="APP_PACS_VIEW")
+    newer.deactivate()
+    ref = references.status_for_levels([level])[level.pk]
+    assert ref.status == references.Status.INACTIVE and ref.group == newer
+
+
+def test_empty_patterns_make_every_unmatched_name_missing(settings):
+    settings.AD_GROUPS_NAME_PATTERNS = []
+    groups_run()
+    level = level_for("SG-Custom")
+    assert references.status_for_levels([level])[level.pk].status == references.Status.MISSING
+
+
+def test_broken_reference_rows_and_columns():
+    groups_run()
+    factories.ADGroupFactory(name="APP_PACS_VIEW")
+    old = factories.ADGroupFactory(
+        name="APP_OLD_VIEW", last_seen_at=datetime(2026, 3, 1, 12, tzinfo=UTC)
+    )
+    old.deactivate()
+    pacs = factories.ApplicationFactory(name="PACS", lifecycle_status="active")
+    epic = factories.ApplicationFactory(name="Epic", lifecycle_status="retiring")
+    ok = level_for("APP_PACS_VIEW", application=pacs, name="Viewer")
+    inactive = level_for("APP_OLD_VIEW", application=pacs, name="Old viewer", is_active=False)
+    missing = level_for("APP_EPIC_RN", application=epic, name="Nurse")
+    level_for("SG-Custom", application=epic, name="Custom")  # unverified: never a row
+
+    active_pos = factories.PositionFactory()
+    inactive_pos = factories.PositionFactory(is_active=False)
+    PositionDefault.objects.create(position=active_pos, access_level=missing)
+    PositionDefault.objects.create(position=inactive_pos, access_level=missing)
+    PositionDefault.objects.create(position=active_pos, access_level=ok)
+
+    broken = references.broken_references()
+    assert [(lvl.pk, status, grp) for lvl, status, grp in broken] == [
+        (missing.pk, references.Status.MISSING, None),
+        (inactive.pk, references.Status.INACTIVE, old),
+    ]
+    assert references.BROKEN_REF_COLUMNS == [
+        "application",
+        "application_lifecycle",
+        "access_level",
+        "level_active",
+        "ad_group_name",
+        "status",
+        "detail",
+        "last_seen",
+        "positions_with_default",
+    ]
+    rows = list(references.broken_reference_rows())
+    assert all(len(row) == len(references.BROKEN_REF_COLUMNS) for row in rows)
+    assert rows == [
+        ["Epic", "Retiring", "Nurse", "yes", "APP_EPIC_RN", "missing", "Not found in AD", "", 1],
+        [
+            "PACS",
+            "Active",
+            "Old viewer",
+            "no",
+            "APP_OLD_VIEW",
+            "inactive",
+            "Not returned by the last sync",
+            "2026-03-01",
+            0,
+        ],
+    ]

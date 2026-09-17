@@ -26,6 +26,10 @@
           <label class="form-label" for="{{ form.ad_group_name.id_for_label }}">AD group name</label>
           {{ form.ad_group_name }}
           {% for e in form.ad_group_name.errors %}<div class="invalid-feedback d-block">{{ e }}</div>{% endfor %}
+          {% if AD_ENABLED %}
+          <div id="directory-group-picker" class="list-group list-group-flush small mt-1"></div>
+          <div class="form-text">Start typing to pick an imported AD group. Any name can be saved; groups outside the sync filter are kept as free text.</div>
+          {% endif %}
         </div>
         <div class="col-md-6" data-access-model="ticket">
           <label class="form-label" for="{{ form.ticket_assignment_team.id_for_label }}">Ticket assignment team</label>
@@ -59,5 +63,17 @@
     }
     select.addEventListener("change", sync);
     sync();
+
+    var groupInput = document.getElementById("{{ form.ad_group_name.id_for_label }}");
+    var picker = document.getElementById("directory-group-picker");
+    if (groupInput && picker) {
+      picker.addEventListener("click", function (event) {
+        var pick = event.target.closest("[data-pick-group]");
+        if (!pick) return;
+        groupInput.value = pick.dataset.pickGroup;
+        groupInput.dispatchEvent(new Event("input", { bubbles: true }));
+        groupInput.focus();
+      });
+    }
   })();
 </script>

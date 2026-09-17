@@ -1,4 +1,6 @@
 from django import forms
+from django.conf import settings
+from django.urls import reverse
 
 from apps.accounts.models import User
 from apps.core.forms import BootstrapModelForm
@@ -168,6 +170,18 @@ class AccessLevelForm(ApplicationScopedForm):
         self.instance.application = application
         self.fields["in_app_instructions"].widget.attrs["rows"] = 2
         self.fields["description"].widget.attrs["rows"] = 2
+        if settings.AD_ENABLED:
+            # The input drives the imported-group picker; free text still saves. hx-swap is
+            # explicit because the enclosing form swaps with outerHTML.
+            self.fields["ad_group_name"].widget.attrs.update(
+                {
+                    "hx-get": reverse("directory:group_picker"),
+                    "hx-trigger": "focus once, input changed delay:250ms",
+                    "hx-target": "#directory-group-picker",
+                    "hx-swap": "innerHTML",
+                    "autocomplete": "off",
+                }
+            )
 
 
 class AnalystForm(ApplicationScopedForm):
