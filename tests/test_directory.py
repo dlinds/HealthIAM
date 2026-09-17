@@ -1,3 +1,5 @@
+import dataclasses
+import io
 import ssl
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -6,11 +8,16 @@ import pytest
 from auditlog.models import LogEntry
 from django.contrib.auth.models import Group
 from django.contrib.contenttypes.models import ContentType
+from django.core.checks import WARNING, Warning, run_checks
+from django.core.checks.registry import registry
+from django.core.management import call_command
+from django.core.management.base import CommandError
+from django.test import override_settings
 from django.utils import timezone
 
 from apps.accounts import roles
 from apps.accounts.models import User
-from apps.directory import ldap_client, sync
+from apps.directory import checks, ldap_client, sync
 from apps.directory.config import DirectorySettings
 from apps.directory.ldap_client import (
     ConnectionInfo,
@@ -1273,3 +1280,232 @@ def test_run_records_and_logs_never_contain_the_bind_password(fake_directory, ca
     assert run.status == DirectorySyncRun.Status.COMPLETED
     assert SECRET not in repr(run.summary) + repr(run.log) + run.server + run.group_dn
     assert SECRET not in caplog.text
+
+
+# --- sync_ad command ------------------------------------------------------------------
+
+
+def sync_ad(**options) -> tuple[str, str]:
+    out, err = io.StringIO(), io.StringIO()
+    call_command("sync_ad", stdout=out, stderr=err, **options)
+    return out.getvalue(), err.getvalue()
+
+
+def test_sync_ad_dry_run_then_apply(fake_directory):
+    out, err = sync_ad(dry_run=True)
+    assert "[dry run] users  created      3" in out
+    assert "[dry run] users  deactivated  0" in out
+    assert "[dry run] groups created      3" in out
+    assert "[dry run] groups unchanged    0" in out
+    assert err == ""
+    assert User.objects.filter(ad_managed=True).count() == 0
+    assert ADGroup.objects.count() == 0
+    preview = DirectorySyncRun.objects.get()
+    assert preview.trigger == DirectorySyncRun.Trigger.SCHEDULED
+    assert preview.scope == DirectorySyncRun.Scope.ALL
+    assert preview.status == DirectorySyncRun.Status.PREVIEWED
+    assert preview.created_by is None
+    assert fake_directory.closed
+
+    out, err = sync_ad()
+    assert "users  created      3" in out
+    assert "[dry run]" not in out
+    assert err == ""
+    assert User.objects.filter(ad_managed=True).count() == 3
+    assert ADGroup.objects.count() == 3
+    applied = DirectorySyncRun.objects.exclude(pk=preview.pk).get()
+    assert applied.trigger == DirectorySyncRun.Trigger.SCHEDULED
+    assert applied.status == DirectorySyncRun.Status.COMPLETED
+    assert applied.summary == {
+        "users": summary(created=3, rows=3),
+        "groups": summary(created=3, rows=3),
+    }
+
+    out, _ = sync_ad()
+    assert "users  unchanged    3" in out
+    assert "groups unchanged    3" in out
+
+
+def test_sync_ad_scope_flags(fake_directory):
+    out, _ = sync_ad(users_only=True)
+    assert "users  created      3" in out
+    assert "groups" not in out
+    assert ADGroup.objects.count() == 0
+    assert DirectorySyncRun.objects.get().scope == DirectorySyncRun.Scope.USERS
+
+    out, _ = sync_ad(groups_only=True)
+    assert "groups created      3" in out
+    assert "users" not in out
+    assert DirectorySyncRun.objects.latest("pk").scope == DirectorySyncRun.Scope.GROUPS
+
+    with pytest.raises(CommandError, match="cannot be combined"):
+        sync_ad(users_only=True, groups_only=True)
+    assert DirectorySyncRun.objects.count() == 2
+
+
+def test_sync_ad_row_errors_go_to_stderr_and_exit_non_zero(fake_directory):
+    dave = fake_directory.add_user("dave", upn="", mail="dave@test.invalid", given="Dave")
+    fake_directory.add_member("IAM-Users", dave)
+    out, err = io.StringIO(), io.StringIO()
+    with pytest.raises(CommandError, match=r"1 row\(s\) had errors"):
+        call_command("sync_ad", stdout=out, stderr=err)
+    assert "users  errors       1" in out.getvalue()
+    assert "users row 3 dave: No userPrincipalName on the directory entry." in err.getvalue()
+    run = DirectorySyncRun.objects.get()
+    assert run.status == DirectorySyncRun.Status.COMPLETED
+    assert run.total_errors == 1
+    # The rest of the run was applied; only the bad row was skipped.
+    assert User.objects.filter(ad_managed=True).count() == 3
+
+
+def test_sync_ad_skipped_note_is_printed(fake_directory):
+    ghost = fake_directory.add_user("ghost", upn="", mail="", guid=None)
+    fake_directory.add_member("IAM-Users", ghost)
+    fake_directory.users[ghost.dn.casefold()] = dataclasses.replace(ghost, guid=None)
+    out, err = io.StringIO(), io.StringIO()
+    # The unmatchable entry is also an error row, so the command still exits non-zero.
+    with pytest.raises(CommandError, match=r"1 row\(s\) had errors"):
+        call_command("sync_ad", stdout=out, stderr=err)
+    assert "users  skipped      1" in out.getvalue()
+    assert "users IAM-Users: Missing-member pass skipped: 1 directory entry" in out.getvalue()
+    assert "users row 3 ghost: No objectGUID on the directory entry." in err.getvalue()
+    run = DirectorySyncRun.objects.get()
+    assert run.summary["users"]["skipped"] == 1
+
+
+def test_sync_ad_failed_run_raises_with_the_error(fake_directory):
+    fake_directory.fail_connect = True
+    with pytest.raises(CommandError, match=r"Sync #\d+ failed: DirectoryUnavailable: socket"):
+        sync_ad()
+    run = DirectorySyncRun.objects.get()
+    assert run.status == DirectorySyncRun.Status.FAILED
+    assert run.trigger == DirectorySyncRun.Trigger.SCHEDULED
+    assert run.error.startswith("DirectoryUnavailable")
+
+
+def test_sync_ad_never_prints_the_bind_password(fake_directory):
+    fake_directory.fail_connect = f"bind failed for {SECRET}"
+    with pytest.raises(CommandError) as excinfo:
+        sync_ad()
+    assert SECRET not in str(excinfo.value)
+
+
+def test_sync_ad_refuses_when_ad_is_disabled(fake_directory):
+    with override_settings(AD_ENABLED=False):
+        with pytest.raises(CommandError, match="not configured"):
+            sync_ad()
+    assert DirectorySyncRun.objects.count() == 0
+    assert fake_directory.calls == []
+
+
+# --- System checks ------------------------------------------------------------------
+
+ALL_CHECKS = [
+    checks.check_baseline_role_not_in_entra_map,
+    checks.check_baseline_role_exists,
+    checks.check_bind_credentials,
+    checks.check_ca_bundle_exists,
+    checks.check_server_uris_are_ldaps,
+]
+
+
+def check_ids(messages) -> list[str]:
+    return sorted(m.id for m in messages)
+
+
+def run_directory_checks() -> list:
+    return run_checks(tags=[checks.TAG])
+
+
+def test_directory_checks_are_registered_and_clean_under_test_settings():
+    assert checks.TAG in registry.tags_available()
+    assert {c.__name__ for c in registry.get_checks(include_deployment_checks=False)} >= {
+        c.__name__ for c in ALL_CHECKS
+    }
+    assert run_directory_checks() == []
+
+
+def test_check_w001_baseline_role_in_entra_map():
+    with override_settings(ENTRA_GROUP_ROLE_MAP={"guid-1": roles.ADMIN, "guid-2": "Help Desk"}):
+        messages = checks.check_baseline_role_not_in_entra_map(None)
+    assert check_ids(messages) == ["directory.W001"]
+    assert "ENTRA_GROUP_ROLE_MAP" in messages[0].msg and messages[0].hint
+    with override_settings(ENTRA_GROUP_ROLE_MAP={"guid-1": roles.ADMIN}):
+        assert checks.check_baseline_role_not_in_entra_map(None) == []
+
+
+def test_check_w002_baseline_role_must_be_an_app_role():
+    with override_settings(AD_BASELINE_ROLE="Superuser"):
+        messages = checks.check_baseline_role_exists(None)
+    assert check_ids(messages) == ["directory.W002"]
+    assert "Superuser" in messages[0].msg and "Help Desk" in messages[0].hint
+    with override_settings(AD_BASELINE_ROLE=roles.AUDITOR):
+        assert checks.check_baseline_role_exists(None) == []
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [{"AD_BIND_DN": ""}, {"AD_BIND_PASSWORD": ""}, {"AD_BIND_DN": "", "AD_BIND_PASSWORD": ""}],
+)
+def test_check_w003_bind_credentials(overrides):
+    with override_settings(**overrides):
+        messages = checks.check_bind_credentials(None)
+    assert check_ids(messages) == ["directory.W003"]
+    for name in overrides:
+        assert name in messages[0].msg
+    assert SECRET not in messages[0].msg + messages[0].hint
+    assert checks.check_bind_credentials(None) == []
+
+
+def test_check_w004_ca_bundle_must_exist(tmp_path):
+    missing = tmp_path / "internal-ca.pem"
+    with override_settings(AD_CA_BUNDLE=str(missing)):
+        messages = checks.check_ca_bundle_exists(None)
+    assert check_ids(messages) == ["directory.W004"]
+    assert str(missing) in messages[0].msg
+    missing.write_text("-----BEGIN CERTIFICATE-----\n")
+    with override_settings(AD_CA_BUNDLE=str(missing)):
+        assert checks.check_ca_bundle_exists(None) == []
+    assert checks.check_ca_bundle_exists(None) == []  # unset: system trust store
+
+
+def test_check_w005_server_uris_must_be_ldaps():
+    with override_settings(AD_SERVER_URIS=["ldaps://dc1.test.invalid", "ldap://dc2.test.invalid"]):
+        messages = checks.check_server_uris_are_ldaps(None)
+    assert check_ids(messages) == ["directory.W005"]
+    assert "ldap://dc2.test.invalid" in messages[0].msg
+    assert "dc1" not in messages[0].msg
+    assert checks.check_server_uris_are_ldaps(None) == []
+    # Same case rule as Ldap3Client: the scheme is compared case-insensitively.
+    with override_settings(AD_SERVER_URIS=["LDAPS://dc1.test.invalid"]):
+        assert checks.check_server_uris_are_ldaps(None) == []
+
+
+def test_all_directory_checks_are_warnings_and_silent_when_disabled(tmp_path):
+    broken = dict(
+        ENTRA_GROUP_ROLE_MAP={"g": "Help Desk"},
+        AD_BASELINE_ROLE="Help Desk",
+        AD_BIND_DN="",
+        AD_CA_BUNDLE=str(tmp_path / "nope.pem"),
+        AD_SERVER_URIS=["ldap://dc.test.invalid"],
+    )
+    with override_settings(**broken):
+        messages = run_directory_checks()
+    assert check_ids(messages) == [
+        "directory.W001",
+        "directory.W003",
+        "directory.W004",
+        "directory.W005",
+    ]
+    assert all(isinstance(m, Warning) and m.level == WARNING for m in messages)
+    assert all(m.hint for m in messages)
+    with override_settings(
+        **{**broken, "AD_BASELINE_ROLE": "Nope", "ENTRA_GROUP_ROLE_MAP": {"g": "Nope"}}
+    ):
+        messages = run_directory_checks()
+    assert check_ids(messages) == [f"directory.W00{n}" for n in range(1, 6)]
+    assert all(m.level == WARNING for m in messages)
+
+    with override_settings(**broken, AD_ENABLED=False):
+        assert run_directory_checks() == []
+        assert all(check(None) == [] for check in ALL_CHECKS)
