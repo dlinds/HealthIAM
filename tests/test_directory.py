@@ -1072,6 +1072,49 @@ def test_sync_users_never_touches_unmanaged_logins(fake_directory, admin_user):
     assert User.objects.get(username="carol@test.invalid").is_active is False
 
 
+def test_privileged_logins_are_only_linked_by_guid(fake_directory):
+    # An unlinked superuser whose e-mail equals alice's mail attribute, and an unlinked
+    # Admin-role login whose username equals bob's UPN: neither may be linked by those
+    # attributes, which a delegated AD operator can edit.
+    root = factories.UserFactory(username="root", email="alice@test.invalid", is_superuser=True)
+    boss = factories.make_admin(username="bob@test.invalid", email="boss@example.org")
+    run = do_sync(scope="users")
+    users = run.summary["users"]
+    assert users["errors"] == 2 and users["created"] == 1  # carol still created (inactive)
+    messages = {e["code"]: e["message"] for e in run.log if e["action"] == "error"}
+    assert "has the Admin role and is not linked to AD yet" in messages["alice@test.invalid"]
+    assert "by e-mail only" in messages["alice@test.invalid"]
+    assert str(fake_guid("user:alice")) in messages["alice@test.invalid"]
+    assert "by username only" in messages["bob@test.invalid"]
+    for user, username in ((root, "root"), (boss, "bob@test.invalid")):
+        user.refresh_from_db()
+        assert user.username == username and user.is_active
+        assert user.ad_object_guid is None and user.ad_managed is False
+    assert not User.objects.filter(username="alice@test.invalid").exists()
+
+    # Once an administrator links the login by objectGUID it is synced like any other.
+    root.ad_object_guid = fake_guid("user:alice")
+    root.save(update_fields=["ad_object_guid"])
+    run = do_sync(scope="users")
+    root.refresh_from_db()
+    assert root.ad_managed and root.username == "alice@test.invalid" and root.is_superuser
+    assert run.summary["users"]["errors"] == 1  # boss is still waiting for a deliberate link
+
+
+def test_first_link_reactivation_is_labelled_in_the_log(fake_directory):
+    # A login deactivated in HealthIAM before it was ever linked: the preview must make the
+    # flip obvious, since the person is still an enabled member of IAM-Users.
+    factories.UserFactory(
+        username="alice@test.invalid", email="alice@test.invalid", is_active=False
+    )
+    run = do_sync(scope="users")
+    entry = log_for(run, "alice@test.invalid")[0]
+    assert entry["action"] == "reactivated"
+    assert "inactive in HealthIAM but an enabled member of IAM-Users" in entry["message"]
+    assert "linked to AD account" in entry["message"]
+    assert User.objects.get(username="alice@test.invalid").is_active
+
+
 def test_sync_users_renames_on_upn_change_and_errors_on_collision(fake_directory):
     do_sync(scope="users")
     alice = User.objects.get(username="alice@test.invalid")

@@ -167,7 +167,9 @@ Recommended order the first time:
    deactivated. Rows marked *linked to AD account* are existing logins (usually created by
    Entra sign-in) matched by UPN or e-mail; a login that is already linked to a different AD
    account is never matched by e-mail (two AD accounts sharing one mailbox each get their own
-   login). Apply.
+   login). Logins with the **Admin** role (or superusers) are never linked by UPN or e-mail:
+   the row is an error until you set **AD objectGUID** on that login in Django admin (Users →
+   login → Directory) to the value the error names. Apply.
 
 The same thing from the command line:
 
@@ -199,9 +201,16 @@ details, including the container name.
 
 - **AD owns `is_active` for managed logins.** For a login with the **AD** badge on the Users
   page, unticking *Account active* in the roles form is undone by the next sync if the person
-  is still an enabled member of IAM-Users; remove them from the group instead. Roles other
-  than the baseline, and analyst assignments, are never changed by the sync, so a
-  deactivated person who returns gets everything back.
+  is still an enabled member of IAM-Users; remove them from the group instead. The same
+  happens to a login that is not linked yet: its first link re-enables it when the AD account
+  is an enabled member (the preview shows the row as *reactivated*). Roles other than the
+  baseline, and analyst assignments, are never changed by the sync, so a deactivated person
+  who returns gets everything back.
+- **Admin logins are linked by hand.** A login with the Admin role or superuser flag is only
+  ever matched by objectGUID. Matching it by UPN or e-mail, both attributes a delegated AD
+  operator can edit, would let a different AD account take it over on the next scheduled run,
+  so such rows are errors until an administrator sets **AD objectGUID** on the login in
+  Django admin. Once linked, the login is synced like any other.
 - **Field precedence for hybrid logins.** A login that has signed in through Entra
   (`entra_object_id` set) keeps Entra as the owner of its name and e-mail:
 

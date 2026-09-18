@@ -186,6 +186,21 @@ def test_entra_login_never_takes_over_a_login_linked_to_another_oid(entra_backen
     assert list(entra_backend.filter_users_by_claims(claims)) == [victim]
 
 
+def test_entra_preferred_username_match_only_claims_sync_managed_logins(entra_backend):
+    # A local (or Entra-created) login that merely spells like someone's UPN is not handed
+    # to that Entra identity; the sync-created login with the same UPN is.
+    local = factories.UserFactory(username="ops@corp.example", email="ops-local@corp.example")
+    claims = {
+        "oid": str(uuid.uuid4()),
+        "preferred_username": "ops@corp.example",
+        "email": "someone-else@corp.example",
+    }
+    assert list(entra_backend.filter_users_by_claims(claims)) == []
+    local.ad_managed = True
+    local.save(update_fields=["ad_managed"])
+    assert list(entra_backend.filter_users_by_claims(claims)) == [local]
+
+
 def test_entra_login_falls_back_to_email_without_username_match(entra_backend):
     by_email = factories.UserFactory(username="someone", email="Alice@corp.example")
     claims = {

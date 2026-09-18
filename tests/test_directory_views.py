@@ -696,7 +696,10 @@ def test_users_page_marks_ad_managed_logins_and_explains_the_sync(as_user, admin
     assert "alert-info" in body and "Active Directory sync" in body
     assert "Account active" in body and "IAM-Users" in body and "Help Desk" in body
     resp = client.get(reverse("accounts:user_roles", args=[plain.pk]))
-    assert "alert-info" not in resp.content.decode()
+    body = resp.content.decode()
+    assert "alert-info" not in body
+    # A login the sync has not linked yet gets the softer note about what the next sync does.
+    assert "Not linked to Active Directory yet" in body and "IAM-Users" in body
 
 
 @override_settings(AD_ENABLED=False)
@@ -709,3 +712,6 @@ def test_users_footer_is_unchanged_when_ad_is_disabled(as_user, admin_user):
     resp = as_user(admin_user).get(reverse("accounts:user_roles", args=[managed.pk]))
     body = resp.content.decode()
     assert "alert-info" not in body and "managed by the" not in body
+    plain = factories.UserFactory(username="plain.local")
+    body = as_user(admin_user).get(reverse("accounts:user_roles", args=[plain.pk])).content.decode()
+    assert "Not linked to Active Directory yet" not in body

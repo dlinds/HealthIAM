@@ -115,7 +115,7 @@ the fields the Active Directory sync fills:
 |---|---|
 | `entra_object_id` | Set on first Entra ID sign-in; unique. When set, Entra owns `email`, `first_name`, `last_name` (the AD sync fills blanks only). |
 | `job_title`, `department_name` | Filled from AD `title` / `department` by the sync. |
-| `ad_object_guid` | objectGUID of the AD account; unique, the sync's primary match key. A login whose GUID differs from the entry's is an error row when matched by UPN (re-created account: clear the field to re-link) and is skipped when matched by e-mail (the entry gets its own login). |
+| `ad_object_guid` | objectGUID of the AD account; unique, the sync's primary match key. A login whose GUID differs from the entry's is an error row when matched by UPN (re-created account: clear the field to re-link) and is skipped when matched by e-mail (the entry gets its own login). Admin-role and superuser logins are only linked by GUID, set by hand in Django admin. |
 | `ad_sam_account_name`, `ad_distinguished_name` | Copied from AD for display and troubleshooting. |
 | `ad_synced_at` | Last time the sync saw the account (bumped on quiet runs too). |
 | `ad_managed` | Set the first time the sync creates or links the login, never cleared. For these logins AD owns `is_active` (disabled or removed from `IAM-Users` → inactive, back → active) and guarantees the baseline role (`AD_BASELINE_ROLE`). Logins with `ad_managed=False` are never touched by the sync. |

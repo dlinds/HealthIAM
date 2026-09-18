@@ -59,8 +59,9 @@ application in the catalog.
 If the on-prem AD sync is enabled (see `docs/ad-setup.md`), logins are usually created by
 the sync before the person ever signs in. Entra links to that login by the
 `preferred_username` claim (the UPN, compared case-insensitively) when no login carries
-the Entra object ID yet, so a first SSO sign-in does not create a duplicate account; the
-email address is only used when neither matches. Neither fallback ever picks a login that
+the Entra object ID yet, so a first SSO sign-in does not create a duplicate account; only
+logins the sync created or linked (`ad_managed`) are matched this way, and the email
+address is only used when neither matches. Neither fallback ever picks a login that
 is already bound to a *different* Entra object ID: a UPN or mailbox handed to a new person
 gets a new login (the skipped match is logged as a warning) instead of the previous
 holder's roles. Logins created by Entra get a lowercased username so the sync recognises

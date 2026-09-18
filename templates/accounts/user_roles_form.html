@@ -19,6 +19,12 @@
           and guarantees the <strong>{{ ad_baseline_role }}</strong> baseline role: unticking either here is undone by the next sync.
           Other roles assigned here are kept.
         </div>
+        {% elif AD_ENABLED %}
+        <div class="alert alert-light border small">
+          <i class="bi bi-info-circle me-1"></i>Not linked to Active Directory yet. If this person is an enabled member of
+          <span class="text-mono">{{ ad_user_group }}</span>, the next AD sync links this login and re-enables it;
+          remove them from the group to keep them out. Admin logins are only linked by objectGUID, set by hand in Django admin.
+        </div>
         {% endif %}
         <form method="post">
           {% csrf_token %}

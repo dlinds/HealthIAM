@@ -24,6 +24,7 @@ from django.db import transaction
 from django.utils import timezone
 from django.views.decorators.debug import sensitive_variables
 
+from apps.accounts import roles
 from apps.accounts.models import User
 from apps.orgs.importers import ImportResult
 
@@ -229,6 +230,11 @@ class _UserSync:
         self.baseline_member_ids: set[int] = set(
             self.baseline_group.user_set.values_list("pk", flat=True)
         )
+        # Admin-role logins (and superusers) are only ever linked by objectGUID: a mutable
+        # directory attribute such as mail must never hand one to a different AD account.
+        self.admin_ids: set[int] = set(
+            User.objects.filter(groups__name=roles.ADMIN).values_list("pk", flat=True)
+        )
         self.protected_ids: set[int] = set()
         self.seen_guids: set = set()
         self.unmatchable = 0
@@ -264,10 +270,17 @@ class _UserSync:
             raise RowError("Duplicate objectGUID in the listing; later entry ignored.")
         self.seen_guids.add(member.guid)
 
+    def is_privileged(self, user: User) -> bool:
+        return user.is_superuser or user.pk in self.admin_ids
+
     def match(self, member: DirectoryUser, username: str, mail: str) -> User | None:
         user = self.by_guid.get(member.guid)
-        if user is None:
-            user = self.by_username.get(username)
+        if user is not None:
+            return user
+        how = ""
+        user = self.by_username.get(username)
+        if user is not None:
+            how = "username"
         if (
             user is not None
             and user.ad_object_guid is not None
@@ -290,6 +303,15 @@ class _UserSync:
                 raise RowError(f"Ambiguous email match: {len(hits)} logins have {mail} ({names}).")
             if hits:
                 user = hits[0]
+                how = "e-mail"
+        if user is not None and user.ad_object_guid is None and self.is_privileged(user):
+            # Linking by UPN or mail would let whoever controls those AD attributes take over
+            # an Admin login on the next scheduled run. Privileged logins are linked by hand.
+            raise RowError(
+                f"Login {user.username!r} has the Admin role and is not linked to AD yet; it "
+                f"matched this entry by {how} only. To link it deliberately, set "
+                f"'AD objectGUID' to {member.guid} on the login in Django admin."
+            )
         return user
 
     def index(self, user: User) -> None:
@@ -329,6 +351,7 @@ class _UserSync:
     def update(self, user: User, member: DirectoryUser, username: str) -> tuple[str, str]:
         changed: list[str] = []
         notes: list[str] = []
+        first_link = user.ad_object_guid is None
 
         if user.username != username:
             other = self.by_username.get(username)
@@ -381,7 +404,11 @@ class _UserSync:
         if member.enabled and not user.is_active:
             user.is_active = True
             changed.append("is_active")
-            notes.append(f"enabled member of {self.cfg.user_group} again")
+            notes.append(
+                f"inactive in HealthIAM but an enabled member of {self.cfg.user_group}"
+                if first_link
+                else f"enabled member of {self.cfg.user_group} again"
+            )
             action = "reactivated"
         elif not member.enabled and user.is_active:
             user.is_active = False

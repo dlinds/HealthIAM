@@ -50,7 +50,9 @@ class EntraOIDCBackend(OIDCAuthenticationBackend):
             candidates = candidates.filter(entra_object_id__isnull=True)
         preferred_username = claims.get("preferred_username")
         if preferred_username:
-            by_username = candidates.filter(username__iexact=preferred_username)
+            # Only logins the AD sync created or linked carry a UPN as their username; a local
+            # login that merely shares the spelling must not be claimable through this claim.
+            by_username = candidates.filter(username__iexact=preferred_username, ad_managed=True)
             if by_username.exists():
                 return by_username
             self._warn_linked_elsewhere(
