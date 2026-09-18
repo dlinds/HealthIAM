@@ -159,6 +159,33 @@ def test_entra_login_prefers_oid_over_preferred_username(entra_backend):
     assert list(entra_backend.filter_users_by_claims(claims)) == [by_oid]
 
 
+def test_entra_login_never_takes_over_a_login_linked_to_another_oid(entra_backend, caplog):
+    # A leaver's UPN and mailbox reassigned to a joiner: the joiner's Entra identity must not
+    # sign in as the leaver's (possibly Admin) login.
+    victim = factories.UserFactory(
+        username="bob@corp.example", email="bob@corp.example", entra_object_id=uuid.uuid4()
+    )
+    claims = {
+        "oid": str(uuid.uuid4()),
+        "preferred_username": "Bob@corp.example",
+        "email": "bob@corp.example",
+    }
+    with caplog.at_level("WARNING", logger="apps.accounts.backends"):
+        assert list(entra_backend.filter_users_by_claims(claims)) == []
+    assert "linked to another Entra identity" in caplog.text
+    assert "'bob@corp.example'" in caplog.text
+    victim.refresh_from_db()
+    assert victim.entra_object_id != uuid.UUID(claims["oid"])
+
+    # Without an oid the identity cannot be told apart, so the pre-existing behaviour stands.
+    claims_without_oid = {"preferred_username": "bob@corp.example"}
+    assert list(entra_backend.filter_users_by_claims(claims_without_oid)) == [victim]
+    # An unbound login with the same username is still linked.
+    victim.entra_object_id = None
+    victim.save()
+    assert list(entra_backend.filter_users_by_claims(claims)) == [victim]
+
+
 def test_entra_login_falls_back_to_email_without_username_match(entra_backend):
     by_email = factories.UserFactory(username="someone", email="Alice@corp.example")
     claims = {

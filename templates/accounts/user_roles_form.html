@@ -12,7 +12,7 @@
         <h1 class="h4">{{ subject.display_name }}</h1>
         <p class="text-body-secondary">{{ subject.email }} · {{ subject.username }}</p>
         <p>Current: {% for l in labels %}<span class="badge text-bg-secondary me-1">{{ l }}</span>{% empty %}<span class="text-body-tertiary">no role</span>{% endfor %}</p>
-        {% if subject.ad_managed %}
+        {% if AD_ENABLED and subject.ad_managed %}
         <div class="alert alert-info small">
           <i class="bi bi-info-circle me-1"></i>This login is managed by the <strong>Active Directory sync</strong>.
           AD controls <strong>Account active</strong> (the account is enabled in AD and a member of <span class="text-mono">{{ ad_user_group }}</span>)

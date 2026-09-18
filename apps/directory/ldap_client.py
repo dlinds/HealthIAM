@@ -59,6 +59,8 @@ GROUP_FILTER = "(objectCategory=group)"
 # LDAP_MATCHING_RULE_IN_CHAIN: transitive group membership, evaluated on the server.
 CHAIN_RULE = "1.2.840.113556.1.4.1941"
 UAC_ACCOUNTDISABLE = 0x2
+# LDAP result codes ldap3 deliberately does not raise for; the listing is incomplete.
+TRUNCATED_RESULTS = {3: "timeLimitExceeded", 4: "sizeLimitExceeded"}
 
 _GENERALIZED_TIME = re.compile(r"^(?P<stamp>\d{14})(?:[.,]\d+)?(?P<tz>Z|[+-]\d{2}(?:\d{2})?)?$")
 
@@ -324,15 +326,17 @@ class Ldap3Client(DirectoryClient):
         from ldap3.core import exceptions as ldap_exc
 
         ldap3.set_config_parameter("POOLING_LOOP_TIMEOUT", 1)
-        tls = ldap3.Tls(validate=ssl.CERT_REQUIRED, ca_certs_file=cfg.ca_bundle or None)
-        servers = [
-            ldap3.Server(
-                uri, use_ssl=True, tls=tls, get_info=ldap3.NONE, connect_timeout=cfg.timeout
-            )
-            for uri in cfg.server_uris
-        ]
-        pool = ldap3.ServerPool(servers, ldap3.FIRST, active=1, exhaust=True)
+        # Tls/Server validate their arguments eagerly (a missing CA bundle, a bad port), so
+        # they belong inside the try: a configuration error is a DirectoryError too.
         try:
+            tls = ldap3.Tls(validate=ssl.CERT_REQUIRED, ca_certs_file=cfg.ca_bundle or None)
+            servers = [
+                ldap3.Server(
+                    uri, use_ssl=True, tls=tls, get_info=ldap3.NONE, connect_timeout=cfg.timeout
+                )
+                for uri in cfg.server_uris
+            ]
+            pool = ldap3.ServerPool(servers, ldap3.FIRST, active=1, exhaust=True)
             conn = ldap3.Connection(
                 pool,
                 user=cfg.bind_dn or None,
@@ -373,7 +377,23 @@ class Ldap3Client(DirectoryClient):
             return []
         except (ldap_exc.LDAPException, OSError) as exc:
             raise self._translate(exc) from None
+        self._check_complete(conn, base)
         return [item for item in conn.response or [] if item.get("type") == "searchResEntry"]
+
+    @staticmethod
+    def _check_complete(conn, base: str) -> None:
+        """Fail on a listing the server cut short.
+
+        ldap3 never raises for sizeLimitExceeded (4) or timeLimitExceeded (3), even with
+        `raise_exceptions=True`; a partial page set would otherwise pass as a complete listing
+        and the missing pass would deactivate the members that were cut off.
+        """
+        result = getattr(conn, "result", None) or {}
+        if result.get("result") in TRUNCATED_RESULTS:
+            description = result.get("description") or TRUNCATED_RESULTS[result["result"]]
+            raise DirectoryError(
+                f"Search under {base!r} was truncated by the server ({description})"
+            )
 
     def _paged(self, base: str, search_filter: str, attributes) -> Iterator[dict]:
         from ldap3.core import exceptions as ldap_exc
@@ -392,6 +412,8 @@ class Ldap3Client(DirectoryClient):
                 if item.get("type") != "searchResEntry":
                     continue
                 yield item
+            # conn.result survives the exhausted generator (only conn.response is reset).
+            self._check_complete(conn, base)
         except ldap_exc.LDAPNoSuchObjectResult:
             # A silent empty listing would look like "nothing there"; a wrong search base is a
             # configuration error and must fail the run instead.
@@ -420,6 +442,10 @@ class Ldap3Client(DirectoryClient):
             info.ok = False
             info.server = self.server_label
             info.error = str(exc)
+        except Exception as exc:  # noqa: BLE001 - the card must report, never crash
+            info.ok = False
+            info.server = self.server_label
+            info.error = self._redact(f"{type(exc).__name__}: {exc}")
         info.elapsed_ms = int((perf_counter() - started) * 1000)
         return info
 

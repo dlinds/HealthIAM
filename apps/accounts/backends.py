@@ -2,7 +2,8 @@
 
 Matches users by Entra object ID first, then username (the ``preferred_username``
 claim, which is the UPN the Active Directory sync stores as the login name), then
-email; creates users on first login with a lowercased username; keeps names in sync;
+email, where the last two never match a login already bound to a different Entra
+object ID; creates users on first login with a lowercased username; keeps names in sync;
 and applies the ENTRA_GROUP_ROLE_MAP so that membership in a mapped Entra group is
 the source of truth for that app role. The AD baseline role (``AD_BASELINE_ROLE``)
 is owned by the directory sync for ``ad_managed`` logins and is never revoked here.
@@ -38,19 +39,43 @@ class EntraOIDCBackend(OIDCAuthenticationBackend):
 
     def filter_users_by_claims(self, claims):
         oid = claims.get("oid")
+        candidates = self.UserModel.objects.all()
         if oid:
-            by_oid = self.UserModel.objects.filter(entra_object_id=oid)
+            by_oid = candidates.filter(entra_object_id=oid)
             if by_oid.exists():
                 return by_oid
+            # No login carries this identity, so the username and email fallbacks may only
+            # link a login that is not yet bound to another Entra identity; otherwise a
+            # reassigned UPN or mailbox would sign in as the previous holder's login.
+            candidates = candidates.filter(entra_object_id__isnull=True)
         preferred_username = claims.get("preferred_username")
         if preferred_username:
-            by_username = self.UserModel.objects.filter(username__iexact=preferred_username)
+            by_username = candidates.filter(username__iexact=preferred_username)
             if by_username.exists():
                 return by_username
+            self._warn_linked_elsewhere(
+                oid, "preferred_username", username__iexact=preferred_username
+            )
         email = _email_from(claims)
         if email:
-            return self.UserModel.objects.filter(email__iexact=email)
+            by_email = candidates.filter(email__iexact=email)
+            if not by_email.exists():
+                self._warn_linked_elsewhere(oid, "email", email__iexact=email)
+            return by_email
         return self.UserModel.objects.none()
+
+    def _warn_linked_elsewhere(self, oid, claim, **lookup):
+        if not oid:
+            return
+        for user in self.UserModel.objects.filter(entra_object_id__isnull=False, **lookup):
+            logger.warning(
+                "Entra login %s matches login %r by %s, but that login is linked to another "
+                "Entra identity (%s); not matched",
+                oid,
+                user.username,
+                claim,
+                user.entra_object_id,
+            )
 
     def create_user(self, claims):
         email = _email_from(claims)

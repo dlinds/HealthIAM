@@ -69,8 +69,12 @@ class SyncResult(ImportResult):
 
     @property
     def summary(self) -> dict:
+        """`ImportResult.summary` plus `skipped` and `read`: `rows` counts every entry
+        including the synthetic row-0 ones from the missing pass, `read` only the directory
+        entries the listing returned."""
         data = super().summary
         data["skipped"] = len(self.skipped)
+        data["read"] = sum(1 for entry in self.entries if entry["row"])
         return data
 
     @property
@@ -170,6 +174,10 @@ def run_sync(
     except Exception as exc:  # noqa: BLE001 - recorded on the run, surfaced to the user
         run.status = DirectorySyncRun.Status.FAILED
         run.error = redact(f"{type(exc).__name__}: {exc}")[:MAX_ERROR]
+        # A failed apply must not keep showing the counts and rows of its preview.
+        run.summary = {}
+        run.log = []
+        run.group_dn = ""
         run.finished_at = timezone.now()
         run.save()
         # A DirectoryError already says everything; its traceback would only repeat the raw
@@ -235,6 +243,8 @@ class _UserSync:
             self.protected_ids.add(self.by_username[username].pk)
         if mail:
             for user in self.by_email.get(mail, []):
+                if member.guid is not None and user.ad_object_guid not in (None, member.guid):
+                    continue  # bound to another AD account: cannot be this entry's login
                 self.protected_ids.add(user.pk)
         if member.guid is None and not username and not mail:
             self.unmatchable += 1
@@ -258,22 +268,28 @@ class _UserSync:
         user = self.by_guid.get(member.guid)
         if user is None:
             user = self.by_username.get(username)
-        if user is None and mail:
-            hits = self.by_email.get(mail, [])
-            if len(hits) > 1:
-                names = ", ".join(sorted(u.username for u in hits))
-                raise RowError(f"Ambiguous email match: {len(hits)} logins have {mail} ({names}).")
-            if hits:
-                user = hits[0]
         if (
             user is not None
             and user.ad_object_guid is not None
             and user.ad_object_guid != member.guid
         ):
+            # Same UPN, different objectGUID: the AD account was re-created (or the UPN was
+            # handed to someone else). Never relink silently; tell the operator the way out.
             raise RowError(
                 f"Login {user.username!r} is already linked to another AD account "
-                f"({user.ad_object_guid})."
+                f"({user.ad_object_guid}). If the AD account was re-created, clear "
+                "'AD objectGUID' on the login in Django admin and run the sync again."
             )
+        if user is None and mail:
+            # A login already bound to another AD account is provably not this entry's login
+            # (GUID is authoritative), e.g. a regular and an admin account sharing one mail:
+            # it neither matches nor makes the match ambiguous, so the entry gets its own login.
+            hits = [u for u in self.by_email.get(mail, []) if u.ad_object_guid is None]
+            if len(hits) > 1:
+                names = ", ".join(sorted(u.username for u in hits))
+                raise RowError(f"Ambiguous email match: {len(hits)} logins have {mail} ({names}).")
+            if hits:
+                user = hits[0]
         return user
 
     def index(self, user: User) -> None:

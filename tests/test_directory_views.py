@@ -266,6 +266,28 @@ def test_group_list_filters_and_references_for_help_desk(as_user, help_desk_user
     assert resp.context["unreferenced"] is True
 
 
+def test_group_list_paginates_past_fifty_groups_keeping_the_filters(as_user, help_desk_user):
+    for i in range(60):
+        factories.ADGroupFactory(name=f"APP_GROUP_{i:02d}")
+    client = as_user(help_desk_user)
+    url = reverse("directory:group_list")
+    resp = client.get(url, {"q": "GROUP", "active": "all"})
+    assert resp.status_code == 200
+    body = resp.content.decode()
+    assert len(resp.context["object_list"]) == 50 and resp.context["page_obj"].number == 1
+    assert "1–50 of 60" in body and "Page 1 of 2" in body
+    # Page 1 has no previous page: the link is a disabled span, not an EmptyPage crash.
+    assert 'href="?' not in body.split('class="pagination')[1].split("Page 1 of 2")[0]
+    assert "page=2" in body and "q=GROUP" in body and "active=all" in body
+
+    resp = client.get(url, {"q": "GROUP", "active": "all", "page": 2})
+    assert resp.status_code == 200
+    body = resp.content.decode()
+    assert len(resp.context["object_list"]) == 10 and "51–60 of 60" in body
+    assert "page=1" in body and "q=GROUP" in body
+    assert body.count('class="page-link" href="?') == 1  # only Previous is a link on the last page
+
+
 def test_group_list_shows_admin_link_and_unsynced_note_for_admin(as_user, admin_user):
     resp = as_user(admin_user).get(reverse("directory:group_list"))
     assert resp.status_code == 200
@@ -581,6 +603,7 @@ def test_run_detail_shows_problems_stale_and_skipped(as_user, admin_user):
                 "errors": 1,
                 "rows": 4,
                 "skipped": 1,
+                "read": 3,
             },
             "groups": None,
         },
@@ -594,6 +617,7 @@ def test_run_detail_shows_problems_stale_and_skipped(as_user, admin_user):
     body = resp.content.decode()
     assert "Entries with errors (1)" in body and "No UPN" in body
     assert "Changes (2)" in body and "Missing-member pass skipped" in body
+    assert "3 directory entries read" in body  # `read`, not `rows` (which counts row 0 too)
     assert body.count("<th>Kind</th>") == 2
     assert [e["code"] for e in resp.context["problems"]] == ["x@t"]
     assert [e["action"] for e in resp.context["changes"]] == ["updated", "skipped"]
@@ -680,3 +704,8 @@ def test_users_footer_is_unchanged_when_ad_is_disabled(as_user, admin_user):
     body = as_user(admin_user).get(reverse("accounts:user_list")).content.decode()
     assert "Users are created on first SSO sign-in." in body
     assert "Active Directory sync" not in body
+    # A login synced before AD was switched off: no sync can undo anything now, so no note.
+    managed = factories.UserFactory(username="alice@test.invalid", ad_managed=True)
+    resp = as_user(admin_user).get(reverse("accounts:user_roles", args=[managed.pk]))
+    body = resp.content.decode()
+    assert "alert-info" not in body and "managed by the" not in body

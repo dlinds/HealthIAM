@@ -31,7 +31,7 @@
 {% if run.is_stale %}<div class="alert alert-warning">This run was still pending after {{ run.started_at|date:"Y-m-d H:i" }} and never recorded an outcome: the worker stopped (timeout or restart) while it was reading from AD. Nothing was written. Start a new sync; if it happens again, raise the reverse-proxy and gunicorn timeouts or use the scheduled command.</div>{% endif %}
 
 {% for kind, s in parts %}
-<div class="d-flex align-items-center gap-2 mb-1"><span class="badge text-bg-dark text-capitalize">{{ kind }}</span><span class="small text-body-secondary">{{ s.rows }} directory entr{{ s.rows|pluralize:"y,ies" }} read</span></div>
+<div class="d-flex align-items-center gap-2 mb-1"><span class="badge text-bg-dark text-capitalize">{{ kind }}</span><span class="small text-body-secondary">{{ s.read }} directory entr{{ s.read|pluralize:"y,ies" }} read</span></div>
 <div class="row g-2 mb-3">
   <div class="col-6 col-md-2 col-xl"><div class="card text-center"><div class="card-body py-2"><div class="fs-4">{{ s.created }}</div><div class="small text-body-secondary">Created</div></div></div></div>
   <div class="col-6 col-md-2 col-xl"><div class="card text-center"><div class="card-body py-2"><div class="fs-4">{{ s.updated }}</div><div class="small text-body-secondary">Updated</div></div></div></div>

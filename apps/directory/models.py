@@ -13,6 +13,7 @@ from django.db import models
 from django.db.models.functions import Lower
 from django.urls import reverse
 from django.utils import timezone
+from django.utils.http import urlencode
 
 from apps.core.models import TimeStampedModel
 
@@ -57,7 +58,7 @@ class ADGroup(TimeStampedModel):
         return self.name
 
     def get_absolute_url(self):
-        return reverse("directory:group_list") + f"?q={self.name}"
+        return reverse("directory:group_list") + "?" + urlencode({"q": self.name})
 
     def deactivate(self, save=True):
         if self.is_active:

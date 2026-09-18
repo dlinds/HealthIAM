@@ -295,6 +295,7 @@ class _StubConnection:
         self.paged_calls = []
         self.paged_items = []
         self.paged_error = None
+        self.result = {"result": 0, "description": "success"}
         self.unbound = False
         self.extend = type("Extend", (), {})()
         self.extend.standard = type("Standard", (), {})()
@@ -397,6 +398,63 @@ def test_ldap3_client_connects_with_the_planned_parameters(stub_ldap3):
     client.close()
     assert conn.unbound is True
     assert client._conn is None
+
+
+def test_ldap3_client_configuration_errors_are_directory_errors(stub_ldap3, monkeypatch):
+    import ldap3
+    from ldap3.core import exceptions as ldap_exc
+
+    class BrokenTls:
+        def __init__(self, **kwargs):
+            raise ldap_exc.LDAPSSLConfigurationError("invalid CA public key file")
+
+    stub_tls = ldap3.Tls  # the fixture's stand-in
+    monkeypatch.setattr(ldap3, "Tls", BrokenTls)
+    client = Ldap3Client(make_settings(ca_bundle="/nonexistent/ca.pem"))
+    with pytest.raises(DirectoryError, match="LDAPSSLConfigurationError: invalid CA public key"):
+        client.resolve_group_dn("IAM-Users")
+    info = client.test_connection()
+    assert info.ok is False and "invalid CA public key file" in info.error
+    assert client._conn is None
+
+    # An exception outside the ldap3 hierarchy still fills in the card instead of escaping.
+    def unexpected(pool, **kwargs):
+        raise ValueError(f"port must be an integer ({SECRET})")
+
+    monkeypatch.setattr(ldap3, "Tls", stub_tls)
+    monkeypatch.setattr(ldap3, "Connection", unexpected)
+    info = Ldap3Client(make_settings()).test_connection()
+    assert info.ok is False and info.error.startswith("ValueError: port must be an integer")
+    assert SECRET not in info.error
+
+
+def test_ldap3_client_truncated_listings_are_errors(stub_ldap3):
+    client = Ldap3Client(make_settings())
+    client._connect()
+    conn = stub_ldap3["conn"]
+    entry = {
+        "type": "searchResEntry",
+        "dn": "CN=alice,OU=People,DC=test,DC=invalid",
+        "raw_attributes": {"objectGUID": [uuid.UUID(int=1).bytes_le]},
+    }
+    conn.paged_items = [entry]
+    conn.result = {"result": 4, "description": "sizeLimitExceeded"}
+    with pytest.raises(DirectoryError, match="was truncated by the server .sizeLimitExceeded"):
+        list(client.iter_user_members("CN=IAM-Users,OU=IAM,DC=test,DC=invalid"))
+    conn.result = {"result": 3, "description": "timeLimitExceeded"}
+    with pytest.raises(DirectoryError, match="'OU=Groups,DC=test,DC=invalid' was truncated"):
+        list(client.iter_groups("OU=Groups,DC=test,DC=invalid"))
+    conn.result = {"result": 0, "description": "success"}
+    assert len(list(client.iter_groups("OU=Groups,DC=test,DC=invalid"))) == 1
+
+    # The unpaged search used by resolve_group_dn checks the same thing.
+    def search(base, search_filter, search_scope, attributes):
+        conn.response = [entry]
+        conn.result = {"result": 4, "description": "sizeLimitExceeded"}
+
+    conn.search = search
+    with pytest.raises(DirectoryError, match="truncated"):
+        client.resolve_group_dn("IAM-Users")
 
 
 def test_ldap3_client_no_ca_bundle_still_requires_a_valid_certificate(stub_ldap3):
@@ -532,6 +590,13 @@ def test_ldap3_client_test_connection_reports_base_and_group(stub_ldap3):
 # --- Fake directory -----------------------------------------------------------------
 
 
+def test_adgroup_absolute_url_encodes_the_name(db):
+    group = factories.ADGroupFactory(name="Domain Users")
+    assert group.get_absolute_url() == "/directory/groups/?q=Domain+Users"
+    group = factories.ADGroupFactory(name="APP_A&B#C")
+    assert group.get_absolute_url() == "/directory/groups/?q=APP_A%26B%23C"
+
+
 def test_fake_directory_fixture_replaces_build_client(fake_directory):
     assert sync.build_client() is fake_directory
     assert isinstance(fake_directory, FakeDirectory)
@@ -659,13 +724,17 @@ USERS_EMPTY = {
     "errors": 0,
     "rows": 0,
     "skipped": 0,
+    "read": 0,
 }
 IAM_USERS_DN = "CN=IAM-Users,OU=IAM,DC=test,DC=invalid"
 
 
 def summary(**overrides) -> dict:
+    """Expected summary dict; `read` defaults to `rows` (no synthetic row-0 entries)."""
     data = dict(USERS_EMPTY)
     data.update(overrides)
+    if "read" not in overrides:
+        data["read"] = data["rows"]
     return data
 
 
@@ -692,7 +761,8 @@ def test_sync_result_records_kind_dn_and_skipped():
     result.record(2, "b@test.invalid", "unchanged", dn="CN=b")
     result.record(3, "c@test.invalid", "error", "No objectGUID", dn="CN=c")
     result.record(0, "IAM-Users", "skipped", "Missing pass skipped")
-    assert result.summary == summary(created=1, unchanged=1, errors=1, skipped=1, rows=4)
+    # `rows` counts every entry, `read` only the directory entries (row 0 is synthetic).
+    assert result.summary == summary(created=1, unchanged=1, errors=1, skipped=1, rows=4, read=3)
     assert result.entries[0] == {
         "kind": "users",
         "row": 1,
@@ -821,12 +891,80 @@ def test_sync_users_ambiguous_email_and_already_linked_are_errors(fake_directory
     assert set(errors) == {"carol@test.invalid", "bob@test.invalid"}
     assert "Ambiguous email match: 2 logins" in errors["carol@test.invalid"]["message"]
     assert "already linked to another AD account" in errors["bob@test.invalid"]["message"]
+    assert "clear 'AD objectGUID'" in errors["bob@test.invalid"]["message"]
     assert errors["bob@test.invalid"]["kind"] == "users"
     assert run.total_errors == 2
     linked.refresh_from_db()
     assert linked.ad_managed is False and linked.is_active
     assert not User.objects.filter(username="carol@test.invalid").exists()
     assert User.objects.filter(username="alice@test.invalid").exists()
+
+
+def test_recreated_ad_account_errors_until_the_guid_is_cleared(fake_directory):
+    do_sync(scope="users")
+    alice = User.objects.get(username="alice@test.invalid")
+    # IT deletes and re-creates the account: same UPN, new objectGUID.
+    fake_directory.update_user("alice", guid=uuid.uuid4())
+    run = do_sync(scope="users")
+    assert run.summary["users"] == summary(unchanged=2, errors=1, rows=3, read=3)
+    (entry,) = log_for(run, "alice@test.invalid")
+    assert entry["action"] == "error"
+    assert "If the AD account was re-created, clear 'AD objectGUID'" in entry["message"]
+    alice.refresh_from_db()
+    assert alice.ad_object_guid == fake_guid("user:alice") and alice.is_active
+
+    # The documented remedy: clear the GUID in Django admin, run again -> relinked by UPN.
+    alice.ad_object_guid = None
+    alice.save()
+    run = do_sync(scope="users")
+    assert run.summary["users"] == summary(updated=1, unchanged=2, rows=3, read=3)
+    alice.refresh_from_db()
+    assert alice.ad_object_guid == fake_directory._find_user("alice").guid
+    assert "linked to AD account" in log_for(run, "alice@test.invalid")[0]["message"]
+
+
+def test_email_hit_linked_to_another_ad_account_is_not_a_match(fake_directory):
+    # (a) a regular and an admin account share one mailbox; (b) alice's mail is handed to a new
+    # account. Either way the existing login is provably not this entry's login (GUID rules),
+    # so the entry gets its own login instead of a permanent error row.
+    fake_directory.add_user("dave", mail="alice@test.invalid", given="Dave", sn="Dunn")
+    fake_directory.add_member("IAM-Users", "dave")
+    run = do_sync(scope="users")
+    assert run.summary["users"] == summary(created=4, rows=4, read=4)
+    alice = User.objects.get(username="alice@test.invalid")
+    dave = User.objects.get(username="dave@test.invalid")
+    assert alice.ad_object_guid == fake_guid("user:alice")
+    assert dave.ad_object_guid == fake_guid("user:dave") and dave.email == "alice@test.invalid"
+
+    # Second run: both match by GUID; nothing changes and nothing errors.
+    run = do_sync(scope="users")
+    assert run.summary["users"] == summary(unchanged=4, rows=4, read=4)
+
+    # alice's mail changes and a new account `zed` takes the old address.
+    fake_directory.update_user("alice", mail="alice.new@test.invalid")
+    fake_directory.remove_member("IAM-Users", "dave")
+    fake_directory.add_user("zed", mail="alice@test.invalid")
+    fake_directory.add_member("IAM-Users", "zed")
+    run = do_sync(scope="users")
+    assert run.summary["users"] == summary(
+        created=1, updated=1, deactivated=1, unchanged=2, rows=5, read=4
+    )
+    assert User.objects.get(username="zed@test.invalid").ad_object_guid == fake_guid("user:zed")
+    alice.refresh_from_db()
+    assert alice.email == "alice.new@test.invalid"
+    # dave left the group; zed's mail does not shield dave's (differently linked) login.
+    dave.refresh_from_db()
+    assert dave.is_active is False
+    assert log_for(run, "dave@test.invalid")[0]["action"] == "deactivated"
+    # An unlinked login with that mail is still linked by email as before.
+    fake_directory.remove_member("IAM-Users", "zed")
+    unlinked = factories.UserFactory(username="erin.e", email="erin@test.invalid")
+    fake_directory.add_user("erin", mail="erin@test.invalid")
+    fake_directory.add_member("IAM-Users", "erin")
+    do_sync(scope="users")
+    unlinked.refresh_from_db()
+    assert unlinked.username == "erin@test.invalid"
+    assert unlinked.ad_object_guid == fake_guid("user:erin")
 
 
 def test_sync_users_validation_errors(fake_directory):
@@ -897,8 +1035,8 @@ def test_sync_users_deactivates_and_reactivates_keeping_roles(fake_directory):
     # Leaving the group deactivates; coming back reactivates. Nothing is deleted.
     fake_directory.remove_member("IAM-Users", "alice")
     run = do_sync(scope="users")
-    # `rows` counts log entries, so the missing-pass row is included.
-    assert run.summary["users"] == summary(deactivated=1, unchanged=2, rows=3)
+    # `rows` counts log entries, so the missing-pass row is included; `read` does not.
+    assert run.summary["users"] == summary(deactivated=1, unchanged=2, rows=3, read=2)
     alice.refresh_from_db()
     assert alice.is_active is False
     (entry,) = run.log
@@ -924,7 +1062,7 @@ def test_sync_users_never_touches_unmanaged_logins(fake_directory, admin_user):
     do_sync(scope="users")
     fake_directory.set_members("IAM-Users", ["alice"])
     run = do_sync(scope="users")
-    assert run.summary["users"] == summary(deactivated=1, unchanged=1, rows=2)  # bob only
+    assert run.summary["users"] == summary(deactivated=1, unchanged=1, rows=2, read=1)  # bob
     for user in (admin_user, local):
         user.refresh_from_db()
         assert user.is_active and user.ad_managed is False and user.ad_synced_at is None
@@ -965,7 +1103,7 @@ def test_row_errors_protect_matched_users_from_the_missing_pass(fake_directory):
     fake_directory.update_user("bob", guid=None)  # invalid entry, but bob is matchable by UPN
     fake_directory.remove_member("IAM-Users", "alice")
     run = do_sync(scope="users")
-    assert run.summary["users"] == summary(errors=1, deactivated=1, unchanged=1, rows=3)
+    assert run.summary["users"] == summary(errors=1, deactivated=1, unchanged=1, rows=3, read=2)
     assert User.objects.get(username="bob@test.invalid").is_active is True
     assert User.objects.get(username="alice@test.invalid").is_active is False
     assert {(e["code"], e["action"]) for e in run.log} == {
@@ -980,7 +1118,7 @@ def test_missing_pass_skipped_when_an_entry_is_unmatchable(fake_directory):
     fake_directory.remove_member("IAM-Users", "alice")
     run = do_sync(scope="users")
     assert run.status == DirectorySyncRun.Status.COMPLETED
-    assert run.summary["users"] == summary(errors=1, skipped=1, unchanged=1, rows=3)
+    assert run.summary["users"] == summary(errors=1, skipped=1, unchanged=1, rows=3, read=2)
     assert User.objects.get(username="alice@test.invalid").is_active is True
     skipped = [e for e in run.log if e["action"] == "skipped"]
     assert len(skipped) == 1
@@ -1059,6 +1197,19 @@ def test_connect_error_and_client_construction_error_record_a_failed_run(
     assert run.error == "RuntimeError: ldap3 is missing"
     assert run.server == ""
     assert DirectorySyncRun.objects.filter(status=DirectorySyncRun.Status.FAILED).count() == 2
+
+
+def test_failed_apply_drops_the_preview_counts_and_rows(fake_directory, admin_user):
+    run = do_sync(dry_run=True, created_by=admin_user)
+    assert run.status == DirectorySyncRun.Status.PREVIEWED
+    assert run.summary["users"]["created"] == 3 and len(run.log) == 6 and run.group_dn
+    fake_directory.fail_connect = True
+    run = run_sync(run, dry_run=False)
+    assert run.status == DirectorySyncRun.Status.FAILED
+    assert run.error.startswith("DirectoryUnavailable: ")
+    assert run.summary == {} and run.log == [] and run.group_dn == ""
+    assert run.total_errors == 0
+    assert not User.objects.filter(username="alice@test.invalid").exists()
 
 
 def test_run_sync_truncates_long_errors(fake_directory):
@@ -1182,7 +1333,7 @@ def test_sync_groups_creates_updates_renames_deactivates_and_reactivates(fake_di
 
     fake_directory.remove_group("APP_EPIC_RN")
     run = do_sync(scope="groups")
-    assert run.summary["groups"] == summary(deactivated=1, unchanged=2, rows=3)
+    assert run.summary["groups"] == summary(deactivated=1, unchanged=2, rows=3, read=2)
     epic = ADGroup.objects.get(name="APP_EPIC_RN")
     assert epic.is_active is False and epic.inactivated_at is not None
     (entry,) = run.log

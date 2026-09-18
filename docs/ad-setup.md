@@ -165,7 +165,9 @@ Recommended order the first time:
 2. **Users only.** Read the preview carefully: every member of IAM-Users gets a login and the
    baseline role, and every login that is already `ad_managed` but no longer a member is
    deactivated. Rows marked *linked to AD account* are existing logins (usually created by
-   Entra sign-in) matched by UPN or e-mail. Apply.
+   Entra sign-in) matched by UPN or e-mail; a login that is already linked to a different AD
+   account is never matched by e-mail (two AD accounts sharing one mailbox each get their own
+   login). Apply.
 
 The same thing from the command line:
 
@@ -233,8 +235,18 @@ details, including the container name.
   now**, or use the scheduled command, which has no request timeout at all.
 - **Username collisions.** When a UPN changes, the login is renamed to match; if another
   login already holds that username the entry is recorded as an error and nothing is renamed.
-- **Seeded demo groups** (`manage.py seed_demo`) are synthetic. The first real group sync
-  deactivates them.
+- **Re-created AD accounts.** objectGUID is the authoritative link. When IT deletes and
+  re-creates an account with the same UPN, the entry is recorded as an error every run
+  (*already linked to another AD account*) and the login is neither re-linked nor
+  reactivated. Clear **AD objectGUID** on that login in Django admin (Users → login →
+  Directory) and run the sync again; the next run links the new account by UPN.
+- **The wrong group.** The empty-listing guard does not help when `AD_USER_GROUP` points at
+  an existing but wrong group: every managed login outside it is deactivated, and the
+  scheduled command applies without a preview. Prefer the DN, and preview from the admin page
+  after changing the setting.
+- **Seeded demo data** (`manage.py seed_demo`) is synthetic: the demo groups and the demo
+  `helpdesk` login (marked sync-managed) are not in the real directory, so the first real sync
+  deactivates them. Do not seed demo data on a real instance.
 
 ## 10. Local demo without a domain controller
 

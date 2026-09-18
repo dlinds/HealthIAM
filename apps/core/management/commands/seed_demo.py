@@ -599,6 +599,7 @@ class Command(BaseCommand):
             "errors": 0,
             "rows": len(log),
             "skipped": 0,
+            "read": len(log),
         }
         DirectorySyncRun.objects.get_or_create(
             scope=DirectorySyncRun.Scope.GROUPS,

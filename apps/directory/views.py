@@ -34,8 +34,8 @@ PICKER_LIMIT = 15
 RECENT_RUNS = 10
 
 # The exact scheduled-job line from docs/deploy-truenas.md; shown on the admin page so the
-# operator can paste it into a TrueNAS cron job.
-SCHEDULE_COMMAND = "docker exec ix-healthiam-web-1 python manage.py sync_ad"
+# operator can paste it into a TrueNAS cron job. stdout is hidden so cron only mails errors.
+SCHEDULE_COMMAND = "docker exec ix-healthiam-web-1 python manage.py sync_ad >/dev/null"
 
 
 def _referencing_levels_by_name(names):
