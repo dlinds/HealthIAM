@@ -17,6 +17,7 @@ for _name in (
     "can_manage_roles",
     "can_manage_positions",
     "can_manage_orgs",
+    "can_manage_directory",
     "can_manage_vendors",
     "can_create_application",
     "can_edit_any_defaults",

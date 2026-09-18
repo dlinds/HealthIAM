@@ -1,8 +1,12 @@
 """Entra ID (Azure AD) OpenID Connect backend.
 
-Matches users by Entra object ID first, then email; creates users on first login;
-keeps names in sync; and applies the ENTRA_GROUP_ROLE_MAP so that membership in a
-mapped Entra group is the source of truth for that app role.
+Matches users by Entra object ID first, then username (the ``preferred_username``
+claim, which is the UPN the Active Directory sync stores as the login name), then
+email, where the last two never match a login already bound to a different Entra
+object ID; creates users on first login with a lowercased username; keeps names in sync;
+and applies the ENTRA_GROUP_ROLE_MAP so that membership in a mapped Entra group is
+the source of truth for that app role. The AD baseline role (``AD_BASELINE_ROLE``)
+is owned by the directory sync for ``ad_managed`` logins and is never revoked here.
 """
 
 from __future__ import annotations
@@ -35,18 +39,49 @@ class EntraOIDCBackend(OIDCAuthenticationBackend):
 
     def filter_users_by_claims(self, claims):
         oid = claims.get("oid")
+        candidates = self.UserModel.objects.all()
         if oid:
-            by_oid = self.UserModel.objects.filter(entra_object_id=oid)
+            by_oid = candidates.filter(entra_object_id=oid)
             if by_oid.exists():
                 return by_oid
+            # No login carries this identity, so the username and email fallbacks may only
+            # link a login that is not yet bound to another Entra identity; otherwise a
+            # reassigned UPN or mailbox would sign in as the previous holder's login.
+            candidates = candidates.filter(entra_object_id__isnull=True)
+        preferred_username = claims.get("preferred_username")
+        if preferred_username:
+            # Only logins the AD sync created or linked carry a UPN as their username; a local
+            # login that merely shares the spelling must not be claimable through this claim.
+            by_username = candidates.filter(username__iexact=preferred_username, ad_managed=True)
+            if by_username.exists():
+                return by_username
+            self._warn_linked_elsewhere(
+                oid, "preferred_username", username__iexact=preferred_username
+            )
         email = _email_from(claims)
         if email:
-            return self.UserModel.objects.filter(email__iexact=email)
+            by_email = candidates.filter(email__iexact=email)
+            if not by_email.exists():
+                self._warn_linked_elsewhere(oid, "email", email__iexact=email)
+            return by_email
         return self.UserModel.objects.none()
+
+    def _warn_linked_elsewhere(self, oid, claim, **lookup):
+        if not oid:
+            return
+        for user in self.UserModel.objects.filter(entra_object_id__isnull=False, **lookup):
+            logger.warning(
+                "Entra login %s matches login %r by %s, but that login is linked to another "
+                "Entra identity (%s); not matched",
+                oid,
+                user.username,
+                claim,
+                user.entra_object_id,
+            )
 
     def create_user(self, claims):
         email = _email_from(claims)
-        username = claims.get("preferred_username") or email or claims.get("oid")
+        username = (claims.get("preferred_username") or email or claims.get("oid")).lower()
         user = self.UserModel.objects.create_user(username=username, email=email)
         self._sync_profile(user, claims)
         user.save()
@@ -87,7 +122,9 @@ def apply_group_roles(user, entra_group_ids, mapping: dict | None = None) -> Non
     """Grant/revoke mapped roles based on Entra group membership.
 
     Only roles that appear in the mapping are touched; roles granted in-app that are
-    not mapped to an Entra group are left alone."""
+    not mapped to an Entra group are left alone. For a login managed by the Active
+    Directory sync (``ad_managed``) the AD baseline role is never revoked here, even
+    when it is mapped: the sync guarantees it to every IAM-Users member."""
     mapping = settings.ENTRA_GROUP_ROLE_MAP if mapping is None else mapping
     if not mapping:
         return
@@ -98,9 +135,10 @@ def apply_group_roles(user, entra_group_ids, mapping: dict | None = None) -> Non
         for gid, role in mapping.items()
         if role in roles.GROUP_ROLES and str(gid).lower() in member_of
     }
+    protected = {settings.AD_BASELINE_ROLE} if getattr(user, "ad_managed", False) else set()
     for role in managed_roles:
         group, _ = Group.objects.get_or_create(name=role)
         if role in should_have:
             user.groups.add(group)
-        else:
+        elif role not in protected:
             user.groups.remove(group)

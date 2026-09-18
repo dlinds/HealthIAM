@@ -1,0 +1,18 @@
+{# Result of Admin > Active Directory > Test connection (htmx fragment, swapped into #connection-result). #}
+{% if info.ok %}
+<div class="alert alert-success mb-0">
+  <div><i class="bi bi-check-circle-fill me-1"></i><strong>Connected</strong>{% if info.server %} to <span class="text-mono">{{ info.server }}</span>{% endif %}{% if info.elapsed_ms %} in {{ info.elapsed_ms }} ms{% endif %}.</div>
+  <ul class="mb-0 mt-1 small">
+    <li>Base DN {% if info.base_dn_found %}found{% else %}<span class="text-danger">not found</span>{% endif %}.</li>
+    <li>User group: {% if info.user_group_dn %}<span class="text-mono">{{ info.user_group_dn }}</span>{% else %}<span class="text-danger">not resolved</span>{% endif %}.</li>
+    {% for w in info.warnings %}<li class="text-warning-emphasis">{{ w }}</li>{% endfor %}
+  </ul>
+</div>
+{% else %}
+<div class="alert alert-danger mb-0">
+  <div><i class="bi bi-x-circle-fill me-1"></i><strong>Connection failed</strong>{% if info.server %} (<span class="text-mono">{{ info.server }}</span>){% endif %}.</div>
+  {% if info.error %}<div class="text-mono small mt-1">{{ info.error }}</div>{% endif %}
+  {% for w in info.warnings %}<div class="small mt-1">{{ w }}</div>{% endfor %}
+  <div class="small mt-2">Check the server URIs (DC FQDNs as on their certificates), the CA bundle and the service-account bind. See docs/ad-setup.md.</div>
+</div>
+{% endif %}

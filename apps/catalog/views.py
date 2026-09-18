@@ -10,6 +10,7 @@ from django_htmx.http import reswap, retarget, trigger_client_event
 
 from apps.accounts import permissions as perms
 from apps.accounts.mixins import PermissionCheckMixin, role_required
+from apps.directory import references
 
 from .forms import (
     AccessLevelForm,
@@ -99,6 +100,8 @@ def _detail_context(request, application):
     can_edit = perms.can_edit_application(user, application)
     can_edit_levels = perms.can_edit_access_levels(user, application)
     can_manage_analysts = perms.can_manage_analysts(user, application)
+    levels = list(application.access_levels.order_by("sort_order", "name"))
+    level_reference_status = references.status_for_levels(levels)
     return {
         "application": application,
         "object": application,
@@ -108,7 +111,9 @@ def _detail_context(request, application):
         .values("position_defaults__position")
         .distinct()
         .count(),
-        "levels": application.access_levels.order_by("sort_order", "name"),
+        "levels": levels,
+        "level_reference_status": level_reference_status,
+        "broken_level_count": sum(1 for r in level_reference_status.values() if r.is_broken),
         "aliases": application.aliases.all(),
         "analysts": application.analyst_assignments.select_related("user"),
         "tiers": application.support_tiers.select_related("contact", "contact__vendor"),

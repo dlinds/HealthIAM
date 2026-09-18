@@ -45,5 +45,18 @@
       </div>
     </div>
   </div>
+  {% if AD_ENABLED %}
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-header"><i class="bi bi-exclamation-triangle me-1"></i>Broken AD references</div>
+      <div class="card-body">
+        <p class="text-body-secondary small">Access levels whose AD group name was not returned by the last Active Directory sync, with the positions that receive them by default. Names outside the sync filter are not checked.</p>
+        <a class="btn btn-primary" href="{% url 'directory:broken_references' %}"><i class="bi bi-list-ul me-1"></i>View</a>
+        <a class="btn btn-outline-primary" href="{% url 'directory:broken_references' %}?format=xlsx"><i class="bi bi-file-earmark-excel me-1"></i>Download Excel</a>
+        <a class="btn btn-outline-primary" href="{% url 'directory:broken_references' %}?format=csv"><i class="bi bi-filetype-csv me-1"></i>Download CSV</a>
+      </div>
+    </div>
+  </div>
+  {% endif %}
 </div>
 {% endblock %}

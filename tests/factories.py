@@ -1,5 +1,8 @@
+import uuid
+
 import factory
 from django.contrib.auth.models import Group
+from django.utils import timezone
 
 from apps.accounts import roles
 from apps.accounts.models import User
@@ -105,3 +108,19 @@ def make_analyst(application, user, is_primary=False):
     return ApplicationAnalyst.objects.create(
         application=application, user=user, is_primary=is_primary
     )
+
+
+class ADGroupFactory(factory.django.DjangoModelFactory):
+    class Meta:
+        model = "directory.ADGroup"
+
+    object_guid = factory.LazyFunction(uuid.uuid4)
+    name = factory.Sequence(lambda n: f"APP_GROUP_{n}")
+    cn = factory.LazyAttribute(lambda o: o.name)
+    description = ""
+    distinguished_name = factory.LazyAttribute(lambda o: f"CN={o.cn},OU=Groups,DC=test,DC=invalid")
+    group_type = -2147483646  # global security group
+    scope = "global"
+    category = "security"
+    first_seen_at = factory.LazyFunction(timezone.now)
+    last_seen_at = factory.LazyAttribute(lambda o: o.first_seen_at)

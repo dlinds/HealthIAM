@@ -34,3 +34,6 @@ if settings.OIDC_ENABLED:
             name="oidc_authentication_callback",
         ),
     ]
+
+if settings.AD_ENABLED:
+    urlpatterns += [path("", include("apps.directory.urls"))]

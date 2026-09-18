@@ -307,6 +307,9 @@ class AccessLevel(ApplicationChildAuditMixin, TimeStampedModel):
     def __str__(self):
         return f"{self.application.name} · {self.name}"
 
+    def get_absolute_url(self):
+        return reverse("catalog:application_detail", args=[self.application_id]) + "#tab-levels"
+
     def clean(self):
         required = {
             self.AccessModel.AD_GROUP: ("ad_group_name", "Enter the AD group name."),

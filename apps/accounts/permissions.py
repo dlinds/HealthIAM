@@ -153,6 +153,11 @@ def can_manage_orgs(user) -> bool:
     return is_admin(user)
 
 
+def can_manage_directory(user) -> bool:
+    """Active Directory sync: run it, see run history, test the connection."""
+    return is_admin(user)
+
+
 def can_manage_vendors(user) -> bool:
     return is_admin(user)
 

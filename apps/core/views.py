@@ -1,6 +1,7 @@
 from datetime import timedelta
 
 from auditlog.models import LogEntry
+from django.conf import settings
 from django.contrib.contenttypes.models import ContentType
 from django.core.paginator import Paginator
 from django.db.models import Count, Q
@@ -13,6 +14,7 @@ from apps.accounts import permissions as perms
 from apps.accounts.mixins import role_required
 from apps.accounts.models import User
 from apps.catalog.models import Application, Vendor
+from apps.directory import references
 from apps.orgs.models import Department, JobCode, Position
 
 from . import audit
@@ -53,15 +55,20 @@ def dashboard(request):
     recent = audit.base_queryset()[:12]
     for entry in recent:
         entry.reason = audit.reason_of(entry)
+    quality_items = {
+        k: (v.count(), v.order_by("code" if k.startswith("positions") else "name")[:8])
+        for k, v in quality.items()
+    }
+    if settings.AD_ENABLED:
+        # Already ordered by application and level; the items are AccessLevel objects.
+        broken = [level for level, _status, _group in references.broken_references()]
+        quality_items["broken_ad_references"] = (len(broken), broken[:8])
     return render(
         request,
         "core/dashboard.html",
         {
             "stats": stats,
-            "quality": {
-                k: (v.count(), v.order_by("code" if k.startswith("positions") else "name")[:8])
-                for k, v in quality.items()
-            },
+            "quality": quality_items,
             "mine": mine,
             "recent": recent,
             "action_labels": audit.ACTION_LABELS,

@@ -45,9 +45,42 @@ services:
       AUTH_LOCAL_LOGIN: "true"
       TIME_ZONE: America/Chicago
       SUPPORT_CONTACT: "the Information Security team (infosec@example.org)"
+      # --- Active Directory (LDAPS), optional. See docs/ad-setup.md. -------------
+      # Leave the block commented out and the app behaves as if AD did not exist.
+      # Setting both AD_SERVER_URIS and AD_BASE_DN switches on the AD groups page,
+      # the group picker, the broken-reference report, Admin > Active Directory
+      # and the sync_ad command.
+      #
+      # Domain controllers in failover order. ldaps:// only, and the host must be
+      # the FQDN on the DC's certificate (an IP address fails verification).
+      # AD_SERVER_URIS: ldaps://dc1.corp.example.org,ldaps://dc2.corp.example.org
+      # AD_BASE_DN: DC=corp,DC=example,DC=org
+      # Read-only service account used for the bind. Keep the password out of git;
+      # TrueNAS stores the YAML, so restrict who can edit the app.
+      # AD_BIND_DN: CN=svc-healthiam,OU=Service Accounts,DC=corp,DC=example,DC=org
+      # AD_BIND_PASSWORD: CHANGE_ME_SERVICE_ACCOUNT_PASSWORD
+      # PEM bundle of the internal CA that signed the DC certificates. Mounted
+      # read-only below. Leave empty if the DC certificates chain to a public CA.
+      # Certificate verification is always on; there is no switch to turn it off.
+      # AD_CA_BUNDLE: /certs/internal-ca.pem
+      # Connect and receive timeout in seconds. Raise on slow WAN links.
+      # AD_TIMEOUT: "10"
+      # Group whose (nested) members get a HealthIAM login; DN or sAMAccountName.
+      # AD_USER_GROUP: IAM-Users
+      # Role every synced login is guaranteed: Admin, Help Desk or Auditor.
+      # AD_BASELINE_ROLE: Help Desk
+      # OUs to import application groups from, SEMICOLON separated (DNs contain
+      # commas). Empty means the whole base DN.
+      # AD_GROUPS_SEARCH_BASES: OU=Application Groups,DC=corp,DC=example,DC=org;OU=Licensing,DC=corp,DC=example,DC=org
+      # Case-insensitive glob patterns, comma separated; only matching groups are
+      # imported and only matching names are checked for broken references.
+      # AD_GROUPS_NAME_PATTERNS: APP_*,LIC_*
     volumes:
       # CSV import batches keep their uploaded file; without this they vanish on
       # redeploy. Dataset must be owned by 568:568 (see docs).
       - /mnt/tank/apps/healthiam/media:/app/media
+      # Internal CA bundle for LDAPS, read-only. Only needed with AD_CA_BUNDLE; the
+      # file must be readable by uid 568 (chmod 644). See docs/deploy-truenas.md.
+      # - /mnt/tank/apps/healthiam/certs/internal-ca.pem:/certs/internal-ca.pem:ro
     ports:
       - "8000:8000"

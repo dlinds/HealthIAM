@@ -1,0 +1,12 @@
+{% for g, verified in results %}
+<button type="button" class="list-group-item list-group-item-action d-flex justify-content-between align-items-center gap-2 py-1" data-pick-group="{{ g.name }}">
+  <span class="text-truncate">
+    <span class="text-mono">{{ g.name }}</span>
+    {% if g.description %}<span class="text-body-secondary">· {{ g.description|truncatechars:80 }}</span>{% endif %}
+  </span>
+  {% if verified %}<span class="badge text-bg-success text-nowrap"><i class="bi bi-check-lg me-1"></i>Verified</span>
+  {% else %}<span class="badge text-bg-light border text-nowrap">{{ g.get_scope_display }} · {{ g.get_category_display|lower }}</span>{% endif %}
+</button>
+{% empty %}
+<div class="list-group-item text-body-secondary py-1">No imported group matches. Free text is fine for groups outside the sync filter.</div>
+{% endfor %}

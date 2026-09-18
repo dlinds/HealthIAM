@@ -46,12 +46,13 @@
               {% if key == 'apps_without_levels' %}Applications without an active access level
               {% elif key == 'apps_without_owner' %}Applications without an owner
               {% elif key == 'apps_without_analyst' %}Applications without an analyst
+              {% elif key == 'broken_ad_references' %}Access levels pointing at AD groups not found
               {% else %}Active positions with no defaults{% endif %}
             </button>
           </h2>
           <div id="q-{{ key }}" class="accordion-collapse collapse" data-bs-parent="#quality">
             <ul class="list-group list-group-flush small">
-              {% for obj in sample %}<li class="list-group-item"><a href="{{ obj.get_absolute_url }}">{% if key == 'positions_without_defaults' %}<span class="text-mono">{{ obj.code }}</span> {{ obj.display_name }}{% else %}{{ obj.name }}{% endif %}</a></li>{% endfor %}
+              {% for obj in sample %}<li class="list-group-item"><a href="{{ obj.get_absolute_url }}">{% if key == 'positions_without_defaults' %}<span class="text-mono">{{ obj.code }}</span> {{ obj.display_name }}{% elif key == 'broken_ad_references' %}{{ obj.application.name }} · {{ obj.name }}{% else %}{{ obj.name }}{% endif %}</a></li>{% endfor %}
               {% if count > sample|length %}<li class="list-group-item text-body-tertiary">… and {{ count|add:"-8" }} more</li>{% endif %}
               {% if not count %}<li class="list-group-item text-body-secondary">Nothing to fix.</li>{% endif %}
             </ul>

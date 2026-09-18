@@ -4,6 +4,7 @@ from django.contrib.auth.models import Group
 from apps.accounts import roles
 
 from . import factories
+from .fake_directory import build_default_world
 
 
 @pytest.fixture(autouse=True)
@@ -41,3 +42,11 @@ def as_user(client):
         return client
 
     return _login
+
+
+@pytest.fixture
+def fake_directory(monkeypatch):
+    """An in-memory Active Directory wired in as the client every sync and view builds."""
+    fake = build_default_world()
+    monkeypatch.setattr("apps.directory.sync.build_client", lambda: fake)
+    return fake

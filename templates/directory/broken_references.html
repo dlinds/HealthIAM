@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Broken AD references · HealthIAM{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb">
+  <li class="breadcrumb-item"><a href="{% url 'access:reports_index' %}">Reports</a></li>
+  <li class="breadcrumb-item active">Broken AD references</li>
+</ol></nav>
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+  <div>
+    <h1 class="h3 mb-1">Access levels pointing at AD groups not found</h1>
+    <div class="text-body-secondary small">
+      Every <em>AD group</em> access level whose group name was not returned by the last sync (missing) or was returned before but not any more (inactive).
+      Names outside the sync filter{% if patterns %} (<span class="text-mono">{{ patterns|join:", " }}</span>){% endif %} cannot be checked and are not listed.
+    </div>
+  </div>
+  <div>
+    <a class="btn btn-primary" href="?format=xlsx"><i class="bi bi-file-earmark-excel me-1"></i>Download Excel</a>
+    <a class="btn btn-outline-primary" href="?format=csv"><i class="bi bi-filetype-csv me-1"></i>Download CSV</a>
+  </div>
+</div>
+{% if not groups_synced %}
+<div class="alert alert-warning">The AD group list has not been imported yet, so nothing can be checked. Run a sync under Admin → Active Directory first.</div>
+{% endif %}
+<div class="table-responsive">
+<table class="table table-hover table-sm align-middle">
+  <thead><tr><th>Application</th><th>Access level</th><th>AD group</th><th>Status</th><th>Last seen</th><th class="text-end">Positions with default</th></tr></thead>
+  <tbody>
+  {% for row in rows %}
+    <tr>
+      <td><a href="{{ row.level.application.get_absolute_url }}">{{ row.level.application.name }}</a> {% include "catalog/partials/lifecycle_badge.html" with app=row.level.application %}</td>
+      <td><a href="{{ row.level.get_absolute_url }}">{{ row.level.name }}</a>{% if not row.level.is_active %} <span class="badge text-bg-secondary">inactive level</span>{% endif %}</td>
+      <td class="text-mono">{{ row.level.ad_group_name }}</td>
+      <td>{% if row.status == 'missing' %}<span class="badge text-bg-danger">{{ row.label }}</span>{% else %}<span class="badge text-bg-warning">{{ row.label }}</span>{% endif %}</td>
+      <td class="small text-nowrap">{% if row.group %}{{ row.group.last_seen_at|date:"Y-m-d" }}{% else %}—{% endif %}</td>
+      <td class="text-end">{{ row.level.positions_with_default }}</td>
+    </tr>
+  {% empty %}
+    <tr><td colspan="6" class="text-body-secondary">{% if groups_synced %}Every checked access level points at an active AD group.{% else %}Nothing checked yet.{% endif %}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endblock %}

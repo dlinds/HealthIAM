@@ -1,3 +1,4 @@
+{% load ui %}
 <div id="access-levels">
   <div class="d-flex align-items-center justify-content-between mb-2">
     <p class="text-body-secondary small mb-0">Access levels are the units positions receive by default. Each records how it is granted.</p>
@@ -17,7 +18,7 @@
         <td class="fw-semibold">{{ level.name }}</td>
         <td><span class="badge text-bg-light border">{{ level.get_access_model_display }}</span></td>
         <td class="small">
-          {% if level.access_model == 'ad_group' %}<span class="text-mono">{{ level.ad_group_name }}</span>
+          {% if level.access_model == 'ad_group' %}<span class="text-mono">{{ level.ad_group_name }}</span>{% include "directory/partials/reference_badge.html" with ref=level_reference_status|dict_get:level.pk %}
           {% elif level.access_model == 'ticket' %}{{ level.ticket_assignment_team }}
           {% elif level.access_model == 'in_app' %}{{ level.in_app_instructions|truncatechars:120 }}
           {% else %}—{% endif %}
