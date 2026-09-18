@@ -29,6 +29,9 @@ Create the datasets (replace `tank` with your pool):
 
 - `tank/apps/healthiam/pgdata` — database
 - `tank/apps/healthiam/media` — uploaded CSV import files
+- `tank/apps/healthiam/certs` — only with the Active Directory sync and an
+  internal CA: holds the CA bundle PEM (`internal-ca.pem`) that the container
+  mounts read-only at `/certs/internal-ca.pem`
 
 The web container runs as uid 568, the same uid as the TrueNAS apps user, so
 give it the media dataset:
@@ -36,6 +39,17 @@ give it the media dataset:
 ```sh
 chown -R 568:568 /mnt/tank/apps/healthiam/media
 ```
+
+The CA bundle is public material, so it only needs to be readable by uid 568,
+not owned by it:
+
+```sh
+chmod 644 /mnt/tank/apps/healthiam/certs/internal-ca.pem
+```
+
+A bundle the app user cannot read fails every LDAPS connection with a
+certificate error, and `manage.py check` reports `directory.W004` when the path
+does not exist inside the container.
 
 Leave `pgdata` alone. The Postgres image starts as root and chowns its data
 directory to its own internal user, so setting that one to 568 gets undone on
@@ -98,6 +112,33 @@ Optional demo data, once:
 docker exec -it ix-healthiam-web-1 python manage.py seed_demo
 ```
 
+## Scheduling the AD sync
+
+Skip this section unless the `AD_*` block in the YAML is filled in
+(`docs/ad-setup.md`). The sync is a management command inside the web
+container, so it runs from the host with `docker exec`. TrueNAS has a cron
+scheduler built in: System > Advanced > Cron Jobs > Add.
+
+- Command:
+
+  ```sh
+  docker exec ix-healthiam-web-1 python manage.py sync_ad >/dev/null
+  ```
+
+- Run as: `root` (needed for `docker exec`).
+- Schedule: nightly, for example `0 2 * * *`.
+- Hide standard output: on (or keep the `>/dev/null` above). The command prints
+  its summary to stdout and every problem to stderr and exits non-zero when the
+  run failed or any entry had an error, so with stdout hidden the cron mail only
+  arrives when something needs attention.
+
+The container name is `ix-healthiam-web-1` when the app is named `healthiam`;
+`docker ps` shows it otherwise. `--dry-run` previews without writing,
+`--users-only` / `--groups-only` limit the scope. Every run, scheduled or not,
+is listed under Admin > Active Directory, and the Schedule card there shows the
+same command. Do the first sync from that page (Preview, then Apply) before
+enabling the cron job.
+
 ## Upgrading
 
 1. Cut a release as above.
@@ -117,6 +158,15 @@ is in `ALLOWED_HOSTS` and the `https://` origin is in `CSRF_TRUSTED_ORIGINS`.
 Leave `SECURE_SSL_REDIRECT` false: the proxy already serves HTTPS and sets
 `X-Forwarded-Proto`, which the app trusts via `SECURE_PROXY_SSL_HEADER`.
 
+With the AD sync enabled, **Sync now** under Admin > Active Directory reads the
+whole directory inside one request. The container's gunicorn allows 120 s per
+request, but most proxies cut an upstream off after 60 s (Nginx Proxy Manager:
+Advanced > `proxy_read_timeout 180s;`; Caddy: `reverse_proxy` with
+`transport http { response_header_timeout 180s }`). Raise the proxy's upstream
+read timeout to at least the gunicorn value, or use the scheduled command, which
+has no request timeout. A run cut off this way shows as "Abandoned (worker
+stopped)" and writes nothing.
+
 ## Backups
 
 Snapshot `tank/apps/healthiam/pgdata` on a schedule. It holds the audit trail as
@@ -133,3 +183,15 @@ well as the catalog, so it is the record of who changed what.
   HTTP, or the origin is missing from `CSRF_TRUSTED_ORIGINS`.
 - **App stuck in Deploying** — check `docker logs ix-healthiam-web-1`. A bad
   `DATABASE_URL` shows up here as a migration failure at startup.
+- **AD sync fails with a receive timeout** (`LDAPResponseTimeoutError` or
+  `socket timeout` in the run's error text) — the domain controller answered
+  the bind but a result page took longer than `AD_TIMEOUT` seconds. Raise
+  `AD_TIMEOUT` (30 is plenty on a WAN link) and Save; the run page keeps the
+  error text of the failed attempt. Sync now also needs the proxy timeout above.
+- **AD sync or Test connection fails with a certificate error**
+  (`CERTIFICATE_VERIFY_FAILED`, `hostname mismatch`, `unable to get local
+  issuer certificate`) — either the DC certificate is signed by an internal CA
+  that is not in `AD_CA_BUNDLE` (mount the PEM as in the YAML and check
+  `directory.W004`), or a URI in `AD_SERVER_URIS` uses an IP address or a short
+  name instead of the FQDN on the certificate. Verification is never disabled;
+  fix the bundle or the name.

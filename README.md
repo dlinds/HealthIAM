@@ -13,7 +13,8 @@ Position-based access defaults and application catalog for a healthcare organiza
 ## Stack
 
 Python 3.11+ · Django 5.2 · PostgreSQL 16 · server-rendered templates + htmx ·
-Bootstrap 5 (vendored, no build step) · Entra ID SSO (OIDC) · django-auditlog.
+Bootstrap 5 (vendored, no build step) · Entra ID SSO (OIDC) · optional on-prem AD sync
+(LDAPS via ldap3) · django-auditlog.
 
 ## Quick start (local)
 
@@ -42,7 +43,7 @@ docker compose exec web python manage.py seed_demo
 | **Admin** | `Admin` group (Entra group map or in-app) | Everything |
 | **Analyst** | Assignment on an application | Edit that application, its access levels, and add/remove its levels on any position |
 | **Application Owner** | Contact linked to a login, named as business or technical owner | Edit that application's descriptive, contact and support fields |
-| **Help Desk** | `Help Desk` group | Read-only: look up positions and applications, run reports |
+| **Help Desk** | `Help Desk` group; also the baseline every login created by the AD sync is guaranteed (`AD_BASELINE_ROLE`) | Read-only: look up positions and applications, run reports |
 | **Auditor** | `Auditor` group | Read-only plus full change history and exports |
 
 Signed-in users with no role see a "no access" page. Authorization rules live in one place:
@@ -59,6 +60,11 @@ All settings are read from the environment (or `.env`); see `.env.example`.
 | `AUTH_LOCAL_LOGIN` | `true` enables username/password login (development only) |
 | `ENTRA_TENANT_ID`, `OIDC_RP_CLIENT_ID`, `OIDC_RP_CLIENT_SECRET` | Entra ID SSO; see `docs/entra-setup.md` |
 | `ENTRA_GROUP_ROLE_MAP` | `<group-id>=Admin,<group-id>=Help Desk,<group-id>=Auditor` |
+| `AD_SERVER_URIS`, `AD_BASE_DN` | On-prem AD over LDAPS (`ldaps://dc1,ldaps://dc2` in failover order + domain base DN); both set = AD enabled. See `docs/ad-setup.md` |
+| `AD_BIND_DN`, `AD_BIND_PASSWORD` | Read-only service account for the bind |
+| `AD_CA_BUNDLE`, `AD_TIMEOUT` | PEM of the internal CA (empty = system store; verification is always on); connect/receive timeout in seconds (10) |
+| `AD_USER_GROUP`, `AD_BASELINE_ROLE` | Group whose nested members get a login (`IAM-Users`); role they are guaranteed (`Help Desk`) |
+| `AD_GROUPS_SEARCH_BASES`, `AD_GROUPS_NAME_PATTERNS` | Semicolon-separated OU DNs and comma-separated globs (`APP_*,LIC_*`) selecting the AD groups to import and reference-check |
 | `SUPPORT_CONTACT` | Shown on the no-access page |
 | `DJANGO_SETTINGS_MODULE` | `config.settings.dev` (default for `manage.py`) or `config.settings.prod` |
 
@@ -74,6 +80,13 @@ All settings are read from the environment (or `.env`); see `.env.example`.
   (`docs/import-format.md`). A scheduled HR feed can call `manage.py import_hr`.
 - **Reports**: position access matrix (CSV/XLSX, per department or all) and "who gets
   application X".
+- **Active Directory** (when `AD_SERVER_URIS` is set): the **AD groups** page lists the
+  imported groups with search, an unreferenced filter and the access levels that use each
+  one; the access-level form offers a picker for `ad_group_name` (free text still saves);
+  each level shows an *In AD* / *Not found in AD* badge and the dashboard and Reports carry a
+  **broken references** list (CSV/XLSX). **Admin → Active Directory** shows the effective
+  configuration, tests the connection, previews and applies a sync, and lists every run;
+  `manage.py sync_ad` does the same from cron. See `docs/ad-setup.md`.
 - **History**: Admin/Auditor see every change with actor, before/after and reason; every
   application and position page shows its own history.
 
@@ -94,10 +107,11 @@ apps/accounts    User, roles, permissions, Entra OIDC backend, role middleware
 apps/orgs        Department, JobCode, Position, CSV importers, ImportBatch
 apps/catalog     Vendor, Contact, Application, AccessLevel, SupportTier, analysts
 apps/access      PositionDefault, services (reason-audited writes), reports
+apps/directory   ADGroup, DirectorySyncRun, LDAPS client, sync engine, sync_ad, AD pages
 apps/core        base layout, dashboard, global search, audit history views
 templates/       Django templates; partials/ for htmx fragments
 static/          app.css, app.js, vendored Bootstrap / Icons / htmx
-docs/            data-model.md, entra-setup.md, import-format.md
+docs/            data-model.md, entra-setup.md, ad-setup.md, import-format.md, deploy-truenas.md
 tests/           pytest suite with factories
 ```
 

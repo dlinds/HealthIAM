@@ -108,7 +108,21 @@ plus position / application / level context on the audit entry.
 
 ## Accounts and roles (`apps/accounts`)
 
-`User` extends Django's user with `entra_object_id`, `job_title`, `department_name`.
+`User` extends Django's user with `entra_object_id`, `job_title`, `department_name` and
+the fields the Active Directory sync fills:
+
+| Field | Notes |
+|---|---|
+| `entra_object_id` | Set on first Entra ID sign-in; unique. When set, Entra owns `email`, `first_name`, `last_name` (the AD sync fills blanks only). |
+| `job_title`, `department_name` | Filled from AD `title` / `department` by the sync. |
+| `ad_object_guid` | objectGUID of the AD account; unique, the sync's primary match key. |
+| `ad_sam_account_name`, `ad_distinguished_name` | Copied from AD for display and troubleshooting. |
+| `ad_synced_at` | Last time the sync saw the account (bumped on quiet runs too). |
+| `ad_managed` | Set the first time the sync creates or links the login, never cleared. For these logins AD owns `is_active` (disabled or removed from `IAM-Users` → inactive, back → active) and guarantees the baseline role (`AD_BASELINE_ROLE`). Logins with `ad_managed=False` are never touched by the sync. |
+
+`User` is audited (django-auditlog) excluding `password`, `last_login`, `date_joined` and
+`ad_synced_at`, so profile, active-state and AD-link changes appear in History whether an
+admin or the sync made them.
 
 | Role | How it is granted | Can |
 |---|---|---|
@@ -119,6 +133,46 @@ plus position / application / level context on the audit entry.
 | Auditor | Group `Auditor` | Read everything plus the global change history and exports |
 
 All authorization decisions live in `apps/accounts/permissions.py`.
+
+## Directory (`apps/directory`)
+
+A read-only mirror of the parts of on-prem Active Directory HealthIAM cares about, filled
+by the LDAPS sync (`manage.py sync_ad` or Admin → Active Directory). Present but empty
+when `AD_SERVER_URIS` is not set. See `docs/ad-setup.md`.
+
+### ADGroup
+One AD group under the configured search bases whose name matches the configured
+patterns. Membership is **not** imported. There is no foreign key from `AccessLevel`:
+`ad_group_name` stays canonical free text and is matched to `name` case-insensitively.
+
+| Field | Notes |
+|---|---|
+| `object_guid` | objectGUID, unique. The key: renames and moves update the same row. |
+| `name` | sAMAccountName, indexed (also by `Lower(name)`); not unique on its own. |
+| `cn`, `description`, `distinguished_name`, `managed_by_dn`, `when_changed` | Copied from AD. |
+| `group_type` | Raw `groupType` bit field, decoded into `scope` (builtin_local / global / domain_local / universal / unknown) and `category` (security / distribution). |
+| `first_seen_at`, `last_seen_at` | Set on import; `last_seen_at` bumped on every run that returns the group. |
+| `is_active`, `inactivated_at` | Deactivated (never deleted) when a run does not return the group; reactivated when it reappears. |
+
+Audited excluding `last_seen_at`, so a quiet run writes no history.
+
+### DirectorySyncRun
+One sync against AD, the LDAP-sourced sibling of `ImportBatch`. Preview and apply share
+the same row.
+
+| Field | Notes |
+|---|---|
+| `scope` | `all`, `users`, `groups`. |
+| `status` | `pending` → `previewed` (dry run) → `completed`, or `failed`. A run left `pending` for more than 15 minutes is shown as abandoned. |
+| `trigger` | `manual` (admin page) or `scheduled` (`sync_ad`). |
+| `created_by` | The admin who started it; empty for scheduled runs. |
+| `started_at`, `finished_at`, `server` | Timing and the domain controller that answered. |
+| `group_dn` | Resolved DN of `AD_USER_GROUP` (users scope). |
+| `summary` | `{"users": {...} or null, "groups": {...} or null}` with `created`, `updated`, `reactivated`, `deactivated`, `unchanged`, `errors`, `rows`, `skipped`. |
+| `log` | Rows of `{kind, row, code, action, message, dn}`; `unchanged` rows are omitted. |
+| `error` | Why a failed run failed (the bind password is never included). |
+
+Not audited (same as `ImportBatch`): the row is itself the record.
 
 ## Audit log
 
@@ -135,3 +189,10 @@ related changes, including deletions.
   trail sits beside `PositionDefault`.
 - **HR feed**: the `import_hr` management command already performs the same import as the
   upload page; schedule it once the feed exists.
+- **AD group membership**: `ADGroup` is keyed by objectGUID and carries the DN, so a
+  membership import (a `member` list per group, or per-user `memberOf`) can attach to it
+  without changing the group rows.
+- **Actual vs expected access**: with membership imported and `Employee` linked to
+  `Position`, comparing a person's AD groups against the `ad_group` levels of their
+  position defaults gives the "who has access they should not" report; the
+  broken-reference report already uses the same `ad_group_name` ↔ `ADGroup.name` match.

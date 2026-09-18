@@ -1,10 +1,13 @@
 """Populate a development database with realistic sample data. Idempotent."""
 
 import datetime as dt
+import uuid
 
+from django.conf import settings
 from django.contrib.auth.models import Group
 from django.core.management.base import BaseCommand
 from django.db import transaction
+from django.utils import timezone
 
 from apps.access import services
 from apps.access.models import PositionDefault
@@ -20,9 +23,24 @@ from apps.catalog.models import (
     SupportTier,
     Vendor,
 )
+from apps.directory.matching import decode_group_type
+from apps.directory.models import ADGroup, DirectorySyncRun
 from apps.orgs.models import Department, JobCode, Position, Source
 
 PASSWORD = "healthiam"
+
+# Synthetic on-prem AD. GUIDs are uuid5 of the object's name in this namespace, so every
+# seed run produces the same rows and a real sync (which keys on objectGUID) simply
+# deactivates them.
+DEMO_AD_NAMESPACE = uuid.uuid5(uuid.NAMESPACE_DNS, "demo.local")
+DEMO_AD_GROUPS_OU = "OU=Groups,DC=demo,DC=local"
+DEMO_AD_STAFF_OU = "OU=Staff,DC=demo,DC=local"
+DEMO_AD_SERVER = "dc1.demo.local"
+# Left out of the seeded directory on purpose: the UKG "Employee" level then shows the
+# "Not found in AD" badge, the dashboard entry and the broken-reference report.
+DEMO_AD_MISSING_GROUP = "APP_UKG_EMPLOYEE"
+DEMO_AD_UNUSED_GROUP = "APP_DEMO_UNUSED"
+GLOBAL_SECURITY_GROUP = -2147483646  # groupType: GLOBAL | SECURITY as AD stores it (signed)
 
 DEPARTMENTS = [
     ("0100", "Nursing"),
@@ -95,11 +113,22 @@ class Command(BaseCommand):
         contacts = self._contacts(vendors, users)
         apps = self._applications(vendors, contacts, users)
         self._defaults(apps, positions, users["admin"])
+        self._directory(users)
         self.stdout.write(self.style.SUCCESS("Demo data loaded."))
         self.stdout.write(
             "Sign in with one of: admin / analyst.epic / analyst.imaging / owner.epic / "
             f"helpdesk / auditor  (password: {PASSWORD})"
         )
+        if not settings.AD_ENABLED:
+            self.stdout.write(
+                self.style.WARNING(
+                    "Active Directory is disabled, so the seeded AD groups, badges and the "
+                    "Admin > Active Directory page stay hidden. To browse them without a domain "
+                    "controller, set the commented local-demo pair from .env.example in .env "
+                    "(AD_SERVER_URIS=ldaps://dc.test.invalid and AD_BASE_DN=DC=test,DC=invalid); "
+                    "a real sync against that host fails harmlessly."
+                )
+            )
 
     # --- helpers ------------------------------------------------------------------
 
@@ -523,3 +552,105 @@ class Command(BaseCommand):
                 lvl = level(app_key, level_name)
                 if not PositionDefault.objects.filter(position=pos, access_level=lvl).exists():
                     services.add_default(pos, lvl, actor=actor, reason="Baseline for all staff")
+
+    # --- Active Directory -----------------------------------------------------------
+
+    def _directory(self, users):
+        """A synthetic AD mirror so the AD pages have something to show without a domain
+        controller: one `ADGroup` per group name the seeded access levels reference (minus
+        `APP_UKG_EMPLOYEE`, which demonstrates a broken reference), one group nothing
+        references, one completed groups-only sync run, and `helpdesk` marked as a login
+        the sync manages. Keyed on deterministic GUIDs, so re-running changes nothing."""
+        now = timezone.now()
+        referenced = (
+            AccessLevel.objects.filter(access_model=AccessLevel.AccessModel.AD_GROUP)
+            .exclude(ad_group_name=DEMO_AD_MISSING_GROUP)
+            .select_related("application")
+            .order_by("application__name", "sort_order")
+        )
+        descriptions = {}
+        for level in referenced:
+            descriptions.setdefault(
+                level.ad_group_name, f"{level.application.name} – {level.name}: {level.description}"
+            )
+        descriptions[DEMO_AD_UNUSED_GROUP] = "Pilot group from 2023; no access level references it."
+
+        log = []
+        created = 0
+        for row, (name, description) in enumerate(descriptions.items(), start=1):
+            group, was_created = self._directory_group(name, description, now)
+            created += was_created
+            log.append(
+                {
+                    "kind": "groups",
+                    "row": row,
+                    "code": group.name,
+                    "action": "created",
+                    "message": f"{group.scope} {group.category} group",
+                    "dn": group.distinguished_name,
+                }
+            )
+        counts = {
+            "created": len(log),
+            "updated": 0,
+            "reactivated": 0,
+            "deactivated": 0,
+            "unchanged": 0,
+            "errors": 0,
+            "rows": len(log),
+            "skipped": 0,
+        }
+        DirectorySyncRun.objects.get_or_create(
+            scope=DirectorySyncRun.Scope.GROUPS,
+            status=DirectorySyncRun.Status.COMPLETED,
+            server=DEMO_AD_SERVER,
+            defaults={
+                "trigger": DirectorySyncRun.Trigger.MANUAL,
+                "created_by": users["admin"],
+                "started_at": now - dt.timedelta(seconds=4),
+                "finished_at": now,
+                "summary": {"users": None, "groups": counts},
+                "log": log,
+            },
+        )
+
+        helpdesk = users["helpdesk"]
+        wanted = {
+            "ad_object_guid": uuid.uuid5(DEMO_AD_NAMESPACE, "user:helpdesk"),
+            "ad_sam_account_name": "helpdesk",
+            "ad_distinguished_name": f"CN=Casey Nguyen,{DEMO_AD_STAFF_OU}",
+            "ad_managed": True,
+        }
+        changed = [field for field, value in wanted.items() if getattr(helpdesk, field) != value]
+        if changed or helpdesk.ad_synced_at is None:
+            for field in changed:
+                setattr(helpdesk, field, wanted[field])
+            helpdesk.ad_synced_at = helpdesk.ad_synced_at or now
+            helpdesk.save(update_fields=[*changed, "ad_synced_at"])
+        return created
+
+    def _directory_group(self, name, description, now):
+        scope, category = decode_group_type(GLOBAL_SECURITY_GROUP)
+        values = {
+            "name": name,
+            "cn": name,
+            "description": description,
+            "distinguished_name": f"CN={name},{DEMO_AD_GROUPS_OU}",
+            "group_type": GLOBAL_SECURITY_GROUP,
+            "scope": scope,
+            "category": category,
+            "managed_by_dn": f"CN=IAM Team,{DEMO_AD_STAFF_OU}",
+            "when_changed": dt.datetime(2025, 9, 1, 8, 0, tzinfo=dt.UTC),
+        }
+        group, created = ADGroup.objects.get_or_create(
+            object_guid=uuid.uuid5(DEMO_AD_NAMESPACE, f"group:{name}"),
+            defaults={**values, "first_seen_at": now, "last_seen_at": now},
+        )
+        if not created:
+            # Save only on a real difference so re-seeding leaves timestamps and history alone.
+            changed = [field for field, value in values.items() if getattr(group, field) != value]
+            if changed:
+                for field in changed:
+                    setattr(group, field, values[field])
+                group.save(update_fields=[*changed, "updated_at"])
+        return group, created
