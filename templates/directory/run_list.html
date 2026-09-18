@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}AD sync runs · HealthIAM{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb">
+  <li class="breadcrumb-item"><a href="{% url 'directory:admin_index' %}">Active Directory</a></li>
+  <li class="breadcrumb-item active">Sync runs</li>
+</ol></nav>
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h1 class="h3 mb-0">AD sync runs</h1>
+  <a class="btn btn-primary" href="{% url 'directory:admin_index' %}"><i class="bi bi-arrow-repeat me-1"></i>Sync now</a>
+</div>
+{% include "directory/partials/run_table.html" with runs=object_list %}
+{% include "partials/pagination.html" %}
+{% endblock %}

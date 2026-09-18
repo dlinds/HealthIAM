@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth import views as auth_views
 from django.contrib.auth.decorators import login_not_required
@@ -74,5 +75,12 @@ def user_roles(request, pk):
     return render(
         request,
         "accounts/user_roles_form.html",
-        {"form": form, "subject": user, "labels": permissions.role_labels(user)},
+        {
+            "form": form,
+            "subject": user,
+            "labels": permissions.role_labels(user),
+            # For the note on sync-managed logins: what AD controls and which role it guarantees.
+            "ad_user_group": settings.AD_USER_GROUP,
+            "ad_baseline_role": settings.AD_BASELINE_ROLE,
+        },
     )

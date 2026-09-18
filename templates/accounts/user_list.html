@@ -16,7 +16,7 @@
   <tbody>
   {% for u in object_list %}
     <tr>
-      <td>{{ u.display_name }}<div class="small text-body-secondary">{{ u.username }}</div></td>
+      <td>{{ u.display_name }}{% if u.ad_managed %} <span class="badge text-bg-info" title="Login managed by the Active Directory sync: AD controls whether the account is active and guarantees the baseline role">AD</span>{% endif %}<div class="small text-body-secondary">{{ u.username }}</div></td>
       <td>{{ u.email }}</td>
       <td>{% for l in u.labels %}<span class="badge text-bg-secondary me-1">{{ l }}</span>{% empty %}<span class="text-body-tertiary">none</span>{% endfor %}</td>
       <td>{% if u.is_active %}<span class="badge text-bg-success">Active</span>{% else %}<span class="badge text-bg-secondary">Inactive</span>{% endif %}</td>
@@ -30,7 +30,8 @@
 </div>
 {% include "partials/pagination.html" %}
 <p class="small text-body-secondary mt-3">
-  Users are created on first SSO sign-in. Roles mapped from Entra groups are re-applied at each sign-in;
-  roles assigned here stay until changed here.
+  Users are created on first SSO sign-in{% if AD_ENABLED %} or by the Active Directory sync, which pre-creates a login for every member of the
+  configured AD user group (marked <span class="badge text-bg-info">AD</span>) and deactivates it when the member leaves or is disabled{% endif %}.
+  Roles mapped from Entra groups are re-applied at each sign-in; roles assigned here stay until changed here.
 </p>
 {% endblock %}

@@ -82,7 +82,8 @@ class SyncResult(ImportResult):
 # --- Run driver ------------------------------------------------------------------
 
 
-def _redact(text: str) -> str:
+def redact(text: str) -> str:
+    """Strip the bind password from a message before it reaches a run record or a page."""
     password = getattr(settings, "AD_BIND_PASSWORD", "")
     if password and password in text:
         text = text.replace(password, "***")
@@ -168,7 +169,7 @@ def run_sync(
                 transaction.set_rollback(True)
     except Exception as exc:  # noqa: BLE001 - recorded on the run, surfaced to the user
         run.status = DirectorySyncRun.Status.FAILED
-        run.error = _redact(f"{type(exc).__name__}: {exc}")[:MAX_ERROR]
+        run.error = redact(f"{type(exc).__name__}: {exc}")[:MAX_ERROR]
         run.finished_at = timezone.now()
         run.save()
         # A DirectoryError already says everything; its traceback would only repeat the raw

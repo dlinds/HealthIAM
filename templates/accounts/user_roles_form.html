@@ -12,6 +12,14 @@
         <h1 class="h4">{{ subject.display_name }}</h1>
         <p class="text-body-secondary">{{ subject.email }} · {{ subject.username }}</p>
         <p>Current: {% for l in labels %}<span class="badge text-bg-secondary me-1">{{ l }}</span>{% empty %}<span class="text-body-tertiary">no role</span>{% endfor %}</p>
+        {% if subject.ad_managed %}
+        <div class="alert alert-info small">
+          <i class="bi bi-info-circle me-1"></i>This login is managed by the <strong>Active Directory sync</strong>.
+          AD controls <strong>Account active</strong> (the account is enabled in AD and a member of <span class="text-mono">{{ ad_user_group }}</span>)
+          and guarantees the <strong>{{ ad_baseline_role }}</strong> baseline role: unticking either here is undone by the next sync.
+          Other roles assigned here are kept.
+        </div>
+        {% endif %}
         <form method="post">
           {% csrf_token %}
           {% include "partials/form_fields.html" with form=form %}

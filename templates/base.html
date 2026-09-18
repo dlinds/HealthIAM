@@ -44,6 +44,7 @@
           <ul class="dropdown-menu dropdown-menu-end">
             <li><a class="dropdown-item" href="{% url 'accounts:user_list' %}">Users &amp; roles</a></li>
             <li><a class="dropdown-item" href="{% url 'orgs:import_list' %}">HR imports</a></li>
+            {% if AD_ENABLED and iam.can_manage_directory %}<li><a class="dropdown-item" href="{% url 'directory:admin_index' %}">Active Directory</a></li>{% endif %}
             <li><a class="dropdown-item" href="{% url 'admin:index' %}">Django admin</a></li>
           </ul>
         </li>

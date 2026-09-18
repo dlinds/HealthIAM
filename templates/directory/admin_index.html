@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block title %}Active Directory · HealthIAM{% endblock %}
+{% block content %}
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+  <h1 class="h3 mb-0">Active Directory</h1>
+  <div>
+    <a class="btn btn-outline-secondary" href="{% url 'directory:group_list' %}"><i class="bi bi-collection me-1"></i>AD groups</a>
+    <a class="btn btn-outline-secondary" href="{% url 'directory:broken_references' %}"><i class="bi bi-exclamation-triangle me-1"></i>Broken references</a>
+  </div>
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-header">Effective configuration</div>
+      <div class="card-body small">
+        {% for w in check_warnings %}
+        <div class="alert alert-warning py-2"><strong>{{ w.id }}</strong> {{ w.msg }}{% if w.hint %}<div class="mt-1">{{ w.hint }}</div>{% endif %}</div>
+        {% endfor %}
+        <dl class="row mb-0">
+          <dt class="col-sm-4">Servers</dt><dd class="col-sm-8">{% for uri in config.server_uris %}<div class="text-mono">{{ uri }}</div>{% endfor %}</dd>
+          <dt class="col-sm-4">Base DN</dt><dd class="col-sm-8 text-mono">{{ config.base_dn }}</dd>
+          <dt class="col-sm-4">Bind DN</dt><dd class="col-sm-8 text-mono">{{ config.bind_dn|default:"(anonymous)" }}</dd>
+          <dt class="col-sm-4">Bind password</dt><dd class="col-sm-8">{% if config.bind_password_set %}<span class="badge text-bg-success">set</span>{% else %}<span class="badge text-bg-warning">not set</span>{% endif %}</dd>
+          <dt class="col-sm-4">CA bundle</dt><dd class="col-sm-8 text-mono">{{ config.ca_bundle|default:"system trust store" }}</dd>
+          <dt class="col-sm-4">Timeout</dt><dd class="col-sm-8">{{ config.timeout }} s</dd>
+          <dt class="col-sm-4">User group</dt><dd class="col-sm-8 text-mono">{{ config.user_group }}</dd>
+          <dt class="col-sm-4">Baseline role</dt><dd class="col-sm-8">{{ config.baseline_role }}</dd>
+          <dt class="col-sm-4">Group search bases</dt><dd class="col-sm-8">{% for base in config.group_search_bases %}<div class="text-mono">{{ base }}</div>{% endfor %}</dd>
+          <dt class="col-sm-4">Group name patterns</dt><dd class="col-sm-8">{% if config.group_name_patterns %}<span class="text-mono">{{ config.group_name_patterns|join:", " }}</span>{% else %}<span class="text-body-secondary">all groups under the search bases</span>{% endif %}</dd>
+          <dt class="col-sm-4">Page size</dt><dd class="col-sm-8">{{ config.page_size }}</dd>
+        </dl>
+        <p class="text-body-secondary mb-0 mt-2">Set through <span class="text-mono">AD_*</span> environment variables; see docs/ad-setup.md.</p>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-header">Status</div>
+      <div class="card-body small">
+        <dl class="row mb-0">
+          <dt class="col-sm-4">Last run</dt>
+          <dd class="col-sm-8">
+            {% if last_run %}<a href="{{ last_run.get_absolute_url }}">#{{ last_run.pk }}</a> · {{ last_run.get_scope_display|lower }} · {{ last_run.get_status_display|lower }} · {{ last_run.created_at|date:"Y-m-d H:i" }}{% if last_run.created_by %} by {{ last_run.created_by.display_name }}{% endif %}
+            {% else %}<span class="text-body-secondary">never</span>{% endif %}
+          </dd>
+          <dt class="col-sm-4">AD groups</dt><dd class="col-sm-8">{{ groups_active }} active · {{ groups_inactive }} inactive</dd>
+          <dt class="col-sm-4">Managed logins</dt><dd class="col-sm-8">{{ managed_active }} active · {{ managed_inactive }} inactive</dd>
+          <dt class="col-sm-4">Broken references</dt>
+          <dd class="col-sm-8">
+            {% if broken_count is None %}<span class="text-body-secondary">not checked yet (no completed group sync)</span>
+            {% else %}<a href="{% url 'directory:broken_references' %}">{{ broken_count }} access level{{ broken_count|pluralize }}</a>{% endif %}
+          </dd>
+        </dl>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-lg-4">
+    <div class="card h-100">
+      <div class="card-header">Sync now</div>
+      <div class="card-body">
+        <form method="post" action="{% url 'directory:sync_start' %}"
+              hx-post="{% url 'directory:sync_start' %}" hx-indicator="#sync-indicator" hx-disabled-elt="find button[type=submit]">
+          {% csrf_token %}
+          {% include "partials/form_fields.html" with form=form %}
+          <button class="btn btn-primary" type="submit">
+            <span id="sync-indicator" class="spinner-border spinner-border-sm htmx-indicator me-1" role="status" aria-hidden="true"></span><i class="bi bi-eye me-1"></i>Preview sync
+          </button>
+        </form>
+        <p class="text-body-secondary small mt-2 mb-0">Reading a large directory can take a while; the button stays disabled until the preview is ready.</p>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-4">
+    <div class="card h-100">
+      <div class="card-header">Test connection</div>
+      <div class="card-body">
+        <p class="text-body-secondary small">Binds with the service account, looks up the base DN and resolves the user group. Nothing is written.</p>
+        <button class="btn btn-outline-primary" type="button"
+                hx-post="{% url 'directory:connection_test' %}" hx-target="#connection-result" hx-swap="innerHTML"
+                hx-indicator="#test-indicator" hx-disabled-elt="this">
+          <span id="test-indicator" class="spinner-border spinner-border-sm htmx-indicator me-1" role="status" aria-hidden="true"></span><i class="bi bi-plug me-1"></i>Test connection
+        </button>
+        <div id="connection-result" class="mt-3"></div>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-4">
+    <div class="card h-100">
+      <div class="card-header">Schedule</div>
+      <div class="card-body small">
+        <p>Run the sync nightly from the host with a TrueNAS cron job:</p>
+        <pre class="bg-body-tertiary border rounded p-2 mb-2"><code>{{ schedule_command }}</code></pre>
+        <p class="mb-0 text-body-secondary">Add <span class="text-mono">--dry-run</span> to preview only, <span class="text-mono">--users-only</span> or <span class="text-mono">--groups-only</span> to limit the scope. The exit code is non-zero when the run fails or any entry has an error, so cron mails only problems. Every run is listed below.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header d-flex justify-content-between"><span>Recent sync runs</span><a class="small" href="{% url 'directory:run_list' %}">All runs</a></div>
+  {% include "directory/partials/run_table.html" with runs=runs %}
+</div>
+{% endblock %}
