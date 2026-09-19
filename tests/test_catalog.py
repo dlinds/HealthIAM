@@ -379,3 +379,147 @@ def test_service_detail_hides_application_only_panels(as_user, help_desk_user):
     header = body.split('id="appTabs"')[0]
     assert "Tier 3" not in header
     assert ">Service<" in header
+
+
+# --- Access levels tab pagination -------------------------------------------------------
+
+
+def levels_section(body: str) -> str:
+    """Just the Access levels tab. The History tab lists every level by name too, so a
+    whole-page assertion would never see the pagination."""
+    return body.split('id="access-levels"')[1].split('id="tab-positions"')[0]
+
+
+@pytest.fixture
+def many_levels(app):
+    """Two pages' worth, named so page order is obvious."""
+    from apps.catalog.views import LEVELS_PER_PAGE
+
+    return [
+        factories.AccessLevelFactory(
+            application=app, name=f"Level {i:03d}", sort_order=i, ad_group_name=f"APP_G{i:03d}"
+        )
+        for i in range(LEVELS_PER_PAGE + 5)
+    ]
+
+
+def test_levels_tab_paginates_and_counts_the_whole_application(
+    as_user, help_desk_user, app, many_levels
+):
+    from apps.catalog.views import LEVELS_PER_PAGE
+
+    total = len(many_levels)
+    client = as_user(help_desk_user)
+    resp = client.get(app.get_absolute_url())
+    assert len(resp.context["levels"]) == LEVELS_PER_PAGE
+    # The tab badge counts every level, not the page.
+    assert resp.context["level_count"] == total
+    assert resp.context["levels_page"].number == 1
+
+    body = levels_section(resp.content.decode())
+    assert "Level 000" in body
+    assert f"Level {total - 1:03d}" not in body  # spilled onto page 2
+    assert f"of {total} levels" in body
+
+
+def test_second_page_swaps_the_section_in_place(as_user, help_desk_user, app, many_levels):
+    from apps.catalog.views import LEVELS_PER_PAGE
+
+    total = len(many_levels)
+    resp = as_user(help_desk_user).get(
+        reverse("catalog:access_levels", args=[app.pk]), {"levels_page": "2"}
+    )
+    assert resp.status_code == 200
+    assert resp.context["levels_page"].number == 2
+    assert len(resp.context["levels"]) == total - LEVELS_PER_PAGE
+    body = resp.content.decode()
+    assert f"Level {total - 1:03d}" in body
+    assert "Level 000" not in body
+    # The fragment is the section itself, not a whole page: it swaps #access-levels.
+    assert body.strip().startswith('<div id="access-levels">')
+
+
+def test_an_out_of_range_page_clamps_instead_of_erroring(as_user, help_desk_user, app, many_levels):
+    client = as_user(help_desk_user)
+    for value in ("99", "0", "-1", "abc", ""):
+        resp = client.get(app.get_absolute_url(), {"levels_page": value})
+        assert resp.status_code == 200, value
+        assert resp.context["levels_page"].number in (1, 2), value
+
+
+def test_editing_a_level_stays_on_its_page(as_user, admin_user, app, many_levels):
+    """Every action on the tab carries the page, or an analyst working through a long list
+    is thrown back to page 1 on each edit."""
+    last = many_levels[-1]
+    client = as_user(admin_user)
+
+    # The section links its own actions with the current page.
+    body = client.get(
+        reverse("catalog:access_levels", args=[app.pk]), {"levels_page": "2"}
+    ).content.decode()
+    assert f"levels/{last.pk}/toggle/?levels_page=2" in body
+    assert "levels/add/?levels_page=2" in body
+
+    # The edit form posts back to a URL that keeps the page.
+    body = client.get(
+        reverse("catalog:access_level_edit", args=[app.pk, last.pk]), {"levels_page": "2"}
+    ).content.decode()
+    assert "levels_page=2" in body
+
+    # And the re-rendered section after a toggle is still page 2. The page rides in the
+    # query string, which is where the buttons above put it -- a POST body would not work.
+    toggle = reverse("catalog:access_level_toggle", args=[app.pk, last.pk])
+    resp = client.post(f"{toggle}?levels_page=2")
+    assert resp.context["levels_page"].number == 2
+    assert last.name in levels_section(resp.content.decode())
+
+
+def test_broken_reference_count_covers_pages_beyond_the_first(
+    as_user, help_desk_user, app, many_levels, fake_directory
+):
+    """The warning badge is about the application, so a broken level on page 2 has to
+    count even though the first page never renders it."""
+    from apps.directory.models import DirectorySyncRun
+
+    DirectorySyncRun.objects.create(scope="groups", status="completed")
+    # Only the last level's group exists in AD; every other name is missing.
+    factories.ADGroupFactory(name=many_levels[0].ad_group_name)
+
+    resp = as_user(help_desk_user).get(app.get_absolute_url())
+    assert resp.context["broken_level_count"] == len(many_levels) - 1
+
+
+def test_levels_tab_cost_does_not_grow_with_the_number_of_levels(as_user, help_desk_user, db):
+    """The point of paginating: a service with hundreds of adopted AD groups must cost the
+    same as one with a handful.
+
+    Beware `.only()` here -- auditlog's post_init receiver reads every instance, so a
+    deferred field turns one query into one per row, which is how this regressed once.
+    """
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    def build(n):
+        app = factories.ApplicationFactory(name=f"App with {n}")
+        for i in range(n):
+            factories.AccessLevelFactory(
+                application=app, name=f"L{i:04d}", sort_order=i, ad_group_name=f"APP_G{i:04d}"
+            )
+        return reverse("catalog:access_levels", args=[app.pk])
+
+    # Both hold more than one page, so both render exactly LEVELS_PER_PAGE rows; only the
+    # count in the footer differs. Anything that scales with the total shows up here.
+    small, large = build(50), build(300)
+    client = as_user(help_desk_user)
+    client.get(small)  # warm the session and auth lookups, which are not what is measured
+
+    def cost(url):
+        with CaptureQueriesContext(connection) as ctx:
+            resp = client.get(url)
+        assert resp.status_code == 200
+        return len(ctx), len(resp.content)
+
+    small_queries, small_bytes = cost(small)
+    large_queries, large_bytes = cost(large)
+    assert large_queries == small_queries
+    assert abs(large_bytes - small_bytes) < small_bytes * 0.05

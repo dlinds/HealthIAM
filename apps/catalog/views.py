@@ -1,9 +1,10 @@
 from django.contrib import messages
 from django.core.exceptions import PermissionDenied
+from django.core.paginator import Paginator
 from django.db.models import Count, Q
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
-from django.utils.http import url_has_allowed_host_and_scheme
+from django.utils.http import url_has_allowed_host_and_scheme, urlencode
 from django.views.decorators.http import require_POST
 from django.views.generic import CreateView, DetailView, ListView, UpdateView
 from django_htmx.http import reswap, retarget, trigger_client_event
@@ -101,13 +102,27 @@ class ApplicationListView(PermissionCheckMixin, ListView):
         return ctx
 
 
+# A service adopted from AD can hold hundreds of levels; the tab renders a table row with
+# two htmx buttons each, so the page is what stops it becoming unusable.
+LEVELS_PER_PAGE = 25
+
+
 def _detail_context(request, application):
     user = request.user
     can_edit = perms.can_edit_application(user, application)
     can_edit_levels = perms.can_edit_access_levels(user, application)
     can_manage_analysts = perms.can_manage_analysts(user, application)
-    levels = list(application.access_levels.order_by("sort_order", "name"))
-    level_reference_status = references.status_for_levels(levels)
+
+    levels_qs = application.access_levels.order_by("sort_order", "name")
+    levels_page = Paginator(levels_qs, LEVELS_PER_PAGE).get_page(request.GET.get("levels_page"))
+    # Reference status is resolved over *every* AD level, not just this page: the warning
+    # badge on the tab counts the whole application, and `status_for_levels` costs the same
+    # two queries either way.
+    #
+    # Not `.only(...)`: auditlog's post_init receiver reads each instance, so a deferred
+    # field turns one query into one per row. Loading these rows whole is a single query.
+    ad_levels = list(levels_qs.filter(access_model=AccessLevel.AccessModel.AD_GROUP))
+    level_reference_status = references.status_for_levels(ad_levels)
     return {
         "application": application,
         "object": application,
@@ -117,7 +132,9 @@ def _detail_context(request, application):
         .values("position_defaults__position")
         .distinct()
         .count(),
-        "levels": levels,
+        "levels": list(levels_page.object_list),
+        "levels_page": levels_page,
+        "level_count": levels_page.paginator.count,
         "level_reference_status": level_reference_status,
         "broken_level_count": sum(1 for r in level_reference_status.values() if r.is_broken),
         "aliases": application.aliases.all(),
@@ -228,6 +245,13 @@ def alias_delete(request, pk, alias_id):
     return _section(request, application, "catalog/partials/aliases.html")
 
 
+@role_required("can_view")
+def access_levels(request, pk):
+    """The Access levels tab on another page. Same section, swapped in place."""
+    application = get_object_or_404(Application, pk=pk)
+    return _section(request, application, "catalog/partials/access_levels.html")
+
+
 def access_level_form(request, pk, level_id=None):
     application = _app_for(request, pk, perms.can_edit_access_levels)
     level = (
@@ -238,6 +262,11 @@ def access_level_form(request, pk, level_id=None):
         if level
         else reverse("catalog:access_level_add", args=[pk])
     )
+    # The form posts back to this URL, and the re-rendered section reads its page from the
+    # query string, so saving from page 3 has to land back on page 3.
+    page = request.GET.get("levels_page")
+    if page:
+        form_url = f"{form_url}?{urlencode({'levels_page': page})}"
     if request.method == "POST":
         form = AccessLevelForm(request.POST, instance=level, application=application)
         if form.is_valid():

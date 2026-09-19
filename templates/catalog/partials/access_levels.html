@@ -3,7 +3,7 @@
   <div class="d-flex align-items-center justify-content-between mb-2">
     <p class="text-body-secondary small mb-0">Access levels are the units positions receive by default. Each records how it is granted.</p>
     {% if can_edit_levels %}
-    <button class="btn btn-sm btn-primary" type="button" hx-get="{% url 'catalog:access_level_add' application.pk %}" hx-target="#access-level-form-slot" hx-swap="innerHTML">
+    <button class="btn btn-sm btn-primary" type="button" hx-get="{% url 'catalog:access_level_add' application.pk %}?levels_page={{ levels_page.number }}" hx-target="#access-level-form-slot" hx-swap="innerHTML">
       <i class="bi bi-plus-lg me-1"></i>Add level
     </button>
     {% endif %}
@@ -27,8 +27,8 @@
         <td>{% if level.is_active %}<span class="badge text-bg-success">Active</span>{% else %}<span class="badge text-bg-secondary">Inactive</span>{% endif %}</td>
         {% if can_edit_levels %}
         <td class="text-end text-nowrap">
-          <button class="btn btn-sm btn-outline-primary" type="button" hx-get="{% url 'catalog:access_level_edit' application.pk level.pk %}" hx-target="#access-level-form-slot" hx-swap="innerHTML">Edit</button>
-          <button class="btn btn-sm btn-outline-secondary" type="button" hx-post="{% url 'catalog:access_level_toggle' application.pk level.pk %}" hx-target="#access-levels" hx-swap="outerHTML">{% if level.is_active %}Inactivate{% else %}Reactivate{% endif %}</button>
+          <button class="btn btn-sm btn-outline-primary" type="button" hx-get="{% url 'catalog:access_level_edit' application.pk level.pk %}?levels_page={{ levels_page.number }}" hx-target="#access-level-form-slot" hx-swap="innerHTML">Edit</button>
+          <button class="btn btn-sm btn-outline-secondary" type="button" hx-post="{% url 'catalog:access_level_toggle' application.pk level.pk %}?levels_page={{ levels_page.number }}" hx-target="#access-levels" hx-swap="outerHTML">{% if level.is_active %}Inactivate{% else %}Reactivate{% endif %}</button>
         </td>
         {% endif %}
       </tr>
@@ -38,4 +38,22 @@
     </tbody>
   </table>
   </div>
+  {% if levels_page.has_other_pages %}
+  <nav class="d-flex flex-wrap align-items-center justify-content-between gap-2">
+    <span class="small text-body-secondary">{{ levels_page.start_index }}&ndash;{{ levels_page.end_index }} of {{ levels_page.paginator.count }} levels</span>
+    <ul class="pagination pagination-sm mb-0">
+      <li class="page-item {% if not levels_page.has_previous %}disabled{% endif %}">
+        {% if levels_page.has_previous %}
+        <button class="page-link" type="button" hx-get="{% url 'catalog:access_levels' application.pk %}?levels_page={{ levels_page.previous_page_number }}" hx-target="#access-levels" hx-swap="outerHTML">Previous</button>
+        {% else %}<span class="page-link">Previous</span>{% endif %}
+      </li>
+      <li class="page-item disabled"><span class="page-link">Page {{ levels_page.number }} of {{ levels_page.paginator.num_pages }}</span></li>
+      <li class="page-item {% if not levels_page.has_next %}disabled{% endif %}">
+        {% if levels_page.has_next %}
+        <button class="page-link" type="button" hx-get="{% url 'catalog:access_levels' application.pk %}?levels_page={{ levels_page.next_page_number }}" hx-target="#access-levels" hx-swap="outerHTML">Next</button>
+        {% else %}<span class="page-link">Next</span>{% endif %}
+      </li>
+    </ul>
+  </nav>
+  {% endif %}
 </div>
