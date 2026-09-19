@@ -30,3 +30,11 @@ AD_USER_GROUP = "IAM-Users"
 AD_BASELINE_ROLE = "Help Desk"
 AD_GROUPS_SEARCH_BASES = ["OU=Groups,DC=test,DC=invalid"]
 AD_GROUPS_NAME_PATTERNS = ["APP_*", "LIC_*"]
+# Sign-in is on with a short fuse so the throttle tests stay fast. The backend itself is not
+# in AUTHENTICATION_BACKENDS above: unit tests instantiate it, and the end-to-end login test
+# registers it with override_settings.
+AD_AUTH_ENABLED = True
+AD_AUTH_TIMEOUT = 5
+AD_AUTH_MAX_FAILURES = 3
+AD_AUTH_FAILURE_WINDOW = 600
+AD_AUTH_LOCKOUT_SECONDS = 60

@@ -174,6 +174,23 @@ the same row.
 
 Not audited (same as `ImportBatch`): the row is itself the record.
 
+### SignInAttempt
+The failed-password budget for Active Directory sign-in, one row per login. Its only job is to
+stop the login form forwarding guesses to a domain controller long enough for AD's own lockout
+policy to lock the person out of the domain.
+
+| Field | Notes |
+|---|---|
+| `user` | One-to-one with the login. Keyed on the resolved login, never on what was typed, so a UPN and a short name cannot buy two budgets. |
+| `failures` | Wrong passwords counted so far inside the window. |
+| `first_failure_at` | Start of the current window; failures older than `AD_AUTH_FAILURE_WINDOW` reset the count. |
+| `locked_until` | While set and in the future, attempts for this login never leave HealthIAM. |
+
+Only a genuinely wrong password is counted: an expired, disabled or locked account is returned
+by AD whether or not the password was right, so counting it would lock someone out of the
+application for typing the correct password. Not audited, like `DirectorySyncRun`; clear a
+lockout in Django admin.
+
 ## Audit log
 
 django-auditlog records create / update / delete for every model above. Entries carry

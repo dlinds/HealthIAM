@@ -27,6 +27,11 @@ env = environ.Env(
     AD_BASELINE_ROLE=(str, "Help Desk"),
     AD_GROUPS_SEARCH_BASES=(str, ""),
     AD_GROUPS_NAME_PATTERNS=(list, []),
+    AD_AUTH_ENABLED=(bool, False),
+    AD_AUTH_TIMEOUT=(int, 60),
+    AD_AUTH_MAX_FAILURES=(int, 3),
+    AD_AUTH_FAILURE_WINDOW=(int, 1800),
+    AD_AUTH_LOCKOUT_SECONDS=(int, 1800),
 )
 environ.Env.read_env(BASE_DIR / ".env")
 
@@ -148,6 +153,25 @@ AD_BASELINE_ROLE = env("AD_BASELINE_ROLE")
 AD_GROUPS_SEARCH_BASES = [b.strip() for b in env("AD_GROUPS_SEARCH_BASES").split(";") if b.strip()]
 # fnmatch globs matched case-insensitively against the group name. Empty = every group.
 AD_GROUPS_NAME_PATTERNS = env("AD_GROUPS_NAME_PATTERNS")
+
+# --- Active Directory sign-in ------------------------------------------------------
+# Verify a password by binding to AD as the user. Needs the sync settings above; the login
+# form then accepts a synced person's UPN or short name. Off unless AD_AUTH_ENABLED is set.
+AD_AUTH_ENABLED = AD_ENABLED and env("AD_AUTH_ENABLED")
+# Deliberately longer than AD_TIMEOUT: where an access-control layer in front of the domain
+# controllers requires a step-up approval, it holds the bind open until the person approves.
+AD_AUTH_TIMEOUT = env("AD_AUTH_TIMEOUT")
+# Stop forwarding attempts for a login after this many failures inside the window, so the
+# form cannot be used to lock the account out of the domain. Keep the count below the domain's
+# own lockout threshold and the cool-off at or above its observation window, or AD locks the
+# account before HealthIAM stops trying. 0 lets every attempt reach the directory, for
+# deployments that would rather the directory's own policy engine see and score them all.
+AD_AUTH_MAX_FAILURES = env("AD_AUTH_MAX_FAILURES")
+AD_AUTH_FAILURE_WINDOW = env("AD_AUTH_FAILURE_WINDOW")
+AD_AUTH_LOCKOUT_SECONDS = env("AD_AUTH_LOCKOUT_SECONDS")
+if AD_AUTH_ENABLED:
+    # Last, so a local account is answered by ModelBackend without a network call.
+    AUTHENTICATION_BACKENDS.append("apps.directory.auth.ActiveDirectoryBackend")
 
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},

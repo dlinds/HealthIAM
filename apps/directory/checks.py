@@ -129,3 +129,28 @@ def check_server_uris_are_ldaps(app_configs, **kwargs):
             id="directory.W005",
         )
     ]
+
+
+@register(TAG)
+def check_ad_sign_in_is_not_the_only_way_in(app_configs, **kwargs):
+    """W006: Active Directory sign-in is the only way to reach the application."""
+    if not _enabled() or not getattr(settings, "AD_AUTH_ENABLED", False):
+        return []
+    others = [
+        backend
+        for backend in settings.AUTHENTICATION_BACKENDS
+        if backend != "apps.directory.auth.ActiveDirectoryBackend"
+    ]
+    if others:
+        return []
+    return [
+        Warning(
+            "Active Directory sign-in is the only configured way to sign in.",
+            hint=(
+                "Every sign-in then depends on a domain controller answering, so a directory "
+                "outage locks everyone out, including the administrators who would fix it. "
+                "Keep AUTH_LOCAL_LOGIN=true for a break-glass account, or configure Entra SSO."
+            ),
+            id="directory.W006",
+        )
+    ]

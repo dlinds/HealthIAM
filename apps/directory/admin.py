@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import ADGroup, DirectorySyncRun
+from .models import ADGroup, DirectorySyncRun, SignInAttempt
 
 SYNC_OWNED_FIELDS = (
     "object_guid",
@@ -44,3 +44,25 @@ class DirectorySyncRunAdmin(admin.ModelAdmin):
 
     def has_add_permission(self, request):
         return False
+
+
+@admin.register(SignInAttempt)
+class SignInAttemptAdmin(admin.ModelAdmin):
+    """Read-only, with an action to let someone back in before the cool-off expires."""
+
+    list_display = ("user", "failures", "first_failure_at", "locked_until", "is_locked")
+    search_fields = ("user__username", "user__email")
+    readonly_fields = ("user", "failures", "first_failure_at", "locked_until")
+    actions = ("clear_lockout",)
+
+    def has_add_permission(self, request):
+        return False
+
+    @admin.display(boolean=True, description="Locked")
+    def is_locked(self, obj):
+        return obj.is_locked
+
+    @admin.action(description="Clear lockout and failure count")
+    def clear_lockout(self, request, queryset):
+        updated = queryset.update(failures=0, first_failure_at=None, locked_until=None)
+        self.message_user(request, f"Cleared {updated} sign-in lockout(s).")

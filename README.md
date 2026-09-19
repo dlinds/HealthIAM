@@ -65,6 +65,8 @@ All settings are read from the environment (or `.env`); see `.env.example`.
 | `AD_CA_BUNDLE`, `AD_TIMEOUT` | PEM of the internal CA (empty = system store; verification is always on); connect/receive timeout in seconds (10) |
 | `AD_USER_GROUP`, `AD_BASELINE_ROLE` | Group whose nested members get a login (`IAM-Users`); role they are guaranteed (`Help Desk`) |
 | `AD_GROUPS_SEARCH_BASES`, `AD_GROUPS_NAME_PATTERNS` | Semicolon-separated OU DNs and comma-separated globs (`APP_*,LIC_*`) selecting the AD groups to import and reference-check |
+| `AD_AUTH_ENABLED`, `AD_AUTH_TIMEOUT` | Let synced people sign in with their AD password (LDAPS bind); seconds to wait for the bind (60, long enough for a step-up approval) |
+| `AD_AUTH_MAX_FAILURES`, `AD_AUTH_FAILURE_WINDOW`, `AD_AUTH_LOCKOUT_SECONDS` | Wrong passwords per login inside the window before attempts stop reaching AD, and for how long. Keep under the domain's own lockout policy; `0` disables |
 | `SUPPORT_CONTACT` | Shown on the no-access page |
 | `DJANGO_SETTINGS_MODULE` | `config.settings.dev` (default for `manage.py`) or `config.settings.prod` |
 
@@ -86,7 +88,8 @@ All settings are read from the environment (or `.env`); see `.env.example`.
   each level shows an *In AD* / *Not found in AD* badge and the dashboard and Reports carry a
   **broken references** list (CSV/XLSX). **Admin → Active Directory** shows the effective
   configuration, tests the connection, previews and applies a sync, and lists every run;
-  `manage.py sync_ad` does the same from cron. See `docs/ad-setup.md`.
+  `manage.py sync_ad` does the same from cron. With `AD_AUTH_ENABLED` those people also
+  sign in with their AD password, verified by an LDAPS bind. See `docs/ad-setup.md`.
 - **History**: Admin/Auditor see every change with actor, before/after and reason; every
   application and position page shows its own history.
 

@@ -25,5 +25,6 @@ def iam(request):
         "AUTH_LOCAL_LOGIN": settings.AUTH_LOCAL_LOGIN,
         "OIDC_ENABLED": settings.OIDC_ENABLED,
         "AD_ENABLED": settings.AD_ENABLED,
+        "AD_AUTH_ENABLED": settings.AD_AUTH_ENABLED,
         "SUPPORT_CONTACT": settings.SUPPORT_CONTACT,
     }
