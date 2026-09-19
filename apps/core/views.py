@@ -23,7 +23,11 @@ from . import audit
 @role_required("can_view")
 def dashboard(request):
     user = request.user
-    active_apps = Application.objects.exclude(lifecycle_status=Application.Lifecycle.RETIRED)
+    active = Application.objects.exclude(lifecycle_status=Application.Lifecycle.RETIRED)
+    # Stats and data-quality buckets are about the application catalog. Services carry the
+    # Application defaults (Tier 3, on-site, SAML) without meaning them, and legitimately
+    # have no vendor or owner contact, so counting them here reports gaps nobody can close.
+    active_apps = active.filter(kind=Application.Kind.APPLICATION)
     active_positions = Position.objects.filter(is_active=True)
     stats = {
         "applications": active_apps.count(),
@@ -42,7 +46,7 @@ def dashboard(request):
         "positions_without_defaults": active_positions.annotate(n=Count("defaults")).filter(n=0),
     }
     mine = (
-        active_apps.filter(
+        active.filter(
             Q(analyst_assignments__user=user)
             | Q(business_owner__user=user)
             | Q(technical_owner__user=user)

@@ -49,6 +49,9 @@ class ApplicationListView(PermissionCheckMixin, ListView):
             .prefetch_related("aliases")
             .annotate(level_count=Count("access_levels", filter=Q(access_levels__is_active=True)))
         )
+        self.kind = g.get("kind", Application.Kind.APPLICATION)
+        if self.kind in Application.Kind.values:
+            qs = qs.filter(kind=self.kind)
         q = g.get("q", "").strip()
         if q:
             qs = qs.filter(
@@ -81,6 +84,9 @@ class ApplicationListView(PermissionCheckMixin, ListView):
         g = self.request.GET
         ctx.update(
             q=g.get("q", ""),
+            kind=self.kind,
+            is_service_list=self.kind == Application.Kind.SERVICE,
+            kinds=Application.Kind.choices,
             status=g.get("status", "current"),
             tier=g.get("tier", ""),
             host=g.get("host", ""),
@@ -153,9 +159,18 @@ class ApplicationCreateView(PermissionCheckMixin, CreateView):
     form_class = ApplicationForm
     template_name = "catalog/application_form.html"
 
+    def get_form_kwargs(self):
+        """Seed the unsaved instance so the form knows which kind it is building."""
+        kwargs = super().get_form_kwargs()
+        kind = self.request.GET.get("kind", "")
+        if kind in Application.Kind.values:
+            kwargs["instance"] = Application(kind=kind)
+        return kwargs
+
     def form_valid(self, form):
         form.instance.created_by = self.request.user
-        messages.success(self.request, f"Application '{form.instance.name}' created.")
+        label = "Service" if form.instance.is_service else "Application"
+        messages.success(self.request, f"{label} '{form.instance.name}' created.")
         return super().form_valid(form)
 
 
@@ -166,7 +181,8 @@ class ApplicationUpdateView(PermissionCheckMixin, UpdateView):
     template_name = "catalog/application_form.html"
 
     def form_valid(self, form):
-        messages.success(self.request, f"Application '{form.instance.name}' saved.")
+        label = "Service" if form.instance.is_service else "Application"
+        messages.success(self.request, f"{label} '{form.instance.name}' saved.")
         return super().form_valid(form)
 
 

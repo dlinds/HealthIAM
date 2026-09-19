@@ -2,6 +2,7 @@
 <div class="row g-3">
   <div class="col-lg-7">
     {% if application.description %}<p class="lead fs-6">{{ application.description|linebreaksbr }}</p>{% endif %}
+    {% if not application.is_service %}
     <div class="card mb-3">
       <div class="card-header">Data &amp; hosting</div>
       <div class="card-body">
@@ -18,15 +19,18 @@
         </dl>
       </div>
     </div>
+    {% endif %}
     <div class="card">
       <div class="card-header">Operations</div>
       <div class="card-body">
         <dl class="row mb-0 small">
           <dt class="col-sm-4">Lifecycle</dt><dd class="col-sm-8">{{ application.get_lifecycle_status_display }}{% if application.go_live_date %} · live {{ application.go_live_date }}{% endif %}{% if application.sunset_date %} · sunset {{ application.sunset_date }}{% endif %}</dd>
+          {% if not application.is_service %}
           <dt class="col-sm-4">RTO</dt><dd class="col-sm-8">{% if application.rto_hours is not None %}{{ application.rto_hours }} h{% else %}—{% endif %}</dd>
           <dt class="col-sm-4">DR status</dt><dd class="col-sm-8">{{ application.get_dr_status_display }}</dd>
+          {% endif %}
           <dt class="col-sm-4">Maintenance window</dt><dd class="col-sm-8">{{ application.maintenance_window|default:"—" }}</dd>
-          <dt class="col-sm-4">Contract renewal</dt><dd class="col-sm-8">{{ application.contract_renewal_date|default:"—" }}</dd>
+          {% if not application.is_service %}<dt class="col-sm-4">Contract renewal</dt><dd class="col-sm-8">{{ application.contract_renewal_date|default:"—" }}</dd>{% endif %}
           <dt class="col-sm-4">Cost center</dt><dd class="col-sm-8">{{ application.cost_center|default:"—" }}</dd>
           {% if application.admin_url %}<dt class="col-sm-4">Admin / support URL</dt><dd class="col-sm-8"><a href="{{ application.admin_url }}" target="_blank" rel="noopener">{{ application.admin_url }}</a></dd>{% endif %}
         </dl>

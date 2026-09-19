@@ -127,3 +127,19 @@ def test_seed_demo_is_idempotent_and_seeds_a_demo_directory(db):
         list(DirectorySyncRun.objects.values()),
         User.objects.filter(pk=helpdesk.pk).values().get(),
     ) == snapshot
+
+
+def test_dashboard_excludes_services_from_stats_but_not_from_mine(as_user, admin_user, world):
+    """A service legitimately has no vendor, no owner contact and no PHI flag, so counting
+    it in the catalog stats or the data-quality buckets reports gaps nobody can close.
+    "My applications" is the exception: an analyst who owns only a service must still
+    see it there."""
+    network = factories.ServiceFactory(name="Network Access")
+    factories.make_analyst(network, admin_user)
+
+    resp = as_user(admin_user).get(reverse("core:dashboard"))
+    assert resp.status_code == 200
+    assert resp.context["stats"]["applications"] == 1
+    assert network not in resp.context["quality"]["apps_without_owner"][1]
+    assert network not in resp.context["quality"]["apps_without_levels"][1]
+    assert network in resp.context["mine"]

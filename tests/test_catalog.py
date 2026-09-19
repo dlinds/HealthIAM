@@ -295,3 +295,87 @@ def test_vendor_pages(as_user, admin_user, help_desk_user):
     assert resp.status_code == 302
     vendor.refresh_from_db()
     assert vendor.name == "Oracle Health"
+
+
+# --- Services -------------------------------------------------------------------------
+
+
+def test_application_list_separates_services(as_user, help_desk_user, app):
+    """Services carry Application's defaults without meaning them, so the application
+    catalog, its tier/PHI filters and its counts must not include them."""
+    network = factories.ServiceFactory(name="Network Access")
+
+    client = as_user(help_desk_user)
+    resp = client.get(reverse("catalog:application_list"))
+    assert app in resp.context["object_list"]
+    assert network not in resp.context["object_list"]
+    assert resp.context["is_service_list"] is False
+
+    resp = client.get(reverse("catalog:application_list"), {"kind": "service"})
+    assert network in resp.context["object_list"]
+    assert app not in resp.context["object_list"]
+    assert resp.context["is_service_list"] is True
+
+
+def test_service_form_drops_application_only_fields(admin_user, as_user):
+    """The service form keeps identity, lifecycle, owners and notes; it drops vendor,
+    tier, the data flags, hosting, auth and the contract fields."""
+    from apps.catalog.forms import ApplicationForm
+    from apps.catalog.models import Application
+
+    service_form = ApplicationForm(instance=Application(kind=Application.Kind.SERVICE))
+    for name in ("vendor", "tier", "holds_phi", "host_location", "auth_method", "dr_status"):
+        assert name not in service_form.fields
+    for name in ("name", "description", "lifecycle_status", "business_owner", "notes"):
+        assert name in service_form.fields
+
+    titles = [title for title, _fields in service_form.fieldsets()]
+    assert "Data sensitivity" not in titles
+    assert "Hosting & security" not in titles
+    assert "Identity" in titles and "Owners" in titles
+
+    app_form = ApplicationForm()
+    assert "vendor" in app_form.fields and "tier" in app_form.fields
+    assert "Data sensitivity" in [title for title, _fields in app_form.fieldsets()]
+
+
+def test_create_view_builds_a_service_when_asked(as_user, admin_user):
+    from apps.catalog.models import Application
+
+    client = as_user(admin_user)
+    resp = client.get(reverse("catalog:application_create"), {"kind": "service"})
+    assert resp.status_code == 200
+    assert b"Data sensitivity" not in resp.content
+
+    resp = client.post(
+        reverse("catalog:application_create") + "?kind=service",
+        {"name": "File Shares", "lifecycle_status": "active"},
+    )
+    assert resp.status_code == 302
+    assert Application.objects.get(name="File Shares").kind == Application.Kind.SERVICE
+
+
+def test_service_detail_hides_application_only_panels(as_user, help_desk_user):
+    network = factories.ServiceFactory(name="Network Access")
+    factories.AccessLevelFactory(
+        application=network, name="Remote staff", ad_group_name="VPN_STAFF"
+    )
+    resp = as_user(help_desk_user).get(network.get_absolute_url())
+    assert resp.status_code == 200
+    body = resp.content.decode()
+    assert "Network Access" in body and "Remote staff" in body
+
+    # Scope the assertions to the Overview pane: the History tab legitimately shows the
+    # stored field values, defaults included, because that is what was written.
+    overview = body.split('id="tab-overview"')[1].split('id="tab-levels"')[0]
+    assert "Data &amp; hosting" not in overview  # PHI/PII/hosting/auth card
+    assert "DR status" not in overview
+    assert "RTO" not in overview
+    assert "Contract renewal" not in overview
+    assert "Maintenance window" in overview  # kept: a service can have one
+    assert "Lifecycle" in overview
+
+    # The header shows a Service marker instead of the Tier 3 the service never set.
+    header = body.split('id="appTabs"')[0]
+    assert "Tier 3" not in header
+    assert ">Service<" in header

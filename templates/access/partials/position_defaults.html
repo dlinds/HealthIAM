@@ -16,7 +16,7 @@
     <div class="mb-3">
       <div class="d-flex align-items-center gap-2 mb-1">
         <a class="fw-semibold" href="{{ g.application.get_absolute_url }}">{{ g.application.name }}</a>
-        <span class="badge badge-tier-{{ g.application.tier }}">Tier {{ g.application.tier }}</span>
+        {% if g.application.is_service %}<span class="badge text-bg-light border">Service</span>{% else %}<span class="badge badge-tier-{{ g.application.tier }}">Tier {{ g.application.tier }}</span>{% endif %}
         {% for f in g.application.data_flags %}<span class="badge text-bg-warning-subtle border border-warning-subtle text-warning-emphasis">{{ f }}</span>{% endfor %}
         {% if g.application.lifecycle_status != 'active' %}{% include "catalog/partials/lifecycle_badge.html" with app=g.application %}{% endif %}
       </div>

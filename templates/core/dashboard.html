@@ -15,7 +15,7 @@
     <div class="card mb-3">
       <div class="card-header">My applications</div>
       <ul class="list-group list-group-flush">
-        {% for a in mine %}<li class="list-group-item d-flex justify-content-between align-items-center"><a href="{{ a.get_absolute_url }}">{{ a.name }}</a><span><span class="badge badge-tier-{{ a.tier }}">Tier {{ a.tier }}</span> {% include "catalog/partials/lifecycle_badge.html" with app=a %}</span></li>{% endfor %}
+        {% for a in mine %}<li class="list-group-item d-flex justify-content-between align-items-center"><a href="{{ a.get_absolute_url }}">{{ a.name }}</a><span>{% if a.is_service %}<span class="badge text-bg-light border">Service</span>{% else %}<span class="badge badge-tier-{{ a.tier }}">Tier {{ a.tier }}</span>{% endif %} {% include "catalog/partials/lifecycle_badge.html" with app=a %}</span></li>{% endfor %}
       </ul>
     </div>
     {% endif %}

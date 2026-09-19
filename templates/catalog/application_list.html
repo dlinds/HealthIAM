@@ -1,15 +1,23 @@
 {% extends "base.html" %}
-{% block title %}Applications · HealthIAM{% endblock %}
+{% block title %}{% if is_service_list %}Services{% else %}Applications{% endif %} · HealthIAM{% endblock %}
 {% block content %}
 <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
-  <h1 class="h3 mb-0">Applications</h1>
+  <h1 class="h3 mb-0">{% if is_service_list %}Services{% else %}Applications{% endif %}</h1>
   {% if iam.can_create_application %}
+  {% if is_service_list %}
+  <a class="btn btn-primary" href="{% url 'catalog:application_create' %}?kind=service"><i class="bi bi-plus-lg me-1"></i>New service</a>
+  {% else %}
   <a class="btn btn-primary" href="{% url 'catalog:application_create' %}"><i class="bi bi-plus-lg me-1"></i>New application</a>
   {% endif %}
+  {% endif %}
 </div>
+{% if is_service_list %}
+<p class="text-body-secondary small">Services hold AD groups that no vendor application owns &mdash; VPN, file shares, printing, physical access. Their levels are assigned to positions exactly like application access.</p>
+{% endif %}
 <form class="row g-2 mb-3 js-autosubmit" method="get">
+  <input type="hidden" name="kind" value="{{ kind }}">
   <div class="col-md-3">
-    <input class="form-control" type="search" name="q" value="{{ q }}" placeholder="Search name, alias, or vendor">
+    <input class="form-control" type="search" name="q" value="{{ q }}" placeholder="{% if is_service_list %}Search name{% else %}Search name, alias, or vendor{% endif %}">
   </div>
   <div class="col-md-2">
     <select class="form-select" name="status">
@@ -18,6 +26,7 @@
       <option value="all" {% if status == 'all' %}selected{% endif %}>All</option>
     </select>
   </div>
+  {% if not is_service_list %}
   <div class="col-md-2">
     <select class="form-select" name="tier">
       <option value="">Any tier</option>
@@ -36,19 +45,22 @@
       {% for v in vendors %}<option value="{{ v.pk }}" {% if vendor_id == v.pk|stringformat:'s' %}selected{% endif %}>{{ v.name }}</option>{% endfor %}
     </select>
   </div>
+  {% endif %}
   <div class="col-12 d-flex flex-wrap gap-3 small">
+    {% if not is_service_list %}
     {% for field, label, checked in data_flags %}
     <label class="form-check-label"><input class="form-check-input me-1" type="checkbox" name="{{ field }}" value="1" {% if checked %}checked{% endif %}>{{ label }}</label>
     {% endfor %}
+    {% endif %}
     {% if iam.is_analyst or iam.is_owner %}
-    <label class="form-check-label ms-auto"><input class="form-check-input me-1" type="checkbox" name="mine" value="1" {% if mine %}checked{% endif %}>My applications</label>
+    <label class="form-check-label ms-auto"><input class="form-check-input me-1" type="checkbox" name="mine" value="1" {% if mine %}checked{% endif %}>Mine</label>
     {% endif %}
     <noscript><button class="btn btn-sm btn-outline-secondary" type="submit">Filter</button></noscript>
   </div>
 </form>
 <div class="table-responsive">
 <table class="table table-hover table-sm align-middle">
-  <thead><tr><th>Application</th><th>Vendor</th><th>Tier</th><th>Status</th><th>Data</th><th>Hosting</th><th class="text-end">Levels</th></tr></thead>
+  <thead><tr><th>{% if is_service_list %}Service{% else %}Application{% endif %}</th>{% if not is_service_list %}<th>Vendor</th><th>Tier</th>{% endif %}<th>Status</th>{% if not is_service_list %}<th>Data</th><th>Hosting</th>{% endif %}<th class="text-end">Levels</th></tr></thead>
   <tbody>
   {% for a in object_list %}
     <tr>
@@ -56,15 +68,19 @@
         <a href="{{ a.get_absolute_url }}" class="fw-semibold">{{ a.name }}</a>
         {% if a.aliases.all %}<div class="small text-body-secondary">aka {{ a.aliases.all|join:", " }}</div>{% endif %}
       </td>
+      {% if not is_service_list %}
       <td>{{ a.vendor.name|default:"—" }}</td>
       <td><span class="badge badge-tier-{{ a.tier }}">Tier {{ a.tier }}</span></td>
+      {% endif %}
       <td>{% include "catalog/partials/lifecycle_badge.html" with app=a %}</td>
+      {% if not is_service_list %}
       <td>{% for f in a.data_flags %}<span class="badge text-bg-warning-subtle border border-warning-subtle text-warning-emphasis me-1">{{ f }}</span>{% endfor %}</td>
       <td class="small">{{ a.get_host_location_display }}</td>
+      {% endif %}
       <td class="text-end">{{ a.level_count }}</td>
     </tr>
   {% empty %}
-    <tr><td colspan="7" class="text-body-secondary">No applications match.</td></tr>
+    <tr><td colspan="{% if is_service_list %}3{% else %}7{% endif %}" class="text-body-secondary">No {% if is_service_list %}services{% else %}applications{% endif %} match.</td></tr>
   {% endfor %}
   </tbody>
 </table>

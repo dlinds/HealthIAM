@@ -268,3 +268,46 @@ def test_application_tab_read_only_for_other_analyst(as_user, analyst, pacs):
         reverse("access:application_default_add", args=[pacs.pk]), {"reason": "x"}
     )
     assert resp.status_code == 403
+
+
+# --- Services as assignment targets -----------------------------------------------
+
+
+def test_level_picker_lists_services_alongside_applications(as_user, analyst, position, epic):
+    """A service's levels must be assignable exactly like an application's.
+
+    The picker (`apps/access/views.py:_level_search`) deliberately has no `kind` filter.
+    Adding one would make every non-application AD group unassignable, silently defeating
+    the reason services exist -- so this asserts the absence of that filter.
+    """
+    network = factories.ServiceFactory(name="Network Access")
+    factories.make_analyst(network, analyst)
+    vpn = factories.AccessLevelFactory(
+        application=network, name="Remote staff", ad_group_name="VPN_STAFF"
+    )
+
+    client = as_user(analyst)
+    resp = client.get(reverse("access:default_add", args=[position.pk]), {"q": ""})
+    assert b"Network Access" in resp.content
+    assert b"Remote staff" in resp.content
+
+    resp = client.post(
+        reverse("access:default_add", args=[position.pk]),
+        {"access_level": vpn.pk, "reason": "All clinical staff need VPN"},
+    )
+    assert resp.status_code == 200 and "HX-Retarget" not in resp.headers
+    assert PositionDefault.objects.get().access_level == vpn
+
+
+def test_service_defaults_reach_the_position_matrix(position, analyst):
+    """Expected access includes services: the matrix must not filter them out."""
+    from apps.access import reports
+
+    network = factories.ServiceFactory(name="Network Access")
+    factories.make_analyst(network, analyst)
+    vpn = factories.AccessLevelFactory(
+        application=network, name="Remote staff", ad_group_name="VPN_STAFF"
+    )
+    services.add_default(position, vpn, actor=analyst, reason="seed")
+    rows = list(reports.position_matrix_rows())
+    assert any("Network Access" in row and "Remote staff" in row for row in rows)
