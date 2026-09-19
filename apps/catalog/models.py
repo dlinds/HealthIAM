@@ -312,6 +312,10 @@ class AccessLevel(ApplicationChildAuditMixin, TimeStampedModel):
 
     class Meta:
         ordering = ["application__name", "sort_order", "name"]
+        # `ad_group_name` is joined to `ADGroup.name` case-insensitively on every
+        # broken-reference check and on the "unreferenced groups" filter, which is a
+        # `NOT EXISTS` over this column. Mirrors `directory_adgroup_lname_idx`.
+        indexes = [models.Index(Lower("ad_group_name"), name="catalog_level_adgroup_idx")]
         constraints = [
             models.UniqueConstraint(
                 fields=["application", "name"],

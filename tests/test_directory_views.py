@@ -14,7 +14,7 @@ from openpyxl import load_workbook
 from apps.accounts.models import User
 from apps.catalog.models import AccessLevel
 from apps.directory import references
-from apps.directory.models import ADGroup, DirectorySyncRun
+from apps.directory.models import ADGroup, ADGroupRoute, DirectorySyncRun
 
 from . import factories
 
@@ -363,45 +363,59 @@ def test_broken_reference_page_before_first_sync(as_user, help_desk_user, app):
 # --- Permission matrix ----------------------------------------------------------------------
 
 READ_ONLY = ("group_list", "group_picker", "broken_references")
-ADMIN_GET = ("admin_index", "run_list", "run_detail")
-ADMIN_POST = ("connection_test", "sync_start", "run_apply")
+ADMIN_GET = ("admin_index", "run_list", "run_detail", "route_list", "route_update")
+ADMIN_POST = ("connection_test", "sync_start", "run_apply", "route_delete")
 
 
-def _url(name, run):
+def _url(name, run, route):
+    if name in ("route_update", "route_delete"):
+        return reverse(f"directory:{name}", args=[route.pk])
     if name in ("run_detail", "run_apply"):
         return reverse(f"directory:{name}", args=[run.pk])
     return reverse(f"directory:{name}")
+
+
+def test_every_directory_url_is_in_the_permission_matrix():
+    """The matrix below is the security contract for this app; a URL missing from it is
+    a URL nobody checked. Fails when one is added without being classified."""
+    from apps.directory import urls
+
+    covered = set(READ_ONLY) | set(ADMIN_GET) | set(ADMIN_POST)
+    declared = {pattern.name for pattern in urls.urlpatterns}
+    assert declared == covered, f"unclassified: {declared - covered}, stale: {covered - declared}"
 
 
 def test_permission_matrix_over_all_directory_urls(
     as_user, help_desk_user, admin_user, plain_user, client, fake_directory
 ):
     run = DirectorySyncRun.objects.create(scope="groups", status="completed")
-    assert len(READ_ONLY) + len(ADMIN_GET) + len(ADMIN_POST) == 9
+    route = ADGroupRoute.objects.create(
+        pattern="VPN_*", application=factories.ServiceFactory(name="Network Access")
+    )
 
     c = as_user(help_desk_user)
     for name in READ_ONLY:
-        assert c.get(_url(name, run)).status_code == 200, name
+        assert c.get(_url(name, run, route)).status_code == 200, name
     for name in ADMIN_GET:
-        assert c.get(_url(name, run)).status_code == 403, name
+        assert c.get(_url(name, run, route)).status_code == 403, name
     for name in ADMIN_POST:
-        assert c.get(_url(name, run)).status_code == 405, name
-        assert c.post(_url(name, run), {"scope": "groups"}).status_code == 403, name
+        assert c.get(_url(name, run, route)).status_code == 405, name
+        assert c.post(_url(name, run, route), {"scope": "groups"}).status_code == 403, name
     assert DirectorySyncRun.objects.count() == 1  # help desk started nothing
 
     c = as_user(admin_user)
     for name in READ_ONLY + ADMIN_GET:
-        assert c.get(_url(name, run)).status_code == 200, name
+        assert c.get(_url(name, run, route)).status_code == 200, name
     for name in ADMIN_POST:
-        assert c.get(_url(name, run)).status_code == 405, name
+        assert c.get(_url(name, run, route)).status_code == 405, name
 
     c = as_user(plain_user)
     for name in READ_ONLY + ADMIN_GET:
-        assert c.get(_url(name, run)).status_code == 403, name
+        assert c.get(_url(name, run, route)).status_code == 403, name
 
     client.logout()
     for name in READ_ONLY + ADMIN_GET:
-        resp = client.get(_url(name, run))
+        resp = client.get(_url(name, run, route))
         assert resp.status_code == 302 and resp.url.startswith(reverse("accounts:login")), name
 
 

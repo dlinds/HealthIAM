@@ -24,11 +24,11 @@ from apps.accounts.mixins import PermissionCheckMixin, role_required
 from apps.accounts.models import User
 from apps.catalog.models import AccessLevel
 
-from . import checks, references, sync
+from . import checks, references, routing, sync
 from .config import DirectorySettings
-from .forms import SyncStartForm
+from .forms import ADGroupRouteForm, SyncStartForm
 from .ldap_client import ConnectionInfo
-from .models import ADGroup, DirectorySyncRun
+from .models import ADGroup, ADGroupRoute, DirectorySyncRun
 
 PICKER_LIMIT = 15
 RECENT_RUNS = 10
@@ -36,6 +36,13 @@ RECENT_RUNS = 10
 # The exact scheduled-job line from docs/deploy-truenas.md; shown on the admin page so the
 # operator can paste it into a TrueNAS cron job. stdout is hidden so cron only mails errors.
 SCHEDULE_COMMAND = "docker exec ix-healthiam-web-1 python manage.py sync_ad >/dev/null"
+
+
+def _referencing_levels_for(name):
+    """`AccessLevel`s whose AD group name matches `name` (an expression or a string)."""
+    return AccessLevel.objects.filter(
+        access_model=AccessLevel.AccessModel.AD_GROUP, ad_group_name__iexact=name
+    )
 
 
 def _referencing_levels_by_name(names):
@@ -87,25 +94,35 @@ class ADGroupListView(PermissionCheckMixin, ListView):
             qs = qs.filter(category=self.category)
         self.unreferenced = g.get("unreferenced") == "1"
         if self.unreferenced:
-            referenced = AccessLevel.objects.filter(
-                access_model=AccessLevel.AccessModel.AD_GROUP,
-                ad_group_name__iexact=OuterRef("name"),
-            )
-            qs = qs.filter(~Exists(referenced))
+            qs = qs.filter(~Exists(_referencing_levels_for(OuterRef("name"))))
+        self.unrouted = g.get("unrouted") == "1"
+        if self.unrouted:
+            routes = routing.active_routes()
+            if routes:
+                routed = [
+                    pk
+                    for pk, name in qs.values_list("pk", "name")
+                    if routing.match_in(name, routes) is not None
+                ]
+                qs = qs.exclude(pk__in=routed)
         return qs.order_by("name")
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
         groups = list(ctx["object_list"])
         by_name = _referencing_levels_by_name({group.name.lower() for group in groups})
+        matches = routing.routes_for(group.name for group in groups)
         for group in groups:
             group.referencing_levels = by_name.get(group.name.lower(), [])
+            group.route_match = matches.get(group.name)
         ctx.update(
             object_list=groups,
             q=self.request.GET.get("q", ""),
             active=self.active,
             category=self.category,
             unreferenced=self.unreferenced,
+            unrouted=self.unrouted,
+            has_routes=ADGroupRoute.objects.exists(),
             categories=ADGroup.Category.choices,
             groups_synced=references.groups_synced(),
         )
@@ -215,6 +232,52 @@ def admin_index(request):
     }
     ctx.update(_status_context(runs))
     return render(request, "directory/admin_index.html", ctx)
+
+
+# --- Routes ------------------------------------------------------------------------------
+
+
+@role_required("can_manage_directory")
+def route_list(request):
+    """Admin > Active Directory > Routes: the naming conventions that say where a group
+    belongs. GET renders the list plus an empty form; POST adds a route."""
+    form = ADGroupRouteForm(request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        route = form.save(commit=False)
+        route.created_by = request.user
+        route.save()
+        messages.success(request, f"Route {route.pattern} \u2192 {route.application.name} added.")
+        return redirect("directory:route_list")
+    return render(
+        request,
+        "directory/route_list.html",
+        {
+            "form": form,
+            "routes": ADGroupRoute.objects.select_related("application", "created_by"),
+        },
+    )
+
+
+@role_required("can_manage_directory")
+def route_update(request, pk):
+    route = get_object_or_404(ADGroupRoute, pk=pk)
+    form = ADGroupRouteForm(request.POST or None, instance=route)
+    if request.method == "POST" and form.is_valid():
+        form.save()
+        messages.success(request, f"Route {route.pattern} saved.")
+        return redirect("directory:route_list")
+    return render(request, "directory/route_form.html", {"form": form, "route": route})
+
+
+@require_POST
+@role_required("can_manage_directory")
+def route_delete(request, pk):
+    """Routes are real-deleted: nothing points at one, and the audit log keeps the record."""
+    route = get_object_or_404(ADGroupRoute, pk=pk)
+    label = str(route)
+    route.delete()
+    messages.success(request, f"Route {label} removed.")
+    return redirect("directory:route_list")
 
 
 @require_POST

@@ -3,7 +3,8 @@
 `ADGroup` rows are keyed by objectGUID so renames and moves are tracked, and are deactivated
 (never deleted) when the group stops appearing in the configured search. `DirectorySyncRun`
 records every sync, manual or scheduled, with counts and a per-row log, mirroring
-`orgs.ImportBatch` for LDAP-sourced data.
+`orgs.ImportBatch` for LDAP-sourced data. `ADGroupRoute` records the naming conventions that
+say which application a group belongs to; it is advisory and the sync never reads it.
 """
 
 from datetime import timedelta
@@ -73,6 +74,61 @@ class ADGroup(TimeStampedModel):
             self.inactivated_at = None
             if save:
                 self.save(update_fields=["is_active", "inactivated_at", "updated_at"])
+
+
+class ADGroupRoute(TimeStampedModel):
+    """Routes an AD group name to the application that should hold it as an access level.
+
+    A naming convention is the only thing that says where a group belongs: `VPN_*` is the
+    network team's, `FS_*` is file shares. A route records one such convention so the
+    adopt flow can propose a home instead of asking someone to pick per group.
+
+    Routes are **advisory**. Nothing here creates catalog rows, and `sync` never consults
+    them: a route only pre-fills a target a person then confirms. Patterns use the same
+    case-insensitive globs as `AD_GROUPS_NAME_PATTERNS`.
+    """
+
+    pattern = models.CharField(
+        max_length=200, help_text="Case-insensitive glob matched against the group name, e.g. VPN_*"
+    )
+    application = models.ForeignKey(
+        "catalog.Application",
+        on_delete=models.PROTECT,
+        related_name="ad_group_routes",
+        help_text="Usually a service; any application is allowed.",
+    )
+    priority = models.PositiveSmallIntegerField(
+        default=100, help_text="Lowest number wins when several patterns match."
+    )
+    notes = models.CharField(max_length=255, blank=True, help_text="Why this route exists.")
+    is_active = models.BooleanField(default=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="+",
+        editable=False,
+    )
+
+    class Meta:
+        verbose_name = "AD group route"
+        # `pk` breaks priority ties, so two routes of equal priority resolve the same way
+        # on every request instead of however the database felt like ordering them.
+        ordering = ["priority", "pk"]
+        constraints = [
+            models.UniqueConstraint(
+                Lower("pattern"),
+                name="unique_ad_group_route_pattern",
+                violation_error_message="A route for this pattern already exists.",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.pattern} \u2192 {self.application.name}"
+
+    def get_absolute_url(self):
+        return reverse("directory:route_list")
 
 
 class DirectorySyncRun(TimeStampedModel):

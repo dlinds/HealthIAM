@@ -14,3 +14,6 @@ class DirectoryConfig(AppConfig):
         # last_seen_at changes on every sync; keeping it out of the audit diff means a quiet
         # run produces no history entries.
         register_for_audit(models.ADGroup, exclude=("last_seen_at",))
+        # Routes decide where a group lands in the catalog, so "who pointed VPN_* at
+        # Network Access, and when" has to be answerable.
+        register_for_audit(models.ADGroupRoute)
