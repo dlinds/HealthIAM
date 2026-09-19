@@ -5,9 +5,10 @@ Every `ad_group` access level gets one of five statuses:
 
 - `ok` — an active `ADGroup` row with that name (case-insensitive) exists.
 - `inactive` — only inactive rows exist: the group stopped appearing in the configured search.
-- `missing` — no row at all, although the name falls inside `AD_GROUPS_NAME_PATTERNS`.
-- `unverified` — the name is outside the configured patterns, so the sync never imports it
-  and nothing can be said about it. Never counted as broken.
+- `missing` — no row at all, although the sync's filters would have imported the name.
+- `unverified` — the name is outside `AD_GROUPS_NAME_PATTERNS` or inside
+  `AD_GROUPS_EXCLUDE_PATTERNS`, so the sync never imports it and nothing can be said
+  about it. Never counted as broken.
 - `unknown` — the group list has never been synced; nothing is shown.
 
 Broken = `missing` + `inactive`. `AccessLevel.ad_group_name` stays canonical free text; there is
@@ -25,7 +26,7 @@ from django.db.models.functions import Lower
 
 from apps.catalog.models import AccessLevel
 
-from .matching import matches_patterns
+from .matching import excluded_by, matches_patterns
 from .models import ADGroup, DirectorySyncRun
 
 
@@ -69,7 +70,13 @@ class Reference:
 
 
 def in_scope(name: str) -> bool:
-    """Would the sync import a group with this name? Empty patterns mean everything."""
+    """Would the sync import a group with this name?
+
+    Excludes win over includes. Empty includes mean every name; empty excludes mean
+    nothing is excluded -- see `matching.excluded_by` for why that asymmetry is explicit.
+    """
+    if excluded_by(name, settings.AD_GROUPS_EXCLUDE_PATTERNS):
+        return False
     return matches_patterns(name, settings.AD_GROUPS_NAME_PATTERNS)
 
 

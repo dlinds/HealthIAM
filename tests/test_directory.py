@@ -1429,6 +1429,73 @@ def test_sync_groups_applies_patterns_and_bases(fake_directory, settings):
     assert ADGroup.objects.filter(is_active=True).count() == 6
 
 
+def test_sync_applies_exclude_patterns_and_they_beat_includes(fake_directory, settings):
+    """Excludes are how AD built-ins and IAM's own role groups stay out once the name
+    filter is opened up. They win over the includes, not the other way round."""
+    settings.AD_GROUPS_NAME_PATTERNS = []
+    settings.AD_GROUPS_SEARCH_BASES = []
+    settings.AD_GROUPS_EXCLUDE_PATTERNS = ["Domain *", "IAM-*"]
+    run = do_sync(scope="groups")
+    assert run.status == DirectorySyncRun.Status.COMPLETED
+    assert set(ADGroup.objects.filter(is_active=True).values_list("name", flat=True)) == {
+        "APP_PACS_VIEW",
+        "APP_EPIC_RN",
+        "LIC_M365_E3",
+    }
+
+    # An exclude overrides a matching include rather than being ANDed with it.
+    settings.AD_GROUPS_NAME_PATTERNS = ["APP_*"]
+    settings.AD_GROUPS_EXCLUDE_PATTERNS = ["APP_PACS_*"]
+    do_sync(scope="groups")
+    assert set(ADGroup.objects.filter(is_active=True).values_list("name", flat=True)) == {
+        "APP_EPIC_RN"
+    }
+
+
+def test_empty_exclude_list_excludes_nothing(fake_directory, settings):
+    """`matches_patterns([])` means "everything matches", so the naive exclude test would
+    put every group out of scope. Guarding against that is the whole point of
+    `matching.excluded_by`."""
+    settings.AD_GROUPS_NAME_PATTERNS = []
+    settings.AD_GROUPS_SEARCH_BASES = []
+    settings.AD_GROUPS_EXCLUDE_PATTERNS = []
+    run = do_sync(scope="groups")
+    assert run.status == DirectorySyncRun.Status.COMPLETED
+    assert ADGroup.objects.filter(is_active=True).count() == 6
+
+
+def test_a_narrowing_exclude_cannot_deactivate_most_of_the_mirror(fake_directory, settings):
+    """The empty-listing guard never fires here: the search still returns groups, just
+    far fewer. Losing most of the mirror in one run is a configuration mistake."""
+    settings.AD_GROUPS_NAME_PATTERNS = []
+    settings.AD_GROUPS_SEARCH_BASES = []
+    do_sync(scope="groups")
+    # Pad the mirror past the floor so the proportional guard applies.
+    for i in range(20):
+        factories.ADGroupFactory(name=f"PAD_{i}")
+    active_before = ADGroup.objects.filter(is_active=True).count()
+
+    settings.AD_GROUPS_EXCLUDE_PATTERNS = ["APP_*", "LIC_*", "PAD_*"]
+    run = do_sync(scope="groups")
+    assert run.status == DirectorySyncRun.Status.FAILED
+    assert "would deactivate" in run.error
+    assert "AD_GROUPS_EXCLUDE_PATTERNS" in run.error
+    assert ADGroup.objects.filter(is_active=True).count() == active_before
+
+
+def test_in_scope_reflects_both_filters(settings):
+    settings.AD_GROUPS_NAME_PATTERNS = []
+    settings.AD_GROUPS_EXCLUDE_PATTERNS = []
+    assert references.in_scope("Domain Users") is True
+
+    settings.AD_GROUPS_EXCLUDE_PATTERNS = ["Domain *"]
+    assert references.in_scope("Domain Users") is False
+    assert references.in_scope("APP_EPIC_RN") is True
+
+    settings.AD_GROUPS_NAME_PATTERNS = ["APP_*"]
+    assert references.in_scope("LIC_M365_E3") is False
+
+
 def test_unchanged_groups_run_touches_last_seen_without_audit(fake_directory):
     do_sync(scope="groups")
     pacs = ADGroup.objects.get(name="APP_PACS_VIEW")
@@ -1601,7 +1668,36 @@ ALL_CHECKS = [
     checks.check_bind_credentials,
     checks.check_ca_bundle_exists,
     checks.check_server_uris_are_ldaps,
+    checks.check_ad_sign_in_is_not_the_only_way_in,
+    checks.check_group_filters_are_not_wide_open,
 ]
+
+
+def test_all_checks_are_registered():
+    """ALL_CHECKS drives the "silent when disabled" assertion, so a check missing from it
+    is a check nobody proved stays quiet on an installation without AD."""
+    registered = {
+        name
+        for name, value in vars(checks).items()
+        if name.startswith("check_") and callable(value)
+    }
+    assert {c.__name__ for c in ALL_CHECKS} == registered
+
+
+def test_wide_open_group_filters_warn(settings):
+    settings.AD_GROUPS_NAME_PATTERNS = []
+    settings.AD_GROUPS_EXCLUDE_PATTERNS = []
+    messages = checks.check_group_filters_are_not_wide_open(None)
+    assert check_ids(messages) == ["directory.W007"]
+    # The hint names the group that grants access to HealthIAM itself.
+    assert settings.AD_USER_GROUP in messages[0].hint
+
+    # Either filter being set is enough to show the operator thought about scope.
+    settings.AD_GROUPS_EXCLUDE_PATTERNS = ["Domain *"]
+    assert checks.check_group_filters_are_not_wide_open(None) == []
+    settings.AD_GROUPS_EXCLUDE_PATTERNS = []
+    settings.AD_GROUPS_NAME_PATTERNS = ["APP_*"]
+    assert checks.check_group_filters_are_not_wide_open(None) == []
 
 
 def check_ids(messages) -> list[str]:

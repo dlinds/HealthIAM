@@ -64,7 +64,7 @@ All settings are read from the environment (or `.env`); see `.env.example`.
 | `AD_BIND_DN`, `AD_BIND_PASSWORD` | Read-only service account for the bind |
 | `AD_CA_BUNDLE`, `AD_TIMEOUT` | PEM of the internal CA (empty = system store; verification is always on); connect/receive timeout in seconds (10) |
 | `AD_USER_GROUP`, `AD_BASELINE_ROLE` | Group whose nested members get a login (`IAM-Users`); role they are guaranteed (`Help Desk`) |
-| `AD_GROUPS_SEARCH_BASES`, `AD_GROUPS_NAME_PATTERNS` | Semicolon-separated OU DNs and comma-separated globs (`APP_*,LIC_*`) selecting the AD groups to import and reference-check |
+| `AD_GROUPS_SEARCH_BASES`, `AD_GROUPS_NAME_PATTERNS`, `AD_GROUPS_EXCLUDE_PATTERNS` | Semicolon-separated OU DNs, plus comma-separated globs to include and to exclude, selecting the AD groups to import and reference-check |
 | `AD_AUTH_ENABLED`, `AD_AUTH_TIMEOUT` | Let synced people sign in with their AD password (LDAPS bind); seconds to wait for the bind (60, long enough for a step-up approval) |
 | `AD_AUTH_MAX_FAILURES`, `AD_AUTH_FAILURE_WINDOW`, `AD_AUTH_LOCKOUT_SECONDS` | Wrong passwords per login inside the window before attempts stop reaching AD, and for how long. Keep under the domain's own lockout policy; `0` disables |
 | `SUPPORT_CONTACT` | Shown on the no-access page |

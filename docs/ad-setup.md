@@ -90,14 +90,29 @@ different role in Entra or choose a different baseline.
 
 ## 5. Group search bases and name patterns
 
-Two settings decide which groups are imported, and both also define what "in scope" means
-for the broken-reference check:
+Three settings decide which groups are imported, and all three also define what "in scope"
+means for the broken-reference check:
 
 - `AD_GROUPS_SEARCH_BASES`: one or more OU DNs, **semicolon** separated because DNs contain
   commas. Empty means the whole `AD_BASE_DN`. Each base is searched as a subtree, and a
-  group found under two overlapping bases is imported once.
+  group found under two overlapping bases is imported once. **This is the lever to reach
+  for first**: pointing the bases at the OUs that hold real access groups keeps built-ins
+  out structurally, with no pattern list to maintain.
 - `AD_GROUPS_NAME_PATTERNS`: comma-separated shell-style globs (`APP_*,LIC_*`), matched
   case-insensitively against the sAMAccountName. Empty means every group under the bases.
+  **Prefer leaving it empty.** A group outside the patterns is never imported, so an
+  access level naming it can never be checked: it shows *outside sync filter* forever
+  instead of telling you the group is gone. The groups no application owns — VPN, file
+  shares, printing, badges — are precisely the ones a narrow prefix list leaves out.
+- `AD_GROUPS_EXCLUDE_PATTERNS`: globs that keep a group out however it matched above.
+  Excludes beat includes; an empty list excludes nothing. Use it for AD built-ins and for
+  `AD_USER_GROUP` itself — the group that grants access to HealthIAM should never become
+  an assignable access level. `.env.example` carries a starting list.
+
+A run that would deactivate more than half of the imported groups fails instead, once the
+mirror holds at least 20. Narrowing the filters removes groups from scope without the
+search failing, so the empty-listing guard below never fires; this one catches the
+fat-fingered exclude that would otherwise retire most of the mirror in one run.
 
 An access level with `access_model = ad_group` is then shown as:
 
@@ -106,7 +121,7 @@ An access level with `access_model = ad_group` is then shown as:
 | **In AD** | An active imported group has this name (case-insensitive). |
 | **Not found in AD** | The name matches the patterns but no imported group has it, or the patterns are empty. Counted as broken. |
 | **Not returned by the last sync** | The group was imported earlier but the last sync did not return it: deleted, moved outside the search bases, or renamed. Counted as broken. |
-| *outside sync filter* | The name does not match `AD_GROUPS_NAME_PATTERNS`, so the sync never imports it and cannot judge it. Never counted as broken. |
+| *outside sync filter* | The name does not match `AD_GROUPS_NAME_PATTERNS`, or it matches `AD_GROUPS_EXCLUDE_PATTERNS`, so the sync never imports it and cannot judge it. Never counted as broken. |
 | (nothing) | No group sync has completed yet. |
 
 Names that match the patterns but live in an OU outside the search bases show **Not found
@@ -127,8 +142,8 @@ AD_CA_BUNDLE=/certs/internal-ca.pem
 AD_TIMEOUT=10
 AD_USER_GROUP=IAM-Users
 AD_BASELINE_ROLE=Help Desk
-AD_GROUPS_SEARCH_BASES=OU=Application Groups,DC=corp,DC=example,DC=org;OU=Licensing,DC=corp,DC=example,DC=org
-AD_GROUPS_NAME_PATTERNS=APP_*,LIC_*
+AD_GROUPS_SEARCH_BASES=OU=Access Groups,DC=corp,DC=example,DC=org;OU=Licensing,DC=corp,DC=example,DC=org
+AD_GROUPS_EXCLUDE_PATTERNS=Domain *,Enterprise *,DnsAdmins,Protected Users,Key Admins,IAM-*
 ```
 
 | Variable | Default | Notes |
@@ -141,7 +156,8 @@ AD_GROUPS_NAME_PATTERNS=APP_*,LIC_*
 | `AD_USER_GROUP` | `IAM-Users` | DN or sAMAccountName of the login group. |
 | `AD_BASELINE_ROLE` | `Help Desk` | Role every managed login is guaranteed. `W001`, `W002`. |
 | `AD_GROUPS_SEARCH_BASES` | `AD_BASE_DN` | Semicolon-separated OU DNs. |
-| `AD_GROUPS_NAME_PATTERNS` | empty (all) | Comma-separated globs, case-insensitive. |
+| `AD_GROUPS_NAME_PATTERNS` | empty (all) | Comma-separated globs, case-insensitive. Prefer empty. |
+| `AD_GROUPS_EXCLUDE_PATTERNS` | empty (none) | Comma-separated globs kept out; beats the patterns above. |
 
 Then run `python manage.py check`. The `directory.W00x` warnings are the AD configuration
 checks; they never stop the app from starting, so read them. **Admin → Active Directory**

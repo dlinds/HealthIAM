@@ -30,6 +30,8 @@ AD_USER_GROUP = "IAM-Users"
 AD_BASELINE_ROLE = "Help Desk"
 AD_GROUPS_SEARCH_BASES = ["OU=Groups,DC=test,DC=invalid"]
 AD_GROUPS_NAME_PATTERNS = ["APP_*", "LIC_*"]
+# Pinned, not inherited: a default here would quietly move a dozen reference-status tests.
+AD_GROUPS_EXCLUDE_PATTERNS = ["LIC_RETIRED_*"]
 # Sign-in is on with a short fuse so the throttle tests stay fast. The backend itself is not
 # in AUTHENTICATION_BACKENDS above: unit tests instantiate it, and the end-to-end login test
 # registers it with override_settings.

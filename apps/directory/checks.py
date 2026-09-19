@@ -154,3 +154,26 @@ def check_ad_sign_in_is_not_the_only_way_in(app_configs, **kwargs):
             id="directory.W006",
         )
     ]
+
+
+@register(TAG)
+def check_group_filters_are_not_wide_open(app_configs, **kwargs):
+    """W007: no name patterns and no excludes, so every group under the bases is imported."""
+    if not _enabled():
+        return []
+    if settings.AD_GROUPS_NAME_PATTERNS or settings.AD_GROUPS_EXCLUDE_PATTERNS:
+        return []
+    return [
+        Warning(
+            "Every group under the search bases will be imported.",
+            hint=(
+                "With AD_GROUPS_NAME_PATTERNS and AD_GROUPS_EXCLUDE_PATTERNS both empty, the "
+                "sync mirrors built-ins such as Domain Admins, and the group that grants "
+                "access to HealthIAM itself, alongside the groups you care about. Narrow "
+                "AD_GROUPS_SEARCH_BASES to the OUs holding real access groups -- that "
+                "excludes built-ins structurally -- and set AD_GROUPS_EXCLUDE_PATTERNS "
+                f"for the rest, at least '{settings.AD_USER_GROUP}'."
+            ),
+            id="directory.W007",
+        )
+    ]

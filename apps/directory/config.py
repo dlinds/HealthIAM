@@ -24,6 +24,7 @@ class DirectorySettings:
     baseline_role: str
     group_search_bases: tuple[str, ...]
     group_name_patterns: tuple[str, ...]
+    group_exclude_patterns: tuple[str, ...] = ()
     page_size: int = 500
 
     @classmethod
@@ -39,6 +40,7 @@ class DirectorySettings:
             baseline_role=settings.AD_BASELINE_ROLE,
             group_search_bases=tuple(settings.AD_GROUPS_SEARCH_BASES),
             group_name_patterns=tuple(settings.AD_GROUPS_NAME_PATTERNS),
+            group_exclude_patterns=tuple(settings.AD_GROUPS_EXCLUDE_PATTERNS),
         )
 
     @property
@@ -59,5 +61,6 @@ class DirectorySettings:
             "baseline_role": self.baseline_role,
             "group_search_bases": list(self.effective_search_bases),
             "group_name_patterns": list(self.group_name_patterns),
+            "group_exclude_patterns": list(self.group_exclude_patterns),
             "page_size": self.page_size,
         }

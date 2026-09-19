@@ -10,7 +10,7 @@
     <h1 class="h3 mb-1">Access levels pointing at AD groups not found</h1>
     <div class="text-body-secondary small">
       Every <em>AD group</em> access level whose group name was not returned by the last sync (missing) or was returned before but not any more (inactive).
-      Names outside the sync filter{% if patterns %} (<span class="text-mono">{{ patterns|join:", " }}</span>){% endif %} cannot be checked and are not listed.
+      Names outside the sync filter{% if patterns %} (<span class="text-mono">{{ patterns|join:", " }}</span>){% endif %}{% if exclude_patterns %}, or excluded from it (<span class="text-mono">{{ exclude_patterns|join:", " }}</span>){% endif %} cannot be checked and are not listed.
     </div>
   </div>
   <div>

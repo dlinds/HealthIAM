@@ -188,6 +188,7 @@ def broken_references(request):
             "rows": rows,
             "groups_synced": references.groups_synced(),
             "patterns": settings.AD_GROUPS_NAME_PATTERNS,
+            "exclude_patterns": settings.AD_GROUPS_EXCLUDE_PATTERNS,
         },
     )
 
