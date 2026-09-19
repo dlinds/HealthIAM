@@ -3,7 +3,7 @@
 This is the only module that talks to `ldap3`, and it imports it lazily so the rest of the app
 (and the test-suite's fake directory) never needs a working LDAP stack. `DirectoryClient` is the
 seam tests replace: the sync engine, the connection test and the admin page only ever call
-`sync.build_client()` and the five methods below.
+`sync.build_client()` and the handful of methods on `DirectoryClient`.
 
 Parsing reads `raw_attributes` only. With `get_info=NONE` ldap3 has no schema and would otherwise
 guess at binary values such as objectGUID.
@@ -19,6 +19,9 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta, timezone
 from time import perf_counter
+
+from django.conf import settings as django_settings
+from django.views.decorators.debug import sensitive_variables
 
 from .config import DirectorySettings
 
@@ -56,6 +59,24 @@ GROUP_ATTRIBUTES = [
 ]
 
 GROUP_FILTER = "(objectCategory=group)"
+
+# Sub-codes Active Directory puts in the diagnostic message of an invalidCredentials (49)
+# result, e.g. "...AcceptSecurityContext error, data 52e, v4563". Only a genuinely wrong
+# password should count towards the sign-in throttle; the rest say something about the
+# account's state and are returned whether or not the password was correct.
+AD_BIND_SUBCODES = {
+    "525": "no such user",
+    "52e": "invalid credentials",
+    "530": "not permitted at this time",
+    "531": "not permitted at this workstation",
+    "532": "password expired",
+    "533": "account disabled",
+    "701": "account expired",
+    "773": "must change password at next logon",
+    "775": "account locked out",
+}
+WRONG_PASSWORD_SUBCODE = "52e"
+_AD_SUBCODE = re.compile(r"data ([0-9a-fA-F]{3,4})")
 # LDAP_MATCHING_RULE_IN_CHAIN: transitive group membership, evaluated on the server.
 CHAIN_RULE = "1.2.840.113556.1.4.1941"
 UAC_ACCOUNTDISABLE = 0x2
@@ -75,6 +96,22 @@ class DirectoryUnavailable(DirectoryError):
 
 class DirectoryAuthError(DirectoryError):
     """The service account could not bind."""
+
+
+class DirectoryAccountState(DirectoryError):
+    """The bind failed for a reason that is not a wrong password.
+
+    Active Directory returns these whether or not the password was right (expired, must be
+    changed, disabled, locked, outside permitted hours or workstations), and they do not
+    increment its own bad-password count. Retrying cannot help, so the sign-in throttle must
+    not count them: the person would be locked out of an application for typing the correct
+    password.
+    """
+
+    def __init__(self, code: str, description: str):
+        self.code = code
+        self.description = description
+        super().__init__(f"Active Directory returned {description} (data {code})")
 
 
 @dataclass(frozen=True)
@@ -119,7 +156,7 @@ class ConnectionInfo:
 
 
 class DirectoryClient:
-    """Base class and test seam. Every method may raise `DirectoryError`."""
+    """Base class and test seam. Every method below may raise `DirectoryError`."""
 
     server_label: str = ""
 
@@ -133,6 +170,9 @@ class DirectoryClient:
         raise NotImplementedError
 
     def iter_groups(self, base_dn: str) -> Iterator[DirectoryGroup]:
+        raise NotImplementedError
+
+    def check_password(self, upn: str, password: str, *, expect_sam: str = "") -> bool:
         raise NotImplementedError
 
     def close(self) -> None:
@@ -291,8 +331,11 @@ class Ldap3Client(DirectoryClient):
             text = text.replace(password, "***")
         return text
 
-    def _translate(self, exc: BaseException) -> DirectoryError:
-        """Map an ldap3 / socket exception onto the DirectoryError hierarchy."""
+    def _translate(self, exc: BaseException, *, identity: str | None = None) -> DirectoryError:
+        """Map an ldap3 / socket exception onto the DirectoryError hierarchy.
+
+        `identity` names the account whose bind failed; it defaults to the service account, so
+        a per-user bind must pass its own UPN rather than blame the service account."""
         from ldap3.core import exceptions as ldap_exc
 
         message = self._redact(f"{type(exc).__name__}: {exc}")
@@ -307,12 +350,20 @@ class Ldap3Client(DirectoryClient):
                 ldap_exc.LDAPStrongerAuthRequiredResult,
             ),
         ):
-            return DirectoryAuthError(f"Bind as {self._settings.bind_dn!r} failed ({message})")
+            who = self._settings.bind_dn if identity is None else identity
+            return DirectoryAuthError(f"Bind as {who!r} failed ({message})")
         return DirectoryError(message)
 
-    def _connect(self):
-        if self._conn is not None:
-            return self._conn
+    def _server_pool(self, *, connect_timeout: int | None = None):
+        """Validate the URIs and build a FIRST/exhaust server pool.
+
+        Shared by the service-account connection and the per-user bind, so both get the same
+        ldaps://-only rule and the same certificate verification. Returns the lazily imported
+        `ldap3` module beside the pool; the import stays inside the function so the test-suite
+        can patch `ldap3` module attributes. Tls/Server validate their arguments eagerly (a
+        missing CA bundle, a bad port), so callers build it inside their own try: a
+        configuration error is a DirectoryError too.
+        """
         cfg = self._settings
         if not cfg.server_uris:
             raise DirectoryError("AD_SERVER_URIS is empty")
@@ -323,20 +374,34 @@ class Ldap3Client(DirectoryClient):
                 )
 
         import ldap3
-        from ldap3.core import exceptions as ldap_exc
 
         ldap3.set_config_parameter("POOLING_LOOP_TIMEOUT", 1)
-        # Tls/Server validate their arguments eagerly (a missing CA bundle, a bad port), so
-        # they belong inside the try: a configuration error is a DirectoryError too.
+        # ldap3's Connection repr holds the password in clear text and is logged at BASIC
+        # detail unless this is on. It is inert while the library's log level is off, but one
+        # call to set_library_log_detail_level() while debugging would otherwise write every
+        # password to the console handler.
+        ldap3.utils.log.set_library_log_hide_sensitive_data(True)
+        tls = ldap3.Tls(validate=ssl.CERT_REQUIRED, ca_certs_file=cfg.ca_bundle or None)
+        servers = [
+            ldap3.Server(
+                uri,
+                use_ssl=True,
+                tls=tls,
+                get_info=ldap3.NONE,
+                connect_timeout=cfg.timeout if connect_timeout is None else connect_timeout,
+            )
+            for uri in cfg.server_uris
+        ]
+        return ldap3, ldap3.ServerPool(servers, ldap3.FIRST, active=1, exhaust=True)
+
+    def _connect(self):
+        if self._conn is not None:
+            return self._conn
+        cfg = self._settings
+        from ldap3.core import exceptions as ldap_exc
+
         try:
-            tls = ldap3.Tls(validate=ssl.CERT_REQUIRED, ca_certs_file=cfg.ca_bundle or None)
-            servers = [
-                ldap3.Server(
-                    uri, use_ssl=True, tls=tls, get_info=ldap3.NONE, connect_timeout=cfg.timeout
-                )
-                for uri in cfg.server_uris
-            ]
-            pool = ldap3.ServerPool(servers, ldap3.FIRST, active=1, exhaust=True)
+            ldap3, pool = self._server_pool()
             conn = ldap3.Connection(
                 pool,
                 user=cfg.bind_dn or None,
@@ -481,6 +546,130 @@ class Ldap3Client(DirectoryClient):
     def iter_groups(self, base_dn: str) -> Iterator[DirectoryGroup]:
         for entry in self._paged(base_dn, GROUP_FILTER, GROUP_ATTRIBUTES):
             yield parse_group_entry(entry)
+
+    @sensitive_variables()
+    def check_password(self, upn: str, password: str, *, expect_sam: str = "") -> bool:
+        """True when a simple bind as `upn` with `password` succeeds.
+
+        Runs on its own short-lived connection, so the service-account connection keeps its
+        identity and the sync is never affected. Returns False only for a genuinely wrong
+        password. It raises `DirectoryAccountState` when the account's state blocked the bind,
+        and `DirectoryUnavailable` / `DirectoryError` when the directory could not answer, so
+        the caller can tell those apart and throttle only real password guesses.
+
+        `expect_sam` is the sAMAccountName the caller believes owns this UPN. When given, the
+        identity that actually bound is read back and compared, so a UPN reassigned to someone
+        else between syncs cannot sign in as the previous holder's login.
+        """
+        if not upn or not password or not password.strip():
+            # A simple bind with an empty name or password is refused here rather than left to
+            # the server: ldap3 selects SIMPLE authentication from the *user* argument alone,
+            # so an empty user would become an anonymous bind, which AD answers with success.
+            return False
+        from ldap3.core import exceptions as ldap_exc
+
+        conn = None
+        try:
+            ldap3, pool = self._server_pool(connect_timeout=self._auth_connect_timeout())
+            conn = ldap3.Connection(
+                pool,
+                user=upn,
+                password=password,
+                # Bound explicitly below: auto_bind raises out of the constructor, which would
+                # leave the socket without an object to unbind in `finally`.
+                auto_bind=False,
+                read_only=True,
+                raise_exceptions=True,
+                # Longer than the sync's timeout: an access-control layer in front of the
+                # domain controllers may hold the bind open awaiting a step-up approval.
+                receive_timeout=django_settings.AD_AUTH_TIMEOUT,
+                auto_referrals=False,
+                check_names=False,
+            )
+            bound = conn.bind()
+            # Never infer success from the absence of an exception.
+            if not bound or not conn.bound:
+                logger.info("Active Directory did not bind %s", upn)
+                return False
+            if expect_sam and not self._identity_matches(conn, expect_sam):
+                return False
+        except ldap_exc.LDAPInvalidCredentialsResult as exc:
+            # The only result that can mean "wrong password". Its diagnostic text says which.
+            raise_state = self._account_state(exc)
+            if raise_state is not None:
+                raise raise_state from None
+            logger.info("Active Directory rejected the password for %s", upn)
+            return False
+        except (
+            ldap_exc.LDAPPasswordIsMandatoryError,
+            ldap_exc.LDAPUserNameIsMandatoryError,
+            ldap_exc.LDAPSASLPrepError,
+        ):
+            # Client-side rejections of the supplied credential (empty, or characters SASLprep
+            # refuses). A bad password, not a directory problem.
+            return False
+        except (ldap_exc.LDAPException, OSError) as exc:
+            # Anything else, including "stronger authentication required", is a configuration
+            # or availability problem that affects everyone and must not look like a typo.
+            raise self._scrub(self._translate(exc, identity=upn), password) from None
+        finally:
+            if conn is not None:
+                try:
+                    conn.unbind()
+                except Exception:  # unbinding is best effort
+                    logger.debug("Ignoring error while unbinding the sign-in connection")
+        return True
+
+    def _auth_connect_timeout(self) -> int:
+        """Reaching a server should fail fast even when waiting on the bind may be slow.
+
+        The pool probes every server before connecting, so a long connect timeout multiplied
+        by the number of domain controllers is how one outage ties up every worker.
+        """
+        return max(1, min(self._settings.timeout, 5))
+
+    @staticmethod
+    def _account_state(exc: BaseException) -> DirectoryAccountState | None:
+        """Read AD's `data ###` sub-code; return a state error unless it is a wrong password."""
+        match = _AD_SUBCODE.search(str(getattr(exc, "message", "") or exc))
+        if match is None:
+            return None
+        code = match.group(1).lower()
+        if code == WRONG_PASSWORD_SUBCODE or code not in AD_BIND_SUBCODES:
+            return None
+        return DirectoryAccountState(code, AD_BIND_SUBCODES[code])
+
+    def _identity_matches(self, conn, expect_sam: str) -> bool:
+        """Confirm the session really belongs to the account the caller expected.
+
+        Guards the window between a UPN being reassigned in AD and the next sync noticing:
+        without this the new holder of a UPN would sign in as the previous holder's login.
+        """
+        try:
+            whoami = conn.extend.standard.who_am_i()
+        except Exception:  # noqa: BLE001 - treated as unverifiable below
+            whoami = None
+        if not whoami:
+            logger.warning(
+                "Could not confirm which account bound for %r; refusing the sign-in", expect_sam
+            )
+            return False
+        # AD answers "u:NETBIOS\\sAMAccountName".
+        actual = str(whoami).split("\\")[-1].strip()
+        if actual.casefold() != expect_sam.casefold():
+            logger.warning(
+                "Bind for %r was answered by %r; refusing the sign-in", expect_sam, actual
+            )
+            return False
+        return True
+
+    @staticmethod
+    def _scrub(error: DirectoryError, password: str) -> DirectoryError:
+        """Belt and braces: never let the supplied password ride out inside a message."""
+        text = str(error)
+        if password and password in text:
+            error = type(error)(text.replace(password, "***"))
+        return error
 
 
 def build_client() -> DirectoryClient:

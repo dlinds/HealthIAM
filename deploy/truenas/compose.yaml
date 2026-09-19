@@ -75,6 +75,18 @@ services:
       # Case-insensitive glob patterns, comma separated; only matching groups are
       # imported and only matching names are checked for broken references.
       # AD_GROUPS_NAME_PATTERNS: APP_*,LIC_*
+      #
+      # Let synced people sign in with their AD password. Keep AUTH_LOCAL_LOGIN true as well,
+      # so a local account still works when a domain controller is unreachable.
+      # AD_AUTH_ENABLED: "true"
+      # Seconds to wait for the bind; long enough for a step-up approval where one is required.
+      # AD_AUTH_TIMEOUT: "60"
+      # Wrong passwords per login inside the window, then a cool-off. Keep the count below the
+      # domain's lockout threshold and the cool-off at or above its observation window.
+      # 0 turns the budget off and lets the directory decide.
+      # AD_AUTH_MAX_FAILURES: "3"
+      # AD_AUTH_FAILURE_WINDOW: "1800"
+      # AD_AUTH_LOCKOUT_SECONDS: "1800"
     volumes:
       # CSV import batches keep their uploaded file; without this they vanish on
       # redeploy. Dataset must be owned by 568:568 (see docs).

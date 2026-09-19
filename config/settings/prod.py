@@ -24,5 +24,6 @@ STORAGES = {
 if not AUTHENTICATION_BACKENDS:
     raise RuntimeError(
         "No authentication backend configured: set ENTRA_TENANT_ID + OIDC_RP_CLIENT_ID "
-        "for SSO, or AUTH_LOCAL_LOGIN=true."
+        "for SSO, AD_AUTH_ENABLED=true for Active Directory sign-in, or "
+        "AUTH_LOCAL_LOGIN=true."
     )

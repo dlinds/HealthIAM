@@ -9,6 +9,9 @@ HealthIAM can read from on-prem Active Directory over LDAPS. Two things come out
   imported (names and metadata only, no membership) so the catalog can offer a picker for
   `ad_group_name`, mark each access level as **In AD** / **Not found in AD**, and list broken
   references on the dashboard and in a report.
+- **Sign-in, optionally.** With `AD_AUTH_ENABLED` set, those people sign in to HealthIAM with
+  their Active Directory password: the login form verifies it by binding to a domain
+  controller as them. See section 9.
 
 Nothing is ever written to AD, and nothing in HealthIAM is deleted by the sync: logins and
 groups are deactivated and can be reactivated by the next run. With `AD_SERVER_URIS` empty
@@ -197,7 +200,88 @@ Nightly is usually right. Redirecting stdout keeps the summary out of the cron m
 are only mailed the errors, which are printed to stderr. `docs/deploy-truenas.md` has the
 details, including the container name.
 
-## 9. Caveats
+## 9. Signing in with an AD password
+
+Without this, a synced person has a login but no way to use it unless Entra SSO is configured:
+the sync stores an unusable Django password on purpose. Turn it on with:
+
+```
+AD_AUTH_ENABLED=true
+```
+
+The login form then accepts their Active Directory password. HealthIAM verifies it by binding
+to a domain controller as that person over LDAPS, using the same servers and CA bundle as the
+sync. Nothing is written to AD and the password is never stored, logged or put on a run record.
+
+**Who can sign in.** Only a login the sync manages and has left active, i.e. a current member of
+the user group. The username is looked up in HealthIAM first, so a valid AD credential on its
+own is not enough, and a local account never causes a network call. Remove someone from the
+group and the next sync deactivates their login; they can no longer sign in.
+
+**What to type.** Their sign-in name in any of the forms `alice@corp.example.org`, `alice`, or
+`CORP\alice`. Case does not matter.
+
+**The attempt budget.** The form forwards passwords to a domain controller, so without a limit
+it would be a way to lock any known account out of the domain. After `AD_AUTH_MAX_FAILURES`
+wrong passwords inside `AD_AUTH_FAILURE_WINDOW`, HealthIAM stops forwarding attempts for that
+login for `AD_AUTH_LOCKOUT_SECONDS`.
+
+| Variable | Default | Notes |
+|---|---|---|
+| `AD_AUTH_ENABLED` | `false` | Requires the sync settings above to be set as well. |
+| `AD_AUTH_TIMEOUT` | `60` | Seconds to wait for the bind. Long on purpose; see below. |
+| `AD_AUTH_MAX_FAILURES` | `3` | Wrong passwords before the cool-off. `0` turns the budget off. |
+| `AD_AUTH_FAILURE_WINDOW` | `1800` | Seconds over which those failures are counted. |
+| `AD_AUTH_LOCKOUT_SECONDS` | `1800` | How long attempts stop reaching AD. |
+
+Keep the count **below** your domain's lockout threshold and the cool-off **at or above** its
+observation window (`net accounts` shows both). Otherwise Active Directory locks the account
+before HealthIAM stops trying, which is the opposite of the point. Remember the person's phone
+and mail client may be contributing failures of their own.
+
+A lockout is deliberately invisible to whoever is typing: the page says *Invalid username or
+password* whatever went wrong, so it never reveals which usernames exist. An administrator can
+see and clear lockouts in Django admin under **Directory → AD sign-in attempts**.
+
+**Keep a way in that does not depend on the directory.** Leave `AUTH_LOCAL_LOGIN=true` so a
+local account still works when a domain controller is unreachable, or configure Entra SSO.
+Check `directory.W006` warns when Active Directory sign-in is the only way in.
+
+**Expired and blocked accounts.** Active Directory answers a password that has expired, an
+account that is disabled, locked or outside its permitted hours in the same way as a wrong
+password. HealthIAM tells them apart from the diagnostic code, logs which one it was, and does
+not count them against the attempt budget, because retrying cannot help and the password may
+have been correct. The person still sees the generic message, so check the container log when
+someone reports a sign-in they cannot explain.
+
+### Where an access-control layer enforces policy at the domain controllers
+
+The bind HealthIAM performs is an ordinary LDAPS simple bind, so a product that enforces
+authentication policy at the domain controllers sees it as an authentication event for that
+user and can allow it, deny it or require a step-up approval. Fencing the sync's service
+account to this host works well. Three things to know before relying on it:
+
+- **It sees the application, not the person's device.** Every bind arrives from the HealthIAM
+  container's address, because an LDAP bind carries no originating client address. Policy or
+  fencing keyed on where the *user* is cannot work through this path; per-user and
+  per-application policy can.
+- **Step-up approval needs time.** A policy that pushes a prompt holds the bind open until the
+  person approves it, which is why `AD_AUTH_TIMEOUT` defaults to 60 seconds rather than the
+  sync's 10. The reverse proxy's read timeout and gunicorn's `--timeout` (120) must both be
+  larger. Each waiting sign-in occupies one of the three gunicorn workers, so raise the worker
+  count if many people will approve prompts at once.
+- **A policy denial looks like a wrong password.** It is not distinguishable at the LDAP layer,
+  so the person sees the generic message and the attempt counts against the budget. Set
+  `AD_AUTH_MAX_FAILURES=0` to hand lockout decisions entirely to the directory and its policy
+  engine, which also lets that engine see and score every attempt.
+
+Confirm your deployment mode actually covers LDAP simple binds; coverage differs between
+domain-controller-side and proxy-based modes. Where fine-grained policy or a good step-up
+experience matters, federated sign-in through an identity provider is the stronger integration
+point, and HealthIAM already supports OIDC (`docs/entra-setup.md`). A password bind is the
+weakest place to enforce identity-layer policy.
+
+## 10. Caveats
 
 - **AD owns `is_active` for managed logins.** For a login with the **AD** badge on the Users
   page, unticking *Account active* in the roles form is undone by the next sync if the person
@@ -257,7 +341,7 @@ details, including the container name.
   `helpdesk` login (marked sync-managed) are not in the real directory, so the first real sync
   deactivates them. Do not seed demo data on a real instance.
 
-## 10. Local demo without a domain controller
+## 11. Local demo without a domain controller
 
 `manage.py seed_demo` loads a small synthetic directory (AD groups for the demo access
 levels, a completed sync run, and the `helpdesk` login marked as sync-managed), but the AD

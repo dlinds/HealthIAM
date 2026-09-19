@@ -14,7 +14,9 @@ from collections.abc import Iterator
 from datetime import datetime
 
 from apps.directory.ldap_client import (
+    AD_BIND_SUBCODES,
     ConnectionInfo,
+    DirectoryAccountState,
     DirectoryClient,
     DirectoryError,
     DirectoryGroup,
@@ -39,6 +41,9 @@ class FakeDirectory(DirectoryClient):
         self.user_group = user_group
         self.groups: dict[str, DirectoryGroup] = {}  # lower DN -> group
         self.users: dict[str, DirectoryUser] = {}  # lower DN -> user
+        self.passwords: dict[str, str] = {}  # lower UPN -> password
+        self.account_states: dict[str, str] = {}  # lower UPN -> AD bind sub-code
+        self.bound_as: dict[str, str] = {}  # lower UPN -> sAMAccountName who_am_i reports
         self.members: dict[str, list[str]] = {}  # lower group DN -> member DNs
         # Failure knobs
         self.fail_connect: bool | str = False
@@ -120,6 +125,10 @@ class FakeDirectory(DirectoryClient):
         )
         self.users[user.dn.casefold()] = user
         return user
+
+    def set_password(self, user: DirectoryUser | str, password: str) -> None:
+        """Give an account a password a simple bind will accept."""
+        self.passwords[self._find_user(user).upn.casefold()] = password
 
     def update_user(self, user: DirectoryUser | str, **changes) -> DirectoryUser:
         """Replace a user record in place (same DN) with the given field changes."""
@@ -285,6 +294,24 @@ class FakeDirectory(DirectoryClient):
                 yielded += 1
                 yield group
 
+    def check_password(self, upn: str, password: str, *, expect_sam: str = "") -> bool:
+        self.calls.append(("check_password", upn))
+        if not upn or not password or not password.strip():
+            return False
+        self._check_connect()
+        state = self.account_states.get(upn.casefold())
+        if state is not None:
+            raise DirectoryAccountState(state, AD_BIND_SUBCODES.get(state, "blocked"))
+        if self.passwords.get(upn.casefold()) != password:
+            return False
+        if expect_sam:
+            answered = self.bound_as.get(upn.casefold())
+            if answered is None:
+                answered = self._find_user(upn).sam
+            if answered.casefold() != expect_sam.casefold():
+                return False
+        return True
+
     def close(self) -> None:
         self.calls.append(("close",))
         self.closed = True
@@ -330,4 +357,6 @@ def build_default_world(base_dn: str = "DC=test,DC=invalid") -> FakeDirectory:
     fake.add_group("APP_EPIC_RN", ou="OU=Groups", description="Epic nursing template")
     fake.add_group("LIC_M365_E3", ou="OU=Groups", description="Microsoft 365 E3 licence")
     fake.add_group("Domain Users", ou="OU=Groups", description="All domain users")
+    for account in (alice, bob, carol):
+        fake.set_password(account, f"{account.sam}-pw")
     return fake

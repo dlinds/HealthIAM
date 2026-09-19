@@ -133,3 +133,30 @@ class DirectorySyncRun(TimeStampedModel):
             and self.started_at is not None
             and timezone.now() - self.started_at > STALE_RUN_AFTER
         )
+
+
+class SignInAttempt(TimeStampedModel):
+    """Failed Active Directory sign-in counter for one login.
+
+    Keyed on the login the username resolved to, never on what was typed: the form accepts
+    both a UPN and a short name, and two spellings must not buy two budgets of attempts.
+    Its only job is to stop the form forwarding guesses to Active Directory long before AD's
+    own lockout policy would lock the person out of the domain.
+    """
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="ad_sign_in_attempt"
+    )
+    failures = models.PositiveSmallIntegerField(default=0)
+    first_failure_at = models.DateTimeField(null=True, blank=True)
+    locked_until = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        verbose_name = "AD sign-in attempt"
+
+    def __str__(self):
+        return f"{self.user} ({self.failures} failed)"
+
+    @property
+    def is_locked(self) -> bool:
+        return bool(self.locked_until and self.locked_until > timezone.now())
