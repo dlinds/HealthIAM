@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}Add AD groups to the catalog · HealthIAM{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb">
+  <li class="breadcrumb-item"><a href="{% url 'directory:group_list' %}">AD groups</a></li>
+  <li class="breadcrumb-item active">Add to catalog</li>
+</ol></nav>
+<h1 class="h3 mb-2">Add AD groups to the catalog</h1>
+<p class="text-body-secondary small">
+  Imported groups that no access level points at yet. Adopting one creates an access level under the application or service you choose &mdash;
+  it records where the group belongs, and grants nobody anything. Assigning that level to a position is a separate step, and asks for a reason.
+  {% if not groups_synced %}<span class="text-warning-emphasis">No group sync has completed yet.</span>{% endif %}
+</p>
+
+<form class="row g-2 mb-3" method="get">
+  <div class="col-md-4"><input class="form-control" type="search" name="q" value="{{ q }}" placeholder="Search name or description"></div>
+  <div class="col-auto"><button class="btn btn-outline-secondary" type="submit">Search</button></div>
+</form>
+
+{% if truncated %}
+<div class="alert alert-info py-2 small">Showing the first {{ limit }} groups. Search to narrow the list.</div>
+{% endif %}
+
+<form method="post">
+  {% csrf_token %}
+  <div class="table-responsive">
+  <table class="table table-sm align-middle">
+    <thead><tr><th style="width:2.5rem"></th><th>AD group</th><th>Goes to</th><th>Access level name</th></tr></thead>
+    <tbody>
+    {% for c in candidates %}
+      <tr>
+        <td><input class="form-check-input" type="checkbox" name="adopt" value="{{ c.group.name }}" {% if c.match %}checked{% endif %}></td>
+        <td>
+          <span class="text-mono">{{ c.group.name }}</span>
+          {% if c.group.description %}<div class="small text-body-secondary">{{ c.group.description|truncatechars:90 }}</div>{% endif %}
+          <div class="small text-body-tertiary text-truncate" style="max-width: 24rem" title="{{ c.group.distinguished_name }}">{{ c.group.distinguished_name }}</div>
+        </td>
+        <td>
+          <select class="form-select form-select-sm" name="application-{{ c.group.name }}">
+            {% for a in targets %}
+            <option value="{{ a.pk }}" {% if c.suggested and a.pk == c.suggested.pk %}selected{% endif %}>{{ a.name }}{% if a.is_service %} (service){% endif %}</option>
+            {% endfor %}
+          </select>
+          {% if c.match %}<div class="small text-body-tertiary">matched <span class="text-mono">{{ c.match.pattern }}</span></div>
+          {% else %}<div class="small text-body-tertiary">no route &mdash; pick one</div>{% endif %}
+        </td>
+        <td><input class="form-control form-control-sm" type="text" name="level-{{ c.group.name }}" value="{{ c.group.name }}" maxlength="150"></td>
+      </tr>
+    {% empty %}
+      <tr><td colspan="4" class="text-body-secondary">Every imported group is already referenced by an access level.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% if candidates %}
+  {% if targets %}
+  <button class="btn btn-primary" type="submit">Add the ticked groups</button>
+  <a class="btn btn-outline-secondary" href="{% url 'directory:group_list' %}">Cancel</a>
+  {% else %}
+  <div class="alert alert-warning py-2 small mb-0">You are not an analyst on any application, so there is nowhere to put these groups.</div>
+  {% endif %}
+  {% endif %}
+</form>
+{% endblock %}

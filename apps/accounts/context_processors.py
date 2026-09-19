@@ -20,6 +20,7 @@ def iam(request):
             "can_manage_roles": p.can_manage_roles(user),
             "can_create_application": p.can_create_application(user),
             "can_edit_any_defaults": p.can_edit_any_defaults(user),
+            "can_edit_any_access_levels": p.can_edit_any_access_levels(user),
             "role_labels": p.role_labels(user) if user is not None else [],
         },
         "AUTH_LOCAL_LOGIN": settings.AUTH_LOCAL_LOGIN,

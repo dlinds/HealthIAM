@@ -143,24 +143,46 @@ def default_add(request, pk):
     )
 
 
-def _level_search(user, position, q, limit=15):
+# Applications listed at once, and levels shown under each. A service adopted from AD can
+# hold hundreds of levels, which would bury the picker; the search box matches level names
+# as well as application names so a long list can always be narrowed.
+APP_LIMIT = 15
+LEVELS_PER_APP = 12
+
+
+def _level_search(user, position, q, limit=APP_LIMIT):
     apps_qs = (
         Application.objects.exclude(lifecycle_status=Application.Lifecycle.RETIRED)
         .prefetch_related("access_levels")
         .order_by("name")
     )
     if q:
-        apps_qs = apps_qs.filter(Q(name__icontains=q) | Q(aliases__alias__icontains=q)).distinct()
+        apps_qs = apps_qs.filter(
+            Q(name__icontains=q)
+            | Q(aliases__alias__icontains=q)
+            | Q(access_levels__name__icontains=q)
+            | Q(access_levels__ad_group_name__icontains=q)
+        ).distinct()
     if not perms.is_admin(user):
         apps_qs = apps_qs.filter(analyst_assignments__user=user).distinct()
     existing = set(position.defaults.values_list("access_level_id", flat=True))
     results = []
     for app in apps_qs[:limit]:
         levels = [lvl for lvl in app.access_levels.all() if lvl.is_active]
+        if q:
+            # The application matched; if its own name did not, only show the levels that did.
+            matching = [
+                lvl
+                for lvl in levels
+                if q.lower() in lvl.name.lower() or q.lower() in lvl.ad_group_name.lower()
+            ]
+            if matching:
+                levels = matching
         results.append(
             {
                 "application": app,
-                "levels": [(lvl, lvl.pk in existing) for lvl in levels],
+                "levels": [(lvl, lvl.pk in existing) for lvl in levels[:LEVELS_PER_APP]],
+                "hidden": max(0, len(levels) - LEVELS_PER_APP),
             }
         )
     return results

@@ -311,3 +311,34 @@ def test_service_defaults_reach_the_position_matrix(position, analyst):
     services.add_default(position, vpn, actor=analyst, reason="seed")
     rows = list(reports.position_matrix_rows())
     assert any("Network Access" in row and "Remote staff" in row for row in rows)
+
+
+def test_picker_caps_levels_and_searches_level_names(as_user, analyst, position, epic):
+    """A service adopted from AD can hold hundreds of levels. The picker shows a slice and
+    says how many it hid; searching matches level and AD group names, not just app names."""
+    from apps.access.views import LEVELS_PER_APP
+
+    network = factories.ServiceFactory(name="Network Access")
+    factories.make_analyst(network, analyst)
+    for i in range(LEVELS_PER_APP + 5):
+        factories.AccessLevelFactory(
+            application=network, name=f"Group {i:02d}", ad_group_name=f"VPN_{i:02d}"
+        )
+    factories.AccessLevelFactory(
+        application=network, name="Radiology share", ad_group_name="FS_RADIOLOGY"
+    )
+
+    client = as_user(analyst)
+    url = reverse("access:default_add", args=[position.pk])
+    resp = client.get(url, {"q": ""})
+    body = resp.content.decode()
+    assert "and 6 more" in body  # 18 levels, 12 shown
+
+    # A level-name search finds the level even though the application name does not match.
+    resp = client.get(url, {"q": "Radiology"})
+    body = resp.content.decode()
+    assert "Radiology share" in body
+    assert "Group 00" not in body  # the other levels of the same service are filtered out
+
+    # An AD group name works too, which is how an analyst looks one up from a ticket.
+    assert b"Radiology share" in client.get(url, {"q": "FS_RADIO"}).content

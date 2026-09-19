@@ -123,6 +123,23 @@ All writes go through `apps/access/services.py` (`add_default`, `remove_default`
 `copy_defaults`), which require a **reason**, enforce analyst scope, and store the reason
 plus position / application / level context on the audit entry.
 
+## Adopting AD groups (`apps/catalog/services.py`)
+
+`adopt_groups` turns imported AD groups into access levels in bulk, from
+**AD groups → Add to catalog**. Each row commits in its own transaction, so a row that
+fails is reported and the rest still apply; a shared transaction could not survive
+catching the per-application unique-name `IntegrityError`. Rows are refused for an
+application the actor is not an analyst on, a retired application, a group already
+referenced by any access level (case-insensitively), or a name longer than
+`ad_group_name` holds — `ADGroup.name` is 256 characters, `AccessLevel.ad_group_name`
+200.
+
+Unlike `PositionDefault` writes, adoption takes **no reason**: recording where a group
+belongs grants nobody anything, and the single-level form asks for none either. Assigning
+that level to a position is the access-granting decision, and still requires one.
+Adoption is idempotent through the catalog itself — an adopted group is referenced, so it
+leaves the candidate list.
+
 ## Accounts and roles (`apps/accounts`)
 
 `User` extends Django's user with `entra_object_id`, `job_title`, `department_name` and

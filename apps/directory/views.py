@@ -14,15 +14,18 @@ from django.db.models import Case, Count, Exists, IntegerField, OuterRef, Q, Val
 from django.db.models.functions import Lower
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
+from django.utils.http import urlencode
 from django.views.decorators.debug import sensitive_variables
 from django.views.decorators.http import require_POST
 from django.views.generic import ListView
 from django_htmx.http import HttpResponseClientRedirect
 
 from apps.access import reports
+from apps.accounts import permissions as perms
 from apps.accounts.mixins import PermissionCheckMixin, role_required
 from apps.accounts.models import User
-from apps.catalog.models import AccessLevel
+from apps.catalog import services as catalog_services
+from apps.catalog.models import AccessLevel, Application
 
 from . import checks, references, routing, sync
 from .config import DirectorySettings
@@ -156,6 +159,90 @@ def group_picker(request):
     key = q.lower()
     results = [(g, bool(q) and g.name.lower() == key) for g in groups[:PICKER_LIMIT]]
     return render(request, "directory/partials/group_picker.html", {"q": q, "results": results})
+
+
+# --- Adopting groups into the catalog ----------------------------------------------------
+
+
+ADOPT_LIMIT = 200
+
+
+def _adoptable(qs):
+    """Active groups no access level points at yet -- the same rule as `?unreferenced=1`."""
+    return qs.filter(is_active=True).filter(~Exists(_referencing_levels_for(OuterRef("name"))))
+
+
+def _adopt_targets(user):
+    """Applications the actor may add levels to, services first."""
+    qs = Application.objects.exclude(lifecycle_status=Application.Lifecycle.RETIRED)
+    if not perms.is_admin(user):
+        qs = qs.filter(analyst_assignments__user=user).distinct()
+    return qs.order_by("-kind", "name")
+
+
+@role_required("can_edit_any_access_levels")
+def group_adopt(request):
+    """Turn unreferenced AD groups into access levels: preview, then apply.
+
+    GET lists candidates with the target each route suggests and an editable level name.
+    POST creates only the rows that were ticked, one transaction each, and reports what
+    happened per row. Nothing is created from a route alone.
+    """
+    targets = list(_adopt_targets(request.user))
+    by_pk = {a.pk: a for a in targets}
+    q = request.GET.get("q", "").strip()
+
+    if request.method == "POST":
+        rows = []
+        for name in request.POST.getlist("adopt"):
+            application = by_pk.get(_int_or_none(request.POST.get(f"application-{name}")))
+            if application is None:
+                messages.error(request, f"{name}: choose an application you can edit.")
+                continue
+            rows.append((name, application, request.POST.get(f"level-{name}", "").strip(), ""))
+        result = catalog_services.adopt_groups(rows, actor=request.user)
+        added, skipped = result.counts
+        if added:
+            messages.success(request, f"Added {added} access level{'s' if added != 1 else ''}.")
+        for message in result.skipped:
+            messages.warning(request, message)
+        if not added and not skipped:
+            messages.info(request, "Nothing was selected.")
+        url = reverse("directory:group_adopt")
+        return redirect(f"{url}?{urlencode({'q': q})}" if q else url)
+
+    groups = _adoptable(ADGroup.objects.all())
+    if q:
+        groups = groups.filter(Q(name__icontains=q) | Q(description__icontains=q))
+    groups = list(groups.order_by("name")[:ADOPT_LIMIT])
+    matches = routing.routes_for(group.name for group in groups)
+    candidates = [
+        {
+            "group": group,
+            "match": matches.get(group.name),
+            "suggested": (matches.get(group.name).application if matches.get(group.name) else None),
+        }
+        for group in groups
+    ]
+    return render(
+        request,
+        "directory/group_adopt.html",
+        {
+            "candidates": candidates,
+            "targets": targets,
+            "q": q,
+            "limit": ADOPT_LIMIT,
+            "truncated": len(groups) == ADOPT_LIMIT,
+            "groups_synced": references.groups_synced(),
+        },
+    )
+
+
+def _int_or_none(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 # --- Broken references -----------------------------------------------------------------

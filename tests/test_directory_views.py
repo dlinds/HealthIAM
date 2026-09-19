@@ -365,6 +365,9 @@ def test_broken_reference_page_before_first_sync(as_user, help_desk_user, app):
 READ_ONLY = ("group_list", "group_picker", "broken_references")
 ADMIN_GET = ("admin_index", "run_list", "run_detail", "route_list", "route_update")
 ADMIN_POST = ("connection_test", "sync_start", "run_apply", "route_delete")
+# Adopting groups is an analyst's job, not only a directory administrator's: which
+# applications they may adopt into is decided per row by `can_edit_access_levels`.
+ANALYST_GET = ("group_adopt",)
 
 
 def _url(name, run, route):
@@ -380,7 +383,7 @@ def test_every_directory_url_is_in_the_permission_matrix():
     a URL nobody checked. Fails when one is added without being classified."""
     from apps.directory import urls
 
-    covered = set(READ_ONLY) | set(ADMIN_GET) | set(ADMIN_POST)
+    covered = set(READ_ONLY) | set(ADMIN_GET) | set(ADMIN_POST) | set(ANALYST_GET)
     declared = {pattern.name for pattern in urls.urlpatterns}
     assert declared == covered, f"unclassified: {declared - covered}, stale: {covered - declared}"
 
@@ -396,7 +399,7 @@ def test_permission_matrix_over_all_directory_urls(
     c = as_user(help_desk_user)
     for name in READ_ONLY:
         assert c.get(_url(name, run, route)).status_code == 200, name
-    for name in ADMIN_GET:
+    for name in ADMIN_GET + ANALYST_GET:
         assert c.get(_url(name, run, route)).status_code == 403, name
     for name in ADMIN_POST:
         assert c.get(_url(name, run, route)).status_code == 405, name
@@ -404,17 +407,26 @@ def test_permission_matrix_over_all_directory_urls(
     assert DirectorySyncRun.objects.count() == 1  # help desk started nothing
 
     c = as_user(admin_user)
-    for name in READ_ONLY + ADMIN_GET:
+    for name in READ_ONLY + ADMIN_GET + ANALYST_GET:
         assert c.get(_url(name, run, route)).status_code == 200, name
     for name in ADMIN_POST:
         assert c.get(_url(name, run, route)).status_code == 405, name
 
+    # An analyst reaches the adopt page but none of the directory administration.
+    analyst = factories.UserFactory(username="adopting_analyst")
+    factories.make_analyst(factories.ApplicationFactory(name="Epic"), analyst)
+    c = as_user(analyst)
+    for name in ANALYST_GET:
+        assert c.get(_url(name, run, route)).status_code == 200, name
+    for name in ADMIN_GET:
+        assert c.get(_url(name, run, route)).status_code == 403, name
+
     c = as_user(plain_user)
-    for name in READ_ONLY + ADMIN_GET:
+    for name in READ_ONLY + ADMIN_GET + ANALYST_GET:
         assert c.get(_url(name, run, route)).status_code == 403, name
 
     client.logout()
-    for name in READ_ONLY + ADMIN_GET:
+    for name in READ_ONLY + ADMIN_GET + ANALYST_GET:
         resp = client.get(_url(name, run, route))
         assert resp.status_code == 302 and resp.url.startswith(reverse("accounts:login")), name
 

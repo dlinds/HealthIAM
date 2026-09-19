@@ -12,6 +12,7 @@
     {% empty %}
       <div class="small text-body-tertiary ms-2">No active access levels defined.</div>
     {% endfor %}
+    {% if r.hidden %}<div class="small text-body-tertiary ms-2">and {{ r.hidden }} more &mdash; search to narrow</div>{% endif %}
   </div>
 {% empty %}
   <div class="small text-body-secondary">No matching applications{% if not iam.is_admin %} that you manage{% endif %}.</div>

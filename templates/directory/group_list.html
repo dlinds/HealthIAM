@@ -3,11 +3,14 @@
 {% block content %}
 <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
   <h1 class="h3 mb-0">AD groups</h1>
-  {% if iam.can_manage_directory %}
   <div>
+    {% if iam.can_edit_any_access_levels %}
+    <a class="btn btn-primary" href="{% url 'directory:group_adopt' %}"><i class="bi bi-plus-lg me-1"></i>Add to catalog</a>
+    {% endif %}
+  {% if iam.can_manage_directory %}
     <a class="btn btn-outline-secondary" href="{% url 'directory:admin_index' %}"><i class="bi bi-arrow-repeat me-1"></i>Active Directory</a>
-  </div>
   {% endif %}
+  </div>
 </div>
 <p class="text-body-secondary small">
   Groups imported from Active Directory by the sync (name filter and search bases are set by the administrator). Membership is not imported.

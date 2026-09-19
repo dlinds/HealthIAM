@@ -7,6 +7,7 @@ app_name = "directory"
 urlpatterns = [
     path("directory/groups/", views.group_list, name="group_list"),
     path("directory/groups/picker/", views.group_picker, name="group_picker"),
+    path("directory/groups/adopt/", views.group_adopt, name="group_adopt"),
     path("directory/references/", views.broken_references, name="broken_references"),
     path("directory/admin/", views.admin_index, name="admin_index"),
     path("directory/admin/routes/", views.route_list, name="route_list"),
