@@ -114,15 +114,27 @@ def _detail_context(request, application):
     can_manage_analysts = perms.can_manage_analysts(user, application)
 
     levels_qs = application.access_levels.order_by("sort_order", "name")
-    levels_page = Paginator(levels_qs, LEVELS_PER_PAGE).get_page(request.GET.get("levels_page"))
-    # Reference status is resolved over *every* AD level, not just this page: the warning
-    # badge on the tab counts the whole application, and `status_for_levels` costs the same
-    # two queries either way.
+    # Reference status is resolved over *every* AD level, not just the page or the filter:
+    # the warning badge on the tab counts the whole application, and `status_for_levels`
+    # costs the same two queries either way.
     #
     # Not `.only(...)`: auditlog's post_init receiver reads each instance, so a deferred
     # field turns one query into one per row. Loading these rows whole is a single query.
     ad_levels = list(levels_qs.filter(access_model=AccessLevel.AccessModel.AD_GROUP))
     level_reference_status = references.status_for_levels(ad_levels)
+
+    # The filter searches the columns the table actually shows, so a hit is always visible:
+    # the level name, its description, and the Target cell for AD-group and ticket levels.
+    levels_q = request.GET.get("levels_q", "").strip()
+    shown = levels_qs
+    if levels_q:
+        shown = shown.filter(
+            Q(name__icontains=levels_q)
+            | Q(description__icontains=levels_q)
+            | Q(ad_group_name__icontains=levels_q)
+            | Q(ticket_assignment_team__icontains=levels_q)
+        )
+    levels_page = Paginator(shown, LEVELS_PER_PAGE).get_page(request.GET.get("levels_page"))
     return {
         "application": application,
         "object": application,
@@ -134,7 +146,12 @@ def _detail_context(request, application):
         .count(),
         "levels": list(levels_page.object_list),
         "levels_page": levels_page,
-        "level_count": levels_page.paginator.count,
+        "levels_q": levels_q,
+        # A list that fits on one page needs no filter; the box would just be clutter.
+        "show_level_filter": levels_page.paginator.count > LEVELS_PER_PAGE or bool(levels_q),
+        # The tab badge counts the application, so it has to ignore the filter. Only a
+        # filtered view pays the extra count.
+        "level_count": levels_qs.count() if levels_q else levels_page.paginator.count,
         "level_reference_status": level_reference_status,
         "broken_level_count": sum(1 for r in level_reference_status.values() if r.is_broken),
         "aliases": application.aliases.all(),
@@ -247,9 +264,13 @@ def alias_delete(request, pk, alias_id):
 
 @role_required("can_view")
 def access_levels(request, pk):
-    """The Access levels tab on another page. Same section, swapped in place."""
+    """The rows of the Access levels tab: another page, or another filter.
+
+    Returns the table alone rather than the whole section, so the filter input stays put
+    (and keeps focus) while its own results are swapped underneath it.
+    """
     application = get_object_or_404(Application, pk=pk)
-    return _section(request, application, "catalog/partials/access_levels.html")
+    return _section(request, application, "catalog/partials/access_level_rows.html")
 
 
 def access_level_form(request, pk, level_id=None):
@@ -262,11 +283,13 @@ def access_level_form(request, pk, level_id=None):
         if level
         else reverse("catalog:access_level_add", args=[pk])
     )
-    # The form posts back to this URL, and the re-rendered section reads its page from the
-    # query string, so saving from page 3 has to land back on page 3.
-    page = request.GET.get("levels_page")
-    if page:
-        form_url = f"{form_url}?{urlencode({'levels_page': page})}"
+    # The form posts back to this URL and the re-rendered section reads its state from the
+    # query string, so saving from page 3 of a filtered list has to land back there.
+    view_state = {
+        key: value for key in ("levels_page", "levels_q") if (value := request.GET.get(key))
+    }
+    if view_state:
+        form_url = f"{form_url}?{urlencode(view_state)}"
     if request.method == "POST":
         form = AccessLevelForm(request.POST, instance=level, application=application)
         if form.is_valid():

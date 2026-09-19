@@ -435,8 +435,10 @@ def test_second_page_swaps_the_section_in_place(as_user, help_desk_user, app, ma
     body = resp.content.decode()
     assert f"Level {total - 1:03d}" in body
     assert "Level 000" not in body
-    # The fragment is the section itself, not a whole page: it swaps #access-levels.
-    assert body.strip().startswith('<div id="access-levels">')
+    # The fragment is the rows alone, not the whole section: the filter input lives
+    # outside it so it keeps focus while its own results are swapped underneath.
+    assert body.strip().startswith('<div id="access-level-rows">')
+    assert 'id="access-levels"' not in body
 
 
 def test_an_out_of_range_page_clamps_instead_of_erroring(as_user, help_desk_user, app, many_levels):
@@ -453,18 +455,26 @@ def test_editing_a_level_stays_on_its_page(as_user, admin_user, app, many_levels
     last = many_levels[-1]
     client = as_user(admin_user)
 
-    # The section links its own actions with the current page.
+    # The rows link their own actions with the current page.
     body = client.get(
         reverse("catalog:access_levels", args=[app.pk]), {"levels_page": "2"}
     ).content.decode()
     assert f"levels/{last.pk}/toggle/?levels_page=2" in body
-    assert "levels/add/?levels_page=2" in body
 
-    # The edit form posts back to a URL that keeps the page.
+    # And so does the Add button, which lives in the surrounding section.
+    section = levels_section(
+        client.get(app.get_absolute_url(), {"levels_page": "2"}).content.decode()
+    )
+    assert "levels/add/?levels_page=2" in section
+
+    # The edit form posts back to a URL that keeps the page *and* the filter, or saving
+    # while filtered would drop the analyst back to the unfiltered first page.
     body = client.get(
-        reverse("catalog:access_level_edit", args=[app.pk, last.pk]), {"levels_page": "2"}
+        reverse("catalog:access_level_edit", args=[app.pk, last.pk]),
+        {"levels_page": "2", "levels_q": "Level"},
     ).content.decode()
     assert "levels_page=2" in body
+    assert "levels_q=Level" in body
 
     # And the re-rendered section after a toggle is still page 2. The page rides in the
     # query string, which is where the buttons above put it -- a POST body would not work.
@@ -523,3 +533,111 @@ def test_levels_tab_cost_does_not_grow_with_the_number_of_levels(as_user, help_d
     large_queries, large_bytes = cost(large)
     assert large_queries == small_queries
     assert abs(large_bytes - small_bytes) < small_bytes * 0.05
+
+    # Filtering must not scale either: it narrows in SQL, and the one extra query is the
+    # unfiltered count behind the tab badge.
+    small_filtered, _ = cost(f"{small}?levels_q=L0")
+    large_filtered, _ = cost(f"{large}?levels_q=L0")
+    assert large_filtered == small_filtered
+    assert large_filtered <= large_queries + 1
+
+
+def test_filter_narrows_the_levels_and_searches_the_visible_columns(as_user, help_desk_user, app):
+    """The filter searches what the table shows, so a hit is never invisible."""
+    factories.AccessLevelFactory(
+        application=app, name="Nurse template", ad_group_name="APP_EPIC_RN"
+    )
+    factories.AccessLevelFactory(
+        application=app, name="Physician template", ad_group_name="APP_EPIC_MD"
+    )
+    factories.AccessLevelFactory(
+        application=app,
+        name="Billing",
+        access_model="ticket",
+        ad_group_name="",
+        ticket_assignment_team="Revenue Cycle",
+    )
+    factories.AccessLevelFactory(
+        application=app, name="Reports", ad_group_name="APP_EPIC_RPT", description="Analytics only"
+    )
+    url = reverse("catalog:access_levels", args=[app.pk])
+    client = as_user(help_desk_user)
+
+    def names(**params):
+        return [lvl.name for lvl in client.get(url, params).context["levels"]]
+
+    assert names(levels_q="template") == ["Nurse template", "Physician template"]  # name
+    assert names(levels_q="EPIC_MD") == ["Physician template"]  # AD group
+    assert names(levels_q="revenue") == ["Billing"]  # ticket team
+    assert names(levels_q="analytics") == ["Reports"]  # description
+    assert names(levels_q="rn") == ["Nurse template"]
+    assert names(levels_q="nothing here") == []
+    assert len(names()) == 4
+
+
+def test_filter_is_case_insensitive_and_trimmed(as_user, help_desk_user, app):
+    factories.AccessLevelFactory(application=app, name="Nurse template")
+    url = reverse("catalog:access_levels", args=[app.pk])
+    client = as_user(help_desk_user)
+    for q in ("NURSE", "nurse", "  Nurse  "):
+        assert [lvl.name for lvl in client.get(url, {"levels_q": q}).context["levels"]] == [
+            "Nurse template"
+        ], q
+
+
+def test_filtering_resets_to_the_first_page_and_paging_keeps_the_filter(
+    as_user, help_desk_user, app, many_levels
+):
+    from apps.catalog.views import LEVELS_PER_PAGE
+
+    url = reverse("catalog:access_levels", args=[app.pk])
+    client = as_user(help_desk_user)
+
+    # Every level matches "Level", so the filtered list still spans two pages.
+    resp = client.get(url, {"levels_q": "Level"})
+    assert resp.context["levels_page"].number == 1
+    assert len(resp.context["levels"]) == LEVELS_PER_PAGE
+    # The pagination links carry the filter, or page 2 would silently drop it.
+    assert "levels_q=Level" in resp.content.decode()
+
+    resp = client.get(url, {"levels_q": "Level", "levels_page": "2"})
+    assert resp.context["levels_page"].number == 2
+    assert resp.context["levels_q"] == "Level"
+    assert len(resp.context["levels"]) == len(many_levels) - LEVELS_PER_PAGE
+
+
+def test_the_tab_badge_and_broken_count_ignore_the_filter(
+    as_user, help_desk_user, app, many_levels, fake_directory
+):
+    """Both are statements about the application; narrowing the view must not change them."""
+    from apps.directory.models import DirectorySyncRun
+
+    DirectorySyncRun.objects.create(scope="groups", status="completed")
+    factories.ADGroupFactory(name=many_levels[0].ad_group_name)
+
+    client = as_user(help_desk_user)
+    unfiltered = client.get(app.get_absolute_url())
+    filtered = client.get(app.get_absolute_url(), {"levels_q": "Level 001"})
+
+    assert filtered.context["levels_page"].paginator.count == 1  # the view narrowed
+    assert filtered.context["level_count"] == unfiltered.context["level_count"]
+    assert filtered.context["broken_level_count"] == unfiltered.context["broken_level_count"]
+
+
+def test_the_filter_box_appears_only_once_the_list_needs_it(
+    as_user, help_desk_user, app, many_levels
+):
+    client = as_user(help_desk_user)
+    assert client.get(app.get_absolute_url()).context["show_level_filter"] is True
+
+    small = factories.ApplicationFactory(name="Small")
+    factories.AccessLevelFactory(application=small, name="Only one")
+    resp = client.get(small.get_absolute_url())
+    assert resp.context["show_level_filter"] is False
+    assert 'name="levels_q"' not in levels_section(resp.content.decode())
+
+    # A filter already applied keeps the box, or there would be no way to clear it.
+    resp = client.get(small.get_absolute_url(), {"levels_q": "zzz"})
+    assert resp.context["show_level_filter"] is True
+    assert 'name="levels_q"' in levels_section(resp.content.decode())
+    assert "No level matches" in levels_section(resp.content.decode())
