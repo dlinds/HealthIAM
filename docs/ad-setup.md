@@ -221,6 +221,12 @@ group and the next sync deactivates their login; they can no longer sign in.
 **What to type.** Their sign-in name in any of the forms `alice@corp.example.org`, `alice`, or
 `CORP\alice`. Case does not matter.
 
+**The bind has to be answered by the right account.** Once it succeeds, HealthIAM asks the
+directory which account actually answered and compares that with the AD account name on the
+login. This closes the window between a sign-in name being handed to somebody else in AD and
+the next sync noticing. A login with no AD account name recorded cannot be checked that way, so
+it is refused rather than trusted; run a sync to fill the field in.
+
 **The attempt budget.** The form forwards passwords to a domain controller, so without a limit
 it would be a way to lock any known account out of the domain. After `AD_AUTH_MAX_FAILURES`
 wrong passwords inside `AD_AUTH_FAILURE_WINDOW`, HealthIAM stops forwarding attempts for that

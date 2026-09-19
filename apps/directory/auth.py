@@ -83,6 +83,16 @@ class ActiveDirectoryBackend(ModelBackend):
             return None
         if not self.user_can_authenticate(user):
             return None
+        if not (user.ad_sam_account_name or "").strip():
+            # The bind is only trustworthy because the identity that answered it is read back
+            # and compared with the account name the sync recorded. Without one there is
+            # nothing to compare, so the password is not offered to the directory at all.
+            logger.warning(
+                "No Active Directory account name recorded for %s; refusing the sign-in until "
+                "a sync fills it in",
+                user.username,
+            )
+            return None
         if throttle.is_locked(user):
             logger.warning(
                 "Sign-in for %s is throttled; not forwarding to Active Directory", user.username
@@ -109,7 +119,7 @@ class ActiveDirectoryBackend(ModelBackend):
             logger.warning(
                 "Failed Active Directory sign-in for %s from %s",
                 user.username,
-                _client_ip(request) or "an unknown address",
+                _client_source(request),
             )
             return None
 
@@ -118,11 +128,19 @@ class ActiveDirectoryBackend(ModelBackend):
         return user
 
 
-def _client_ip(request) -> str:
-    """Best-effort source address for the log line, never for a security decision."""
+def _client_source(request) -> str:
+    """Where the attempt came from, for the log line only, never for a security decision.
+
+    `REMOTE_ADDR` is the address the server actually accepted the connection from, so behind a
+    reverse proxy it is the proxy. `X-Forwarded-For` names the client, but the usual proxy
+    idiom appends to whatever arrived, so its left-most entry is whatever the sender chose to
+    put there. Recording both, with the header marked as a claim, keeps the real source in the
+    log: someone spraying the form cannot pin their attempts on an address of their choosing.
+    """
     if request is None:
-        return ""
-    forwarded = request.META.get("HTTP_X_FORWARDED_FOR", "")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    return request.META.get("REMOTE_ADDR", "")
+        return "an unknown address"
+    remote = request.META.get("REMOTE_ADDR", "").strip() or "an unknown address"
+    forwarded = request.META.get("HTTP_X_FORWARDED_FOR", "").strip()
+    if not forwarded:
+        return remote
+    return f"{remote} (X-Forwarded-For claims {forwarded[:200]!r})"
