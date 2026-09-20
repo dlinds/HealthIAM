@@ -112,6 +112,13 @@ Optional demo data, once:
 docker exec -it ix-healthiam-web-1 python manage.py seed_demo
 ```
 
+The container runs `config.settings.prod`, which never substitutes the demo directory the
+way development does, so the seeded AD groups and the Active Directory pages stay hidden
+until the `AD_*` block in the YAML is filled in. To browse them without a domain controller,
+copy the demo block from the end of the Active Directory section of `.env.example`. Never
+seed demo data on an instance pointed at a real directory: the synthetic groups and logins
+are not in it, so the next sync deactivates them.
+
 ## Scheduling the AD sync
 
 Skip this section unless the `AD_*` block in the YAML is filled in

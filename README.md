@@ -29,6 +29,12 @@ make run                            # http://localhost:8000
 Demo accounts (password `healthiam`): `admin`, `iam.lee` (Admin), `analyst.epic`,
 `analyst.imaging` (analysts), `owner.epic` (application owner), `helpdesk`, `auditor`.
 
+The seed also writes a synthetic on-prem directory (`demo.local`) and development points the
+AD settings at it, so the Active Directory pages work with no `.env` edit — the group list,
+routes, reference badges and the reports. There is no fake LDAP server, so **Test connection**
+and **Sync now** fail against a host that does not exist; `python manage.py demo_ad drift`
+stands in for an overnight sync that found changes. See `docs/ad-setup.md` section 12.
+
 Everything in one container instead:
 
 ```bash
@@ -60,7 +66,8 @@ All settings are read from the environment (or `.env`); see `.env.example`.
 | `AUTH_LOCAL_LOGIN` | `true` enables username/password login (development only) |
 | `ENTRA_TENANT_ID`, `OIDC_RP_CLIENT_ID`, `OIDC_RP_CLIENT_SECRET` | Entra ID SSO; see `docs/entra-setup.md` |
 | `ENTRA_GROUP_ROLE_MAP` | `<group-id>=Admin,<group-id>=Help Desk,<group-id>=Auditor` |
-| `AD_SERVER_URIS`, `AD_BASE_DN` | On-prem AD over LDAPS (`ldaps://dc1,ldaps://dc2` in failover order + domain base DN); both set = AD enabled. See `docs/ad-setup.md` |
+| `AD_SERVER_URIS`, `AD_BASE_DN` | On-prem AD over LDAPS (`ldaps://dc1,ldaps://dc2` in failover order + domain base DN); both set = AD enabled. Development falls back to the seeded demo directory when neither is set. See `docs/ad-setup.md` |
+| `AD_DEMO_DIRECTORY` | `false` turns that development fallback off, leaving AD disabled |
 | `AD_BIND_DN`, `AD_BIND_PASSWORD` | Read-only service account for the bind |
 | `AD_CA_BUNDLE`, `AD_TIMEOUT` | PEM of the internal CA (empty = system store; verification is always on); connect/receive timeout in seconds (10) |
 | `AD_USER_GROUP`, `AD_BASELINE_ROLE` | Group whose nested members get a login (`IAM-Users`); role they are guaranteed (`Help Desk`) |
@@ -86,7 +93,8 @@ All settings are read from the environment (or `.env`); see `.env.example`.
   (`docs/import-format.md`). A scheduled HR feed can call `manage.py import_hr`.
 - **Reports**: position access matrix (CSV/XLSX, per department or all) and "who gets
   application X".
-- **Active Directory** (when `AD_SERVER_URIS` is set): the **AD groups** page lists the
+- **Active Directory** (on by default in development against the seeded demo directory;
+  configured with `AD_SERVER_URIS` elsewhere): the **AD groups** page lists the
   imported groups with search, an unreferenced filter, the route each name matches and the
   access levels that use each one; **Add to catalog** turns a batch of unreferenced groups
   into access levels under the application or service a route suggests (Admin / analyst),
@@ -96,7 +104,9 @@ All settings are read from the environment (or `.env`); see `.env.example`.
   **broken references** list (CSV/XLSX). **Admin → Active Directory** shows the effective
   configuration, tests the connection, previews and applies a sync, and lists every run;
   `manage.py sync_ad` does the same from cron. With `AD_AUTH_ENABLED` those people also
-  sign in with their AD password, verified by an LDAPS bind. See `docs/ad-setup.md`.
+  sign in with their AD password, verified by an LDAPS bind. `manage.py demo_ad` drifts the
+  seeded demo directory so a demo can show the catalog noticing a rename, a group that
+  disappeared and one that arrived. See `docs/ad-setup.md`.
 - **History**: Admin/Auditor see every change with actor, before/after and reason; every
   application and position page shows its own history.
 
@@ -120,7 +130,8 @@ apps/catalog     Vendor, Contact, Application, AccessLevel, SupportTier, analyst
 apps/access      PositionDefault, services (reason-audited writes), reports
 apps/directory   ADGroup, ADGroupRoute, DirectorySyncRun, LDAPS client, sync engine,
                  routing, sync_ad, AD pages
-apps/core        base layout, dashboard, global search, audit history views
+apps/core        base layout, dashboard, global search, audit history views,
+                 demo/ (the synthetic directory seed_demo and demo_ad write)
 templates/       Django templates; partials/ for htmx fragments
 static/          app.css, app.js, vendored Bootstrap / Icons / htmx
 docs/            data-model.md, entra-setup.md, ad-setup.md, import-format.md, deploy-truenas.md
