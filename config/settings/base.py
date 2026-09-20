@@ -140,7 +140,9 @@ if OIDC_ENABLED:
 
 # --- Active Directory (LDAPS) -----------------------------------------------------
 # Read-only directory sync: IAM-Users members become logins, and the AD group list feeds
-# the catalog. Leave AD_SERVER_URIS empty to disable the integration entirely.
+# the catalog. Leave AD_SERVER_URIS empty to disable the integration entirely -- except in
+# development, where config/settings/dev.py then substitutes a synthetic demo directory so
+# the AD pages are browsable without a domain controller.
 AD_SERVER_URIS = env("AD_SERVER_URIS")
 AD_BASE_DN = env("AD_BASE_DN")
 AD_ENABLED = bool(AD_SERVER_URIS and AD_BASE_DN)

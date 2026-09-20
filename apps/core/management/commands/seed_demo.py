@@ -1,11 +1,17 @@
-"""Populate a development database with realistic sample data. Idempotent."""
+"""Populate a development database with realistic sample data. Idempotent.
+
+The Active Directory half is a fiction written straight into the mirror: there is no fake
+LDAP server, so Test connection and Sync now still fail honestly. `apps.core.demo.data`
+describes the synthetic domain and `apps.core.demo.mirror` writes it; `manage.py demo_ad`
+drifts it afterwards. See `docs/ad-setup.md` section 12.
+"""
 
 import datetime as dt
-import uuid
+import logging
 
 from django.conf import settings
 from django.contrib.auth.models import Group
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 from django.utils import timezone
 
@@ -13,6 +19,7 @@ from apps.access import services
 from apps.access.models import PositionDefault
 from apps.accounts import roles
 from apps.accounts.models import User
+from apps.catalog import services as catalog_services
 from apps.catalog.models import (
     AccessLevel,
     Application,
@@ -23,24 +30,14 @@ from apps.catalog.models import (
     SupportTier,
     Vendor,
 )
-from apps.directory.matching import decode_group_type
-from apps.directory.models import ADGroup, DirectorySyncRun
+from apps.core.demo import data as demo
+from apps.core.demo import mirror
+from apps.directory import reconcile
+from apps.directory.models import ADGroup, ADGroupRoute, DirectorySyncRun
+from apps.directory.sync import MISSING_GROUP_MESSAGE, SyncResult
 from apps.orgs.models import Department, JobCode, Position, Source
 
 PASSWORD = "healthiam"
-
-# Synthetic on-prem AD. GUIDs are uuid5 of the object's name in this namespace, so every
-# seed run produces the same rows and a real sync (which keys on objectGUID) simply
-# deactivates them.
-DEMO_AD_NAMESPACE = uuid.uuid5(uuid.NAMESPACE_DNS, "demo.local")
-DEMO_AD_GROUPS_OU = "OU=Groups,DC=demo,DC=local"
-DEMO_AD_STAFF_OU = "OU=Staff,DC=demo,DC=local"
-DEMO_AD_SERVER = "dc1.demo.local"
-# Left out of the seeded directory on purpose: the UKG "Employee" level then shows the
-# "Not found in AD" badge, the dashboard entry and the broken-reference report.
-DEMO_AD_MISSING_GROUP = "APP_UKG_EMPLOYEE"
-DEMO_AD_UNUSED_GROUP = "APP_DEMO_UNUSED"
-GLOBAL_SECURITY_GROUP = -2147483646  # groupType: GLOBAL | SECURITY as AD stores it (signed)
 
 DEPARTMENTS = [
     ("0100", "Nursing"),
@@ -106,27 +103,57 @@ class Command(BaseCommand):
 
     @transaction.atomic
     def handle(self, *args, **options):
-        groups = {name: Group.objects.get_or_create(name=name)[0] for name in roles.GROUP_ROLES}
-        users = self._users(groups)
-        depts, jobs, positions = self._orgs()
-        vendors = {name: self._vendor(name, *vals) for name, vals in VENDORS.items()}
-        contacts = self._contacts(vendors, users)
-        apps = self._applications(vendors, contacts, users)
-        self._defaults(apps, positions, users["admin"])
-        self._directory(users)
+        # Saving routes and access levels queues a deferred full reconcile on
+        # `transaction.on_commit`, which would run after this command has already printed its
+        # summary, swallow its own errors, and never run at all under a test that rolls its
+        # transaction back. Suppress the signals and call the reconciler directly instead, so
+        # the seeded world is the same whoever is looking at it.
+        with reconcile.suppressed():
+            groups = {name: Group.objects.get_or_create(name=name)[0] for name in roles.GROUP_ROLES}
+            users = self._users(groups)
+            depts, jobs, positions = self._orgs()
+            vendors = {name: self._vendor(name, *vals) for name, vals in VENDORS.items()}
+            contacts = self._contacts(vendors, users)
+            apps = self._applications(vendors, contacts, users)
+            self._defaults(apps, positions, users["admin"])
+            counts = self._directory(users, positions)
         self.stdout.write(self.style.SUCCESS("Demo data loaded."))
         self.stdout.write(
             "Sign in with one of: admin / analyst.epic / analyst.imaging / owner.epic / "
             f"helpdesk / auditor  (password: {PASSWORD})"
         )
+        self._report_directory(counts)
+
+    def _report_directory(self, counts):
+        """Say what the directory half of the seed did, and what it cannot do."""
         if not settings.AD_ENABLED:
             self.stdout.write(
                 self.style.WARNING(
-                    "Active Directory is disabled, so the seeded AD groups, badges and the "
-                    "Admin > Active Directory page stay hidden. To browse them without a domain "
-                    "controller, set the commented local-demo pair from .env.example in .env "
-                    "(AD_SERVER_URIS=ldaps://dc.test.invalid and AD_BASE_DN=DC=test,DC=invalid); "
-                    "a real sync against that host fails harmlessly."
+                    "Active Directory is disabled, so the seeded AD groups, routes, badges and "
+                    "the Admin > Active Directory page stay hidden. Development turns the demo "
+                    "directory on by itself; under production settings, copy the demo block at "
+                    "the end of the Active Directory section of .env.example into .env."
+                )
+            )
+            return
+        self.stdout.write(
+            "Demo directory: {groups} group(s) ({inactive} inactive), {routes} route(s), "
+            "{route_levels} route-managed level(s), {logins} AD-managed login(s), "
+            "{runs} sync run(s).".format(**counts)
+        )
+        if settings.AD_SERVER_URIS == [demo.SERVER_URI]:
+            self.stdout.write(
+                f"Active Directory is on with the synthetic demo directory ({demo.SERVER}). "
+                "Test connection, Sync now and `manage.py sync_ad` fail: there is no domain "
+                "controller. Simulate an overnight sync with `manage.py demo_ad drift`."
+            )
+        else:
+            self.stdout.write(
+                self.style.WARNING(
+                    f"AD_SERVER_URIS points at {', '.join(settings.AD_SERVER_URIS)}, not the "
+                    "demo directory. The synthetic groups and logins this seed just wrote are "
+                    "not in that directory, so the next real sync will deactivate them. Do not "
+                    "seed demo data on a real instance."
                 )
             )
 
@@ -333,6 +360,14 @@ class Command(BaseCommand):
                     "Assign chart review template.",
                     "View-only access",
                 ),
+                # Its AD group is mirrored but deactivated, so this level carries the
+                # "Not returned by the last sync" badge straight out of the seed.
+                (
+                    "Research chart review",
+                    AD,
+                    "APP_EPIC_RESEARCH",
+                    "Chart access for IRB-approved studies",
+                ),
             ],
             analysts=[users["analyst_epic"]],
             tiers=[
@@ -447,6 +482,15 @@ class Command(BaseCommand):
             levels=[
                 ("Standard user (E3)", AD, "LIC_M365_E3", "Mailbox, Teams, OneDrive"),
                 ("Frontline (F3)", AD, "LIC_M365_F3", "Web/mobile Office, 2 GB mailbox"),
+                # Its group name matches an exclude pattern, so the sync never imports it and
+                # the level reads "Outside sync filter" rather than claiming the group is
+                # gone -- the warning .env.example gives about narrow filters, made visible.
+                (
+                    "Visio 2013 (retired licence)",
+                    AD,
+                    "LIC_RETIRED_VISIO_2013",
+                    "Legacy licence group kept out of the sync filter",
+                ),
             ],
             analysts=[users["iam"]],
             tiers=[(1, "IS Service Desk", contacts["service_desk"], "24x7")],
@@ -503,6 +547,52 @@ class Command(BaseCommand):
             auth_method=Application.AuthMethod.LOCAL,
             levels=[("Read-only", IN_APP, "Contact HIM.", "Historical lookups")],
         )
+        # Services: a home for the AD groups no vendor application owns. Separate rows per
+        # owning team rather than one bucket, so analyst rights stay scoped per team. None of
+        # them declares its access levels here -- `Network Access` gets them from its route,
+        # and the rest are the worklist that "Add to catalog" adopts from.
+        apps[demo.NETWORK_ACCESS] = self._app(
+            demo.NETWORK_ACCESS,
+            kind=Application.Kind.SERVICE,
+            dynamic_ad_groups=True,
+            description=(
+                "Remote access: VPN profiles managed by the network team. Holds every "
+                "VPN_ group automatically."
+            ),
+            tier=2,
+            host_location=Application.HostLocation.ONSITE,
+            auth_method=Application.AuthMethod.AD_LDAP,
+            mfa_enforced=True,
+            technical_owner=contacts["cio"],
+            analysts=[users["iam"]],
+            tiers=[(1, "IS Service Desk", contacts["service_desk"], "24x7")],
+        )
+        apps[demo.FILE_SHARES] = self._app(
+            demo.FILE_SHARES,
+            kind=Application.Kind.SERVICE,
+            description="Departmental file shares on the main file cluster.",
+            tier=3,
+            host_location=Application.HostLocation.ONSITE,
+            auth_method=Application.AuthMethod.AD_LDAP,
+            technical_owner=contacts["cio"],
+            analysts=[users["iam"]],
+        )
+        apps[demo.PRINTING] = self._app(
+            demo.PRINTING,
+            kind=Application.Kind.SERVICE,
+            description="Print queues published by the print servers.",
+            tier=4,
+            host_location=Application.HostLocation.ONSITE,
+            auth_method=Application.AuthMethod.AD_LDAP,
+        )
+        apps[demo.PHYSICAL_ACCESS] = self._app(
+            demo.PHYSICAL_ACCESS,
+            kind=Application.Kind.SERVICE,
+            description="Badge access to controlled doors, managed by the security office.",
+            tier=3,
+            host_location=Application.HostLocation.ONSITE,
+            auth_method=Application.AuthMethod.LOCAL,
+        )
         return apps
 
     def _defaults(self, apps, positions, actor):
@@ -555,103 +645,225 @@ class Command(BaseCommand):
 
     # --- Active Directory -----------------------------------------------------------
 
-    def _directory(self, users):
-        """A synthetic AD mirror so the AD pages have something to show without a domain
-        controller: one `ADGroup` per group name the seeded access levels reference (minus
-        `APP_UKG_EMPLOYEE`, which demonstrates a broken reference), one group nothing
-        references, one completed groups-only sync run, and `helpdesk` marked as a login
-        the sync manages. Keyed on deterministic GUIDs, so re-running changes nothing."""
+    def _directory(self, users, positions):
+        """Write the synthetic AD mirror and everything the catalog builds on top of it.
+
+        There is no fake LDAP server: this writes what a sync would have *left behind*, so
+        every page downstream of the mirror -- reference badges, the group list, routes,
+        route-managed levels, adoption, the broken-reference report -- runs its real code.
+        `apps.core.demo.data` holds the inventory and says what each entry demonstrates.
+
+        The order matters. Groups and routes have to exist before the reconciler can give the
+        dynamic service its levels; those levels have to exist before one of them can be
+        adopted or carry a position default.
+        """
         now = timezone.now()
-        referenced = (
-            AccessLevel.objects.filter(access_model=AccessLevel.AccessModel.AD_GROUP)
-            .exclude(ad_group_name=DEMO_AD_MISSING_GROUP)
-            .select_related("application")
-            .order_by("application__name", "sort_order")
-        )
-        descriptions = {}
-        for level in referenced:
-            descriptions.setdefault(
-                level.ad_group_name, f"{level.application.name} – {level.name}: {level.description}"
+        self._check_referenced_groups()
+        for spec in demo.GROUPS:
+            mirror.upsert_group(spec, now=now)
+        self._directory_logins(users, now)
+        for spec in demo.ROUTES:
+            mirror.upsert_route(spec, actor=users["admin"])
+        mirror.reconcile_and_attach(None, demo.MIRRORED_NAMES, actor=users["admin"])
+        self._adopt_from_route(users["admin"])
+        self._routed_default(positions, users["admin"])
+        self._directory_runs(users, now)
+        return {
+            "groups": ADGroup.objects.count(),
+            "inactive": ADGroup.objects.filter(is_active=False).count(),
+            "routes": ADGroupRoute.objects.count(),
+            "route_levels": AccessLevel.objects.filter(
+                source=AccessLevel.Source.ROUTE, is_active=True
+            ).count(),
+            "logins": User.objects.filter(ad_managed=True).count(),
+            "runs": DirectorySyncRun.objects.count(),
+        }
+
+    def _check_referenced_groups(self):
+        """Refuse to seed a level naming a group the demo inventory does not describe.
+
+        Without this, adding an `ad_group` level to this command and forgetting to add the
+        group to `demo.GROUPS` produces a silent broken reference that looks exactly like the
+        two deliberate ones.
+        """
+        referenced = set(
+            AccessLevel.objects.filter(access_model=AccessLevel.AccessModel.AD_GROUP).values_list(
+                "ad_group_name", flat=True
             )
-        descriptions[DEMO_AD_UNUSED_GROUP] = "Pilot group from 2023; no access level references it."
-
-        log = []
-        created = 0
-        for row, (name, description) in enumerate(descriptions.items(), start=1):
-            group, was_created = self._directory_group(name, description, now)
-            created += was_created
-            log.append(
-                {
-                    "kind": "groups",
-                    "row": row,
-                    "code": group.name,
-                    "action": "created",
-                    "message": f"{group.scope} {group.category} group",
-                    "dn": group.distinguished_name,
-                }
+        )
+        unknown = sorted(referenced - demo.KNOWN_GROUP_NAMES)
+        if unknown:
+            raise CommandError(
+                "Seeded access levels reference AD groups that apps/core/demo/data.py does "
+                f"not describe: {', '.join(unknown)}. Add a GroupSpec for each (state=ABSENT "
+                "if it is meant to be a broken reference)."
             )
-        counts = {
-            "created": len(log),
-            "updated": 0,
-            "reactivated": 0,
-            "deactivated": 0,
-            "unchanged": 0,
-            "errors": 0,
-            "rows": len(log),
-            "skipped": 0,
-            "read": len(log),
-        }
-        DirectorySyncRun.objects.get_or_create(
-            scope=DirectorySyncRun.Scope.GROUPS,
-            status=DirectorySyncRun.Status.COMPLETED,
-            server=DEMO_AD_SERVER,
-            defaults={
-                "trigger": DirectorySyncRun.Trigger.MANUAL,
-                "created_by": users["admin"],
-                "started_at": now - dt.timedelta(seconds=4),
-                "finished_at": now,
-                "summary": {"users": None, "groups": counts},
-                "log": log,
-            },
+
+    def _directory_logins(self, users, now):
+        for spec in demo.STAFF:
+            mirror.upsert_staff_login(spec, baseline_role=settings.AD_BASELINE_ROLE, now=now)
+        mirror.link_existing_login(demo.LINKED_LOGIN, demo.LINKED_LOGIN_CN, now=now)
+
+    def _adopt_from_route(self, actor):
+        """Take one route-managed level over by hand, so the "Taken over" badge has a row.
+
+        Adopting a group into the very application that already holds it by route rewrites
+        that row rather than adding a second one -- which is the only path that produces
+        `source=adopted`, the one source the reconciler will not re-capture.
+        """
+        claimed = AccessLevel.objects.filter(
+            ad_group_name__iexact=demo.ADOPTED_GROUP, source=AccessLevel.Source.ADOPTED
+        ).exists()
+        if claimed:
+            return
+        service = Application.objects.filter(name=demo.NETWORK_ACCESS).first()
+        held = AccessLevel.objects.filter(
+            application=service, ad_group_name__iexact=demo.ADOPTED_GROUP
+        ).exists()
+        if service is None or not held:
+            return
+        catalog_services.adopt_group(
+            demo.ADOPTED_GROUP,
+            service,
+            actor=actor,
+            level_name=demo.ADOPTED_LEVEL_NAME,
+            description=demo.ADOPTED_LEVEL_DESCRIPTION,
         )
 
-        helpdesk = users["helpdesk"]
-        wanted = {
-            "ad_object_guid": uuid.uuid5(DEMO_AD_NAMESPACE, "user:helpdesk"),
-            "ad_sam_account_name": "helpdesk",
-            "ad_distinguished_name": f"CN=Casey Nguyen,{DEMO_AD_STAFF_OU}",
-            "ad_managed": True,
-        }
-        changed = [field for field, value in wanted.items() if getattr(helpdesk, field) != value]
-        if changed or helpdesk.ad_synced_at is None:
-            for field in changed:
-                setattr(helpdesk, field, wanted[field])
-            helpdesk.ad_synced_at = helpdesk.ad_synced_at or now
-            helpdesk.save(update_fields=[*changed, "ad_synced_at"])
-        return created
+    def _routed_default(self, positions, actor):
+        """Put one position default on a route-managed level.
 
-    def _directory_group(self, name, description, now):
-        scope, category = decode_group_type(GLOBAL_SECURITY_GROUP)
-        values = {
-            "name": name,
-            "cn": name,
-            "description": description,
-            "distinguished_name": f"CN={name},{DEMO_AD_GROUPS_OU}",
-            "group_type": GLOBAL_SECURITY_GROUP,
-            "scope": scope,
-            "category": category,
-            "managed_by_dn": f"CN=IAM Team,{DEMO_AD_STAFF_OU}",
-            "when_changed": dt.datetime(2025, 9, 1, 8, 0, tzinfo=dt.UTC),
-        }
-        group, created = ADGroup.objects.get_or_create(
-            object_guid=uuid.uuid5(DEMO_AD_NAMESPACE, f"group:{name}"),
-            defaults={**values, "first_seen_at": now, "last_seen_at": now},
+        It is what makes drift show the subtlest rule in the feature: defaults follow their
+        group through a rename, and a level that still carries one is deactivated rather than
+        deleted when its group goes away.
+        """
+        level = AccessLevel.objects.filter(
+            ad_group_name__iexact=demo.ROUTED_DEFAULT_GROUP, is_active=True
+        ).first()
+        position = positions.get(demo.ROUTED_DEFAULT_POSITION)
+        if level is None or position is None:
+            return
+        if PositionDefault.objects.filter(position=position, access_level=level).exists():
+            return
+        services.add_default(position, level, actor=actor, reason=demo.ROUTED_DEFAULT_REASON)
+
+    # -- fabricated run history ------------------------------------------------------
+
+    def _directory_runs(self, users, now):
+        """Four sync runs so the history pages, the status card and run detail have content.
+
+        Each is identified by `(scope, status, trigger, server)` and all four differ on that
+        tuple, which is what keeps re-seeding idempotent without storing a marker anybody can
+        see. They are written oldest first, because the run list orders by creation.
+
+        `SyncResult` builds the summaries and logs rather than a dict literal here, so a
+        fabricated run carries exactly the counts and row shapes `run_detail`, `run_apply` and
+        `sync_ad` read, and stays right if that shape changes. The one cost is that recording
+        the deliberate error row below also logs it, which during `make seed` reads like
+        something went wrong -- so that logger is quietened for the length of this method.
+        """
+        sync_log = logging.getLogger("apps.directory.sync")
+        previous_level = sync_log.level
+        sync_log.setLevel(logging.ERROR)
+        try:
+            self._write_runs(users, now)
+        finally:
+            sync_log.setLevel(previous_level)
+
+    def _write_runs(self, users, now):
+        Scope, Status, Trigger = (
+            DirectorySyncRun.Scope,
+            DirectorySyncRun.Status,
+            DirectorySyncRun.Trigger,
         )
-        if not created:
-            # Save only on a real difference so re-seeding leaves timestamps and history alone.
-            changed = [field for field, value in values.items() if getattr(group, field) != value]
-            if changed:
-                for field in changed:
-                    setattr(group, field, values[field])
-                group.save(update_fields=[*changed, "updated_at"])
-        return group, created
+        admin = users["admin"]
+        mirrored = sorted(demo.MIRRORED_NAMES)
+        active = sorted(demo.SEEDED_ACTIVE_NAMES)
+
+        # 1. The first import: every group the search returned became a row.
+        first = SyncResult(kind="groups", dry_run=False)
+        for row, name in enumerate(mirrored, start=1):
+            first.record(row, name, "created", "global security group", dn=self._dn_of(name))
+        mirror.record_run(
+            scope=Scope.GROUPS,
+            status=Status.COMPLETED,
+            trigger=Trigger.MANUAL,
+            server=demo.SERVER,
+            created_by=admin,
+            groups=first,
+            started_at=now - dt.timedelta(days=21),
+            finished_at=now - dt.timedelta(days=21) + dt.timedelta(seconds=6),
+        )
+
+        # 2. A dry run nobody applied: its two groups are absent from the mirror, which is
+        #    what the Apply button on that run would put right.
+        preview = SyncResult(kind="groups", dry_run=True)
+        for row, name in enumerate(demo.PREVIEW_ONLY_GROUPS, start=1):
+            preview.record(
+                row, name, "created", "would be imported", dn=f"CN={name},{demo.INFRA_OU}"
+            )
+        mirror.record_run(
+            scope=Scope.GROUPS,
+            status=Status.PREVIEWED,
+            trigger=Trigger.MANUAL,
+            server=demo.SERVER,
+            created_by=admin,
+            groups=preview,
+            started_at=now - dt.timedelta(days=5),
+            finished_at=now - dt.timedelta(days=5) + dt.timedelta(seconds=3),
+        )
+
+        # 3. A scheduled run that could not reach a domain controller, recorded exactly as
+        #    `run_sync` records one: no counts, no rows, just the error.
+        mirror.record_run(
+            scope=Scope.ALL,
+            status=Status.FAILED,
+            trigger=Trigger.SCHEDULED,
+            server=demo.SERVER,
+            error=(
+                f"DirectoryUnavailable: {demo.SERVER}: socket connection error while opening: "
+                "[Errno -2] Name or service not known"
+            ),
+            started_at=now - dt.timedelta(days=2),
+            finished_at=now - dt.timedelta(days=2) + dt.timedelta(seconds=30),
+        )
+
+        # 4. Last night's run, and the one the status card reports: the seven members of
+        #    IAM-Users became logins, one directory entry could not, and the group search
+        #    stopped returning APP_EPIC_RESEARCH.
+        nightly_users = SyncResult(kind="users", dry_run=False)
+        for row, spec in enumerate(demo.STAFF, start=1):
+            note = f"+{settings.AD_BASELINE_ROLE}"
+            if not spec.enabled:
+                note += ", inactive: disabled in AD"
+            nightly_users.record(row, spec.upn, "created", note, dn=spec.dn)
+        nightly_users.record(
+            len(demo.STAFF) + 1,
+            demo.BAD_MEMBER_DN,
+            "error",
+            "No userPrincipalName on the directory entry.",
+            dn=demo.BAD_MEMBER_DN,
+        )
+        nightly_groups = SyncResult(kind="groups", dry_run=False)
+        for row, name in enumerate(active, start=1):
+            nightly_groups.record(row, name, "unchanged", "", dn=self._dn_of(name))
+        for name in sorted(demo.SEEDED_INACTIVE_NAMES):
+            # Row 0: the pass that deactivates what the listing stopped returning has no
+            # directory row to point at, which is how the real sync records it too.
+            nightly_groups.record(0, name, "deactivated", MISSING_GROUP_MESSAGE)
+        mirror.record_run(
+            scope=Scope.ALL,
+            status=Status.COMPLETED,
+            trigger=Trigger.SCHEDULED,
+            server=demo.SERVER,
+            users=nightly_users,
+            groups=nightly_groups,
+            group_dn=demo.USER_GROUP_DN,
+            started_at=now - dt.timedelta(days=1),
+            finished_at=now - dt.timedelta(days=1) + dt.timedelta(seconds=94),
+        )
+
+    @staticmethod
+    def _dn_of(name):
+        spec = demo.GROUPS_BY_NAME.get(name)
+        return spec.dn if spec else ""

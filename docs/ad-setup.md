@@ -437,25 +437,95 @@ weakest place to enforce identity-layer policy.
   an existing but wrong group: every managed login outside it is deactivated, and the
   scheduled command applies without a preview. Prefer the DN, and preview from the admin page
   after changing the setting.
-- **Seeded demo data** (`manage.py seed_demo`) is synthetic: the demo groups and the demo
-  `helpdesk` login (marked sync-managed) are not in the real directory, so the first real sync
-  deactivates them. Do not seed demo data on a real instance.
+- **Seeded demo data** (`manage.py seed_demo`, and `manage.py demo_ad` on top of it) is
+  synthetic: the demo groups, routes and AD-managed logins are written straight into the
+  mirror and are not in any real directory, so the first real sync deactivates the groups and
+  every managed login outside `IAM-Users`. Do not seed demo data on a real instance. The seed
+  says so itself when `AD_SERVER_URIS` points somewhere other than the demo domain, and
+  `demo_ad` refuses outright to change a mirror holding groups it did not write.
+
 
 ## 12. Local demo without a domain controller
 
-`manage.py seed_demo` loads a small synthetic directory (AD groups for the demo access
-levels, a completed sync run, and the `helpdesk` login marked as sync-managed), but the AD
-pages stay hidden while `AD_SERVER_URIS` is empty. Uncomment the two demo lines at the end
-of the AD block in `.env.example` in your `.env`:
+`manage.py seed_demo` writes a synthetic directory — `demo.local` — straight into the mirror:
+the AD groups, routes, AD-managed logins and sync runs a real sync would have left behind.
+There is no fake LDAP server, so everything downstream of the mirror is the real code path,
+and **Test connection, Sync now and `manage.py sync_ad` fail**, because `dc1.demo.local` does
+not exist. That is the demo, not a fault, and it is the one part of the integration a demo
+cannot show.
 
-```
-AD_SERVER_URIS=ldaps://dc.test.invalid
-AD_BASE_DN=DC=test,DC=invalid
+In development nothing needs configuring. With no AD server set, `config/settings/dev.py`
+points `AD_BASE_DN`, the search base and the filters at the demo domain, so:
+
+```sh
+make seed && make run
 ```
 
-Then `make seed` and `make run`. The Sectra PACS access levels show **In AD**, UKG
-*Employee* shows **Not found in AD** (and appears on the dashboard and in the
-broken-reference report), the AD groups page and the picker work, and `helpdesk` carries the
-AD badge. **Test connection** and **Sync now** fail with a red message because the host does
-not exist; that is the expected failure path, not a bug. Delete the two lines to switch the
-integration off again.
+is enough. Set `AD_DEMO_DIRECTORY=false` in `.env` to leave the integration off instead. Under
+production settings (the container) nothing is substituted; uncomment the demo block at the
+end of the Active Directory section of `.env.example` to browse it there.
+
+### What is in it
+
+| | |
+|---|---|
+| **Groups** | `APP_*` and `LIC_*` groups behind the seeded access levels; `VPN_*`, `FS_*`, `PRINT_*`, `BADGE_*` groups that no application owns, under `OU=Infrastructure,OU=Groups`; one distribution list; one group nothing references or routes |
+| **Services** | *Network Access* (dynamic AD groups on), *File Shares*, *Printing*, *Physical Access* |
+| **Routes** | eight, including two that claim `FS_RADIOLOGY_TEACHING` — the application-kind target wins over the service, whatever the priorities say — and one inactive |
+| **Logins** | seven AD-managed logins named after their UPN, one of them disabled in AD, plus `helpdesk`, a local login the sync adopted (and so the only managed login you can sign in as) |
+| **Runs** | four: the first import, a preview nobody applied, a failure, and last night's successful run |
+
+All four reference badges are reachable from a plain seed:
+
+| Badge | Group |
+|---|---|
+| **In AD** | `APP_PACS_VIEW` and most others |
+| **Not found in AD** | `APP_UKG_EMPLOYEE` — referenced by UKG *Employee*, never in the directory |
+| **Not returned by the last sync** | `APP_EPIC_RESEARCH` — imported once, then deactivated |
+| *outside sync filter* | `LIC_RETIRED_VISIO_2013` — matches the `LIC_RETIRED_*` exclude |
+
+The first two are what the dashboard tile and the broken-reference report count.
+
+### Showing the directory change
+
+`manage.py demo_ad` moves the demo directory the way an overnight sync would have found it,
+records a sync run describing the change, and reconciles:
+
+```sh
+python manage.py demo_ad status     # what the demo directory looks like now
+python manage.py demo_ad drift      # apply the next scripted change
+python manage.py demo_ad restore    # put the seeded directory back
+```
+
+`drift` applies four changes, each worth pausing on:
+
+1. **`VPN_CLINICAL_REMOTE` is renamed.** The mirror follows it by objectGUID, and the
+   route-managed access level moves with it, keeping its position default. An access level
+   names its group as free text, so without the rename being passed through it would have
+   been stranded.
+2. **`APP_3M_CDI` stops being returned.** The 3M *CDI specialist* level turns *Not returned by
+   the last sync* and joins the dashboard tile and the broken-reference report.
+3. **`VPN_RESEARCH_REMOTE` appears.** The `VPN_*` route holds it, so Network Access grows an
+   access level nobody created by hand.
+4. **`dpatel@demo.local` leaves IAM-Users.** The managed login is deactivated, never deleted.
+
+Apply one at a time with `--step rename` (repeatable) to talk through them separately.
+`restore` undoes them; add `--prune-runs` to return the run history to the seeded four.
+
+Re-running `seed_demo` does **not** undo drift: it refreshes what each group *is*
+(description, type, managed-by) so edits to the inventory show up, but never what has
+happened to it. `demo_ad restore` is the way back.
+
+### What you will see that is not a fault
+
+- **`directory.W008`** on Admin → Active Directory, and on every `manage.py` command. AD
+  sign-in is off, because a bind needs a host; the warning is the honest explanation of why a
+  login the sync created cannot be signed in to. Section 10 has the detail.
+- **Test connection, Sync now, `sync_ad`** all fail against `dc1.demo.local`. Because AD is
+  enabled, `sync_ad` no longer refuses to start: it records a failed run and *then* exits
+  non-zero, so a development cron job calling it reports a failure every time.
+- **The bind password** in the demo settings is a placeholder that nothing ever binds with.
+  It is there only to keep `directory.W003` from crowding out W008.
+
+The demo world lives in `apps/core/demo/data.py` (the inventory, and what each entry is there
+to demonstrate) and `apps/core/demo/mirror.py` (the writers both commands share).
