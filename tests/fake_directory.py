@@ -294,9 +294,12 @@ class FakeDirectory(DirectoryClient):
                 yielded += 1
                 yield group
 
-    def check_password(self, upn: str, password: str, *, expect_sam: str = "") -> bool:
+    def check_password(self, upn: str, password: str, *, expect_sam: str) -> bool:
         self.calls.append(("check_password", upn))
         if not upn or not password or not password.strip():
+            return False
+        if not expect_sam or not expect_sam.strip():
+            # Nothing to compare the bound identity against; the real client refuses here too.
             return False
         self._check_connect()
         state = self.account_states.get(upn.casefold())
@@ -304,12 +307,11 @@ class FakeDirectory(DirectoryClient):
             raise DirectoryAccountState(state, AD_BIND_SUBCODES.get(state, "blocked"))
         if self.passwords.get(upn.casefold()) != password:
             return False
-        if expect_sam:
-            answered = self.bound_as.get(upn.casefold())
-            if answered is None:
-                answered = self._find_user(upn).sam
-            if answered.casefold() != expect_sam.casefold():
-                return False
+        answered = self.bound_as.get(upn.casefold())
+        if answered is None:
+            answered = self._find_user(upn).sam
+        if answered.casefold() != expect_sam.casefold():
+            return False
         return True
 
     def close(self) -> None:

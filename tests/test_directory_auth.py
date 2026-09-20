@@ -122,20 +122,20 @@ def test_empty_password_is_refused_without_touching_the_directory(bind_ldap3, pa
     # An empty password on a simple bind can be answered as an anonymous success, so it must
     # never reach a server.
     client = Ldap3Client(make_settings())
-    assert client.check_password("alice@test.invalid", password) is False
+    assert client.check_password("alice@test.invalid", password, expect_sam="alice") is False
     assert "conn" not in bind_ldap3
 
 
 def test_empty_username_is_refused_without_touching_the_directory(bind_ldap3):
     client = Ldap3Client(make_settings())
-    assert client.check_password("", PASSWORD) is False
+    assert client.check_password("", PASSWORD, expect_sam="alice") is False
     assert "conn" not in bind_ldap3
 
 
 def test_successful_bind_uses_the_planned_parameters_and_unbinds(bind_ldap3, settings):
     settings.AD_AUTH_TIMEOUT = 42
     client = Ldap3Client(make_settings(timeout=30))
-    assert client.check_password("alice@test.invalid", PASSWORD) is True
+    assert client.check_password("alice@test.invalid", PASSWORD, expect_sam="alice") is True
 
     conn = bind_ldap3["conn"]
     assert conn.kwargs == {
@@ -159,14 +159,14 @@ def test_successful_bind_uses_the_planned_parameters_and_unbinds(bind_ldap3, set
 def test_bind_that_does_not_report_bound_is_a_failure(bind_ldap3):
     bind_ldap3["prime"] = {"bind_result": False}
     client = Ldap3Client(make_settings())
-    assert client.check_password("alice@test.invalid", PASSWORD) is False
+    assert client.check_password("alice@test.invalid", PASSWORD, expect_sam="alice") is False
     assert bind_ldap3["conn"].unbound is True
 
 
 def test_wrong_password_returns_false(bind_ldap3):
     bind_ldap3["prime"] = {"bind_error": credentials_error("52e")}
     client = Ldap3Client(make_settings())
-    assert client.check_password("alice@test.invalid", "wrong") is False
+    assert client.check_password("alice@test.invalid", "wrong", expect_sam="alice") is False
     assert bind_ldap3["conn"].unbound is True
 
 
@@ -180,7 +180,7 @@ def test_account_state_is_not_a_wrong_password(bind_ldap3, subcode, description)
     bind_ldap3["prime"] = {"bind_error": credentials_error(subcode)}
     client = Ldap3Client(make_settings())
     with pytest.raises(DirectoryAccountState) as excinfo:
-        client.check_password("alice@test.invalid", PASSWORD)
+        client.check_password("alice@test.invalid", PASSWORD, expect_sam="alice")
     assert excinfo.value.code == subcode
 
 
@@ -194,7 +194,7 @@ def test_stronger_auth_required_is_an_error_not_a_wrong_password(bind_ldap3):
     }
     client = Ldap3Client(make_settings())
     with pytest.raises(DirectoryError):
-        client.check_password("alice@test.invalid", PASSWORD)
+        client.check_password("alice@test.invalid", PASSWORD, expect_sam="alice")
 
 
 def test_client_side_credential_rejections_are_a_failure_not_an_outage(bind_ldap3):
@@ -202,14 +202,14 @@ def test_client_side_credential_rejections_are_a_failure_not_an_outage(bind_ldap
         "bind_error": ldap_exc.LDAPPasswordIsMandatoryError("password is mandatory in simple bind")
     }
     client = Ldap3Client(make_settings())
-    assert client.check_password("alice@test.invalid", PASSWORD) is False
+    assert client.check_password("alice@test.invalid", PASSWORD, expect_sam="alice") is False
 
 
 def test_unreachable_directory_raises_rather_than_denying(bind_ldap3):
     bind_ldap3["prime"] = {"bind_error": ldap_exc.LDAPSocketOpenError("connection refused")}
     client = Ldap3Client(make_settings())
     with pytest.raises(DirectoryUnavailable):
-        client.check_password("alice@test.invalid", PASSWORD)
+        client.check_password("alice@test.invalid", PASSWORD, expect_sam="alice")
 
 
 def test_the_supplied_password_never_reaches_an_error_message(bind_ldap3):
@@ -217,7 +217,7 @@ def test_the_supplied_password_never_reaches_an_error_message(bind_ldap3):
     bind_ldap3["prime"] = {"bind_error": ldap_exc.LDAPSocketOpenError(f"refused ({secret})")}
     client = Ldap3Client(make_settings())
     with pytest.raises(DirectoryError) as excinfo:
-        client.check_password("alice@test.invalid", secret)
+        client.check_password("alice@test.invalid", secret, expect_sam="alice")
     assert secret not in str(excinfo.value)
     assert SECRET not in str(excinfo.value)
 
@@ -240,6 +240,17 @@ def test_unverifiable_identity_is_refused(bind_ldap3):
     bind_ldap3["prime"] = {"whoami": None}
     client = Ldap3Client(make_settings())
     assert client.check_password("alice@test.invalid", PASSWORD, expect_sam="alice") is False
+
+
+@pytest.mark.parametrize("expect_sam", ["", "   "])
+def test_an_unverifiable_login_never_reaches_the_directory(bind_ldap3, caplog, expect_sam):
+    # Without an account name to compare the bound identity against, a successful bind would
+    # only prove the password is somebody's, so it is never sent.
+    client = Ldap3Client(make_settings())
+    with caplog.at_level("WARNING", logger="apps.directory"):
+        assert client.check_password("alice@test.invalid", PASSWORD, expect_sam=expect_sam) is False
+    assert "conn" not in bind_ldap3
+    assert "refusing the sign-in" in caplog.text
 
 
 # --- The backend ---------------------------------------------------------------------
@@ -285,6 +296,21 @@ def test_wrong_password_is_refused_and_counted(backend, fake_directory):
     assert SignInAttempt.objects.get(user=user).failures == 1
 
 
+def test_the_failure_log_keeps_the_address_the_request_actually_came_from(
+    backend, fake_directory, caplog, rf
+):
+    # A proxy appends to X-Forwarded-For, so its first entry is whatever the sender put there.
+    # Someone spraying the form must not be able to pin the attempts on an address they chose.
+    make_login()
+    request = rf.post(
+        "/login/", REMOTE_ADDR="10.0.0.9", HTTP_X_FORWARDED_FOR="203.0.113.7, 10.0.0.9"
+    )
+    with caplog.at_level("WARNING", logger="apps.directory.auth"):
+        assert backend.authenticate(request, username="alice@test.invalid", password="nope") is None
+    assert "10.0.0.9" in caplog.text
+    assert "claims" in caplog.text
+
+
 @pytest.mark.parametrize(
     "factory",
     [
@@ -306,6 +332,16 @@ def test_logins_the_sync_does_not_manage_never_reach_the_directory(
 def test_unknown_username_never_reaches_the_directory(backend, fake_directory):
     assert backend.authenticate(None, username="nobody@test.invalid", password="x") is None
     assert fake_directory.calls == []
+
+
+def test_a_login_with_no_account_name_never_reaches_the_directory(backend, fake_directory, caplog):
+    # The bound identity is read back and compared with this field, so without it the bind
+    # would prove nothing about who answered. Refuse rather than fall back to trusting it.
+    make_login(username="ghost@test.invalid", sam="")
+    with caplog.at_level("WARNING", logger="apps.directory.auth"):
+        assert backend.authenticate(None, username="ghost@test.invalid", password="x") is None
+    assert fake_directory.calls == []
+    assert "No Active Directory account name recorded" in caplog.text
 
 
 def test_empty_credentials_never_reach_the_directory(backend, fake_directory):

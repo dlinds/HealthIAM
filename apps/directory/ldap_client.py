@@ -172,7 +172,7 @@ class DirectoryClient:
     def iter_groups(self, base_dn: str) -> Iterator[DirectoryGroup]:
         raise NotImplementedError
 
-    def check_password(self, upn: str, password: str, *, expect_sam: str = "") -> bool:
+    def check_password(self, upn: str, password: str, *, expect_sam: str) -> bool:
         raise NotImplementedError
 
     def close(self) -> None:
@@ -548,7 +548,7 @@ class Ldap3Client(DirectoryClient):
             yield parse_group_entry(entry)
 
     @sensitive_variables()
-    def check_password(self, upn: str, password: str, *, expect_sam: str = "") -> bool:
+    def check_password(self, upn: str, password: str, *, expect_sam: str) -> bool:
         """True when a simple bind as `upn` with `password` succeeds.
 
         Runs on its own short-lived connection, so the service-account connection keeps its
@@ -557,14 +557,21 @@ class Ldap3Client(DirectoryClient):
         and `DirectoryUnavailable` / `DirectoryError` when the directory could not answer, so
         the caller can tell those apart and throttle only real password guesses.
 
-        `expect_sam` is the sAMAccountName the caller believes owns this UPN. When given, the
-        identity that actually bound is read back and compared, so a UPN reassigned to someone
-        else between syncs cannot sign in as the previous holder's login.
+        `expect_sam` is the sAMAccountName the caller believes owns this UPN. The identity
+        that actually bound is always read back and compared against it, so a UPN reassigned to
+        someone else between syncs cannot sign in as the previous holder's login. A login with
+        no short name recorded cannot be checked that way, so it is refused rather than
+        trusted: the expectation is required, and an empty one is not an exemption.
         """
         if not upn or not password or not password.strip():
             # A simple bind with an empty name or password is refused here rather than left to
             # the server: ldap3 selects SIMPLE authentication from the *user* argument alone,
             # so an empty user would become an anonymous bind, which AD answers with success.
+            return False
+        if not expect_sam or not expect_sam.strip():
+            # With nothing to compare the bound identity against, a successful bind would only
+            # prove the password is somebody's. Refuse before the credential is sent anywhere.
+            logger.warning("No account name recorded for %s; refusing the sign-in", upn)
             return False
         from ldap3.core import exceptions as ldap_exc
 
@@ -591,7 +598,7 @@ class Ldap3Client(DirectoryClient):
             if not bound or not conn.bound:
                 logger.info("Active Directory did not bind %s", upn)
                 return False
-            if expect_sam and not self._identity_matches(conn, expect_sam):
+            if not self._identity_matches(conn, expect_sam):
                 return False
         except ldap_exc.LDAPInvalidCredentialsResult as exc:
             # The only result that can mean "wrong password". Its diagnostic text says which.
