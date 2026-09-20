@@ -1670,6 +1670,7 @@ ALL_CHECKS = [
     checks.check_server_uris_are_ldaps,
     checks.check_ad_sign_in_is_not_the_only_way_in,
     checks.check_group_filters_are_not_wide_open,
+    checks.check_synced_logins_can_be_signed_in_to,
 ]
 
 

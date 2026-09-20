@@ -9,7 +9,8 @@ class DirectoryConfig(AppConfig):
     def ready(self):
         from apps.core.auditing import register_for_audit
 
-        from . import checks, models  # noqa: F401 - checks register on import
+        # Importing is what registers the checks and the failed-sign-in diagnostic.
+        from . import checks, models, signals  # noqa: F401
 
         # last_seen_at changes on every sync; keeping it out of the audit diff means a quiet
         # run produces no history entries.
