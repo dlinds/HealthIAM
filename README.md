@@ -14,7 +14,8 @@ Position-based access defaults and application catalog for a healthcare organiza
 
 Python 3.11+ · Django 5.2 · PostgreSQL 16 · server-rendered templates + htmx ·
 Bootstrap 5 (vendored, no build step) · Entra ID SSO (OIDC) · optional on-prem AD sync
-(LDAPS via ldap3) · django-auditlog.
+(LDAPS via ldap3) · django-auditlog. Served by gunicorn in the container and by waitress
+on a native Windows install.
 
 ## Quick start (local)
 
@@ -75,6 +76,8 @@ All settings are read from the environment (or `.env`); see `.env.example`.
 | `AD_AUTH_ENABLED`, `AD_AUTH_TIMEOUT` | Let synced people sign in with their AD password (LDAPS bind); seconds to wait for the bind (60, long enough for a step-up approval) |
 | `AD_AUTH_MAX_FAILURES`, `AD_AUTH_FAILURE_WINDOW`, `AD_AUTH_LOCKOUT_SECONDS` | Wrong passwords per login inside the window before attempts stop reaching AD, and for how long. Keep under the domain's own lockout policy; `0` disables |
 | `SUPPORT_CONTACT` | Shown on the no-access page |
+| `LOG_FILE` | Empty (the default) logs to the console. A path sends logging to that rotating file instead -- needed by the Windows service, which has no console |
+| `SYNC_SCHEDULE_COMMAND` | Overrides the scheduled-sync command shown on Admin → Active Directory, for deployments where the container's `docker exec` line is wrong |
 | `DJANGO_SETTINGS_MODULE` | `config.settings.dev` (default for `manage.py`) or `config.settings.prod` |
 
 ## Day-to-day
@@ -103,7 +106,7 @@ All settings are read from the environment (or `.env`); see `.env.example`.
   each level shows an *In AD* / *Not found in AD* badge and the dashboard and Reports carry a
   **broken references** list (CSV/XLSX). **Admin → Active Directory** shows the effective
   configuration, tests the connection, previews and applies a sync, and lists every run;
-  `manage.py sync_ad` does the same from cron. With `AD_AUTH_ENABLED` those people also
+  `manage.py sync_ad` does the same from a scheduled job. With `AD_AUTH_ENABLED` those people also
   sign in with their AD password, verified by an LDAPS bind. `manage.py demo_ad` drifts the
   seeded demo directory so a demo can show the catalog noticing a rename, a group that
   disappeared and one that arrived. See `docs/ad-setup.md`.
@@ -134,7 +137,9 @@ apps/core        base layout, dashboard, global search, audit history views,
                  demo/ (the synthetic directory seed_demo and demo_ad write)
 templates/       Django templates; partials/ for htmx fragments
 static/          app.css, app.js, vendored Bootstrap / Icons / htmx
-docs/            data-model.md, entra-setup.md, ad-setup.md, import-format.md, deploy-truenas.md
+docs/            data-model.md, entra-setup.md, ad-setup.md, import-format.md,
+                 deploy-truenas.md, deploy-windows.md
+deploy/          truenas/ (compose YAML), windows/ (installer, service, IIS config)
 tests/           pytest suite with factories
 ```
 
@@ -143,6 +148,10 @@ tests/           pytest suite with factories
 - **TrueNAS 25.10**: see `docs/deploy-truenas.md`. Pushing a version tag
   (`make release VERSION=0.2.0`) builds the image and pushes it to GHCR; the NAS
   pulls a pinned tag, so the repository can stay private.
+- **Windows Server**: see `docs/deploy-windows.md`. A native install with no Docker --
+  `deploy/windows/Install-HealthIAM.ps1` sets up the virtual environment, the database
+  and a Windows service running waitress, and `Setup-IIS.ps1` puts IIS in front for TLS.
+  The usual choice when HealthIAM sits beside the domain controllers it syncs from.
 - `Dockerfile` runs `collectstatic` (whitenoise) and starts gunicorn; the entrypoint
   applies migrations and creates the role groups.
 - `config/settings/prod.py` enforces secure cookies, HSTS and requires `SECRET_KEY` and at

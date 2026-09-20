@@ -14,6 +14,12 @@ dependencies = [
   "gunicorn>=23",
   "openpyxl>=3.1",
   "ldap3>=2.9.1,<3",
+  # Windows ships no IANA time zone database, so zoneinfo cannot resolve TIME_ZONE and
+  # every request raises ZoneInfoNotFoundError. A marker rather than a line in the
+  # windows extra below, because this is needed by every Python process that touches the
+  # app there -- the scheduled sync and any manage.py run, not only the service host.
+  # The marker excludes it everywhere else, so the image is unaffected.
+  "tzdata>=2024.1; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]
@@ -22,6 +28,16 @@ dev = [
   "pytest-django>=4.9",
   "factory-boy>=3.3",
   "ruff>=0.6",
+]
+# Native Windows Server installs (docs/deploy-windows.md). Not needed anywhere else:
+# the container and development both stay on the base list.
+windows = [
+  # gunicorn imports fcntl, so it cannot run on Windows. The wheel still installs
+  # cleanly from the base list; it is simply never invoked there.
+  "waitress>=3.0",
+  # Hosts the WSGI server as a real Windows service, from PyPI rather than a
+  # third-party binary that a locked-down network would have to whitelist.
+  "pywin32>=306",
 ]
 
 [tool.ruff]

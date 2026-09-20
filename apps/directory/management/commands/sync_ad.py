@@ -8,7 +8,7 @@ from apps.directory.models import DirectorySyncRun
 class Command(BaseCommand):
     help = (
         "Sync HealthIAM logins from the IAM-Users AD group and import the AD group list over "
-        "LDAPS. Intended for a scheduled job (TrueNAS cron via docker exec): "
+        "LDAPS. Intended for a scheduled job (cron, or a Windows Scheduled Task): "
         "manage.py sync_ad [--dry-run] [--users-only | --groups-only]. "
         "Every run is recorded under Admin > Active Directory; the exit code is non-zero when "
         "the run failed or any row had an error."
