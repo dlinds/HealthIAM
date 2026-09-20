@@ -5,6 +5,7 @@ network), the authentication backend and its throttle (against the in-memory fak
 and the login form end to end.
 """
 
+import logging
 import uuid
 from datetime import timedelta
 
@@ -511,7 +512,7 @@ def test_ad_sign_in_alone_still_renders_the_form():
     assert "No sign-in method is configured" not in body
 
 
-# --- The check -----------------------------------------------------------------------
+# --- The checks -----------------------------------------------------------------------
 
 
 @override_settings(
@@ -528,3 +529,93 @@ def test_w006_warns_when_ad_is_the_only_way_in():
 @override_settings(AD_AUTH_ENABLED=True, AUTHENTICATION_BACKENDS=BACKENDS)
 def test_w006_is_silent_when_another_way_in_exists():
     assert [m for m in run_checks(tags=[checks.TAG]) if m.id == "directory.W006"] == []
+
+
+@override_settings(AD_AUTH_ENABLED=False, OIDC_ENABLED=False)
+def test_w008_warns_when_synced_logins_have_no_way_to_sign_in():
+    messages = [m for m in run_checks(tags=[checks.TAG]) if m.id == "directory.W008"]
+    assert len(messages) == 1
+    assert messages[0].level == WARNING
+    # The hint has to name the switch; "turn it on somewhere" is what left the deployment here.
+    assert "AD_AUTH_ENABLED" in messages[0].hint
+
+
+@override_settings(AD_AUTH_ENABLED=True, OIDC_ENABLED=False)
+def test_w008_is_silent_once_ad_sign_in_is_on():
+    assert [m for m in run_checks(tags=[checks.TAG]) if m.id == "directory.W008"] == []
+
+
+@override_settings(AD_AUTH_ENABLED=False, OIDC_ENABLED=True)
+def test_w008_is_silent_when_entra_sso_signs_those_people_in():
+    # A synced person reaches the application through SSO, so their AD password is not needed.
+    assert [m for m in run_checks(tags=[checks.TAG]) if m.id == "directory.W008"] == []
+
+
+@override_settings(AD_AUTH_ENABLED=False, OIDC_ENABLED=False, AUTH_LOCAL_LOGIN=True)
+def test_w008_is_not_answered_by_local_login():
+    # AUTH_LOCAL_LOGIN only covers accounts given a password here; a managed login never has one.
+    assert len([m for m in run_checks(tags=[checks.TAG]) if m.id == "directory.W008"]) == 1
+
+
+# --- The failed-sign-in diagnostic ---------------------------------------------------
+
+
+@override_settings(AD_AUTH_ENABLED=False, AUTH_LOCAL_LOGIN=True)
+def test_a_synced_login_failing_with_ad_sign_in_off_says_so_in_the_log(client, caplog):
+    """The symptom that started this: the form says nothing, and nothing is recorded."""
+    make_login()
+    with caplog.at_level(logging.WARNING, logger="apps.directory.auth"):
+        resp = client.post(reverse("accounts:login"), {"username": "Alice", "password": "alice-pw"})
+    assert resp.status_code == 200
+    assert "Invalid username or password." in resp.content.decode()
+    assert not SignInAttempt.objects.exists()
+
+    logged = "\n".join(r.getMessage() for r in caplog.records)
+    assert "alice@test.invalid" in logged
+    assert "AD_AUTH_ENABLED" in logged
+    # The password must not ride out in the diagnostic any more than in any other log line.
+    assert "alice-pw" not in logged
+
+
+@override_settings(AD_AUTH_ENABLED=True, AUTHENTICATION_BACKENDS=BACKENDS)
+def test_a_deactivated_login_says_so_in_the_log(client, fake_directory, caplog):
+    """The backend drops a deactivated login silently, so the diagnostic is the only trace."""
+    make_login(is_active=False)
+    with caplog.at_level(logging.WARNING, logger="apps.directory.auth"):
+        resp = client.post(reverse("accounts:login"), {"username": "alice", "password": "alice-pw"})
+    assert resp.status_code == 200
+    # Nothing was offered to the directory: membership is the gate, not the password.
+    assert fake_directory.calls == []
+    logged = "\n".join(r.getMessage() for r in caplog.records)
+    assert "alice@test.invalid" in logged and "deactivated" in logged
+    assert "alice-pw" not in logged
+
+
+@override_settings(AD_ENABLED=False, AD_AUTH_ENABLED=False, AUTH_LOCAL_LOGIN=True)
+def test_the_diagnostic_does_not_run_at_all_without_a_directory(client, caplog):
+    """An installation with no AD does not pay for a lookup on every failed sign-in."""
+    make_login()
+    with caplog.at_level(logging.WARNING, logger="apps.directory.auth"):
+        client.post(reverse("accounts:login"), {"username": "alice", "password": "nope"})
+    assert caplog.records == []
+
+
+@override_settings(AD_AUTH_ENABLED=False, AUTH_LOCAL_LOGIN=True)
+def test_the_diagnostic_stays_quiet_for_accounts_that_are_not_the_directory_s(client, caplog):
+    factories.UserFactory(username="break.glass", password="local-pass-1")
+    with caplog.at_level(logging.WARNING, logger="apps.directory.auth"):
+        client.post(reverse("accounts:login"), {"username": "break.glass", "password": "wrong"})
+        client.post(reverse("accounts:login"), {"username": "nobody", "password": "wrong"})
+        client.post(reverse("accounts:login"), {"username": "", "password": "wrong"})
+    assert caplog.records == []
+
+
+@override_settings(AD_AUTH_ENABLED=True, AUTHENTICATION_BACKENDS=BACKENDS)
+def test_the_diagnostic_stays_quiet_once_ad_sign_in_is_on(client, fake_directory, caplog):
+    """The backend ran and logged the real reason; a second guess would only be noise."""
+    make_login()
+    with caplog.at_level(logging.WARNING, logger="apps.directory.auth"):
+        client.post(reverse("accounts:login"), {"username": "alice", "password": "nope"})
+    logged = "\n".join(r.getMessage() for r in caplog.records)
+    assert "Failed Active Directory sign-in" in logged
+    assert "AD_AUTH_ENABLED" not in logged

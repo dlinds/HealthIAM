@@ -225,6 +225,13 @@ the sync stores an unusable Django password on purpose. Turn it on with:
 AD_AUTH_ENABLED=true
 ```
 
+**This is a second switch.** `AD_SERVER_URIS` and `AD_BASE_DN` turn on the *sync*; they do not
+turn on sign-in. A deployment that has synced happily for weeks still refuses every AD password
+until `AD_AUTH_ENABLED` is set as well, because the backend that binds to a domain controller is
+not registered at all without it. Check `directory.W008` warns about exactly this state, on
+**Admin > Active Directory** and in the container log at startup, and that page's *Effective
+configuration* card shows sign-in as **on** or **off**. See the symptom below.
+
 The login form then accepts their Active Directory password. HealthIAM verifies it by binding
 to a domain controller as that person over LDAPS, using the same servers and CA bundle as the
 sync. Nothing is written to AD and the password is never stored, logged or put on a run record.
@@ -263,7 +270,25 @@ and mail client may be contributing failures of their own.
 
 A lockout is deliberately invisible to whoever is typing: the page says *Invalid username or
 password* whatever went wrong, so it never reveals which usernames exist. An administrator can
-see and clear lockouts in Django admin under **Directory → AD sign-in attempts**.
+see and clear lockouts in Django admin under **Active Directory → AD sign-in attempts**.
+
+**"Invalid username or password", and nothing under AD sign-in attempts."** Nothing was
+recorded because nothing was attempted: that table counts only wrong passwords a domain
+controller actually answered, so it stays empty whenever the password never left HealthIAM. In
+roughly the order these turn out to be the answer:
+
+| Cause | How to tell | Fix |
+|---|---|---|
+| `AD_AUTH_ENABLED` is not set | **Admin > Active Directory** shows sign-in **off** and raises `directory.W008`; the login form shows no *Active Directory sign-in name* hint under the username box | Set `AD_AUTH_ENABLED=true` and restart |
+| The login is not managed by the sync | **Managed by AD** is unticked on the login in Django admin | Link it (see the Admin logins caveat in section 10) and run a sync |
+| The sync deactivated the login | *Account active* is unticked | Put the person back in the user group; the next sync reactivates them |
+| No **AD account name** on the login | The field is empty in Django admin | Run a sync to fill it in; the bind is refused without something to attribute it to |
+| The login is in its cool-off | A row under **AD sign-in attempts** with *Locked* ticked | Wait it out, or clear it with the admin action |
+
+The container log names the reason on every failed attempt, except for a username that is not
+a managed login at all -- that one is never logged, because a form that says which usernames
+exist is a form that can be sprayed to find out. The page itself says the same generic sentence
+in all five cases, for the same reason.
 
 **Keep a way in that does not depend on the directory.** Leave `AUTH_LOCAL_LOGIN=true` so a
 local account still works when a domain controller is unreachable, or configure Entra SSO.

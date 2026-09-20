@@ -177,3 +177,28 @@ def check_group_filters_are_not_wide_open(app_configs, **kwargs):
             id="directory.W007",
         )
     ]
+
+
+@register(TAG)
+def check_synced_logins_can_be_signed_in_to(app_configs, **kwargs):
+    """W008: the sync hands out logins that nothing in this deployment can authenticate."""
+    if not _enabled() or getattr(settings, "AD_AUTH_ENABLED", False):
+        return []
+    if getattr(settings, "OIDC_ENABLED", False):
+        # Synced people sign in through Entra instead; their AD password is not needed.
+        return []
+    return [
+        Warning(
+            "Active Directory sign-in is off, so nobody the sync creates a login for can use it.",
+            hint=(
+                "The sync stores an unusable password on every managed login on purpose, so a "
+                "synced person is told 'Invalid username or password' whatever they type, no "
+                "attempt reaches a domain controller, and nothing appears under AD sign-in "
+                "attempts. Set AD_AUTH_ENABLED=true to have the login form verify their Active "
+                "Directory password, or configure Entra SSO (ENTRA_TENANT_ID and "
+                "OIDC_RP_CLIENT_ID). AUTH_LOCAL_LOGIN only covers accounts given a password "
+                "here, which a managed login never has. See docs/ad-setup.md section 9."
+            ),
+            id="directory.W008",
+        )
+    ]

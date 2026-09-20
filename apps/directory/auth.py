@@ -27,20 +27,26 @@ from .ldap_client import DirectoryAccountState, DirectoryError
 logger = logging.getLogger("apps.directory.auth")
 
 
-def _find_login(typed: str) -> User | None:
-    """The managed, active login this username belongs to, or None.
+def find_managed_login(typed: str, *, active_only: bool = True) -> User | None:
+    """The login the directory sync manages that this username belongs to, or None.
 
     Accepts the stored username (the lower-cased UPN) or the stored sAMAccountName, and
     tolerates the `DOMAIN\\user` form Windows users type out of habit. The two lookups are
     tried in order rather than OR-ed together so that two logins sharing a short name across
     domains of a forest cannot block each other's UPN.
+
+    Authenticating passes `active_only=True`, so a login the sync has deactivated is never
+    offered to the directory. The failure diagnostic in `signals` passes False: a deactivated
+    login is one of the cases it exists to name.
     """
     value = (typed or "").strip()
     if "\\" in value:
         value = value.rsplit("\\", 1)[-1].strip()
     if not value:
         return None
-    managed = User.objects.filter(ad_managed=True, is_active=True)
+    managed = User.objects.filter(ad_managed=True)
+    if active_only:
+        managed = managed.filter(is_active=True)
     by_username = managed.filter(username__iexact=value).first()
     if by_username is not None:
         return by_username
@@ -76,7 +82,7 @@ class ActiveDirectoryBackend(ModelBackend):
         if not username or not password or not password.strip():
             return None
 
-        user = _find_login(username)
+        user = find_managed_login(username)
         if user is None:
             # Unknown, unmanaged or deactivated. Nothing reaches the directory: a local
             # account is left for ModelBackend, which runs before this one.

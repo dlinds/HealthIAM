@@ -477,6 +477,21 @@ def test_admin_index_before_any_sync(as_user, admin_user):
     assert b"not checked yet" in resp.content and b"No sync runs yet." in resp.content
 
 
+def test_admin_index_says_whether_ad_sign_in_is_on(as_user, admin_user, settings):
+    """The switch being off is invisible everywhere else, and it is the first thing to check
+    when a synced person cannot sign in."""
+    resp = as_user(admin_user).get(reverse("directory:admin_index"))
+    assert resp.context["sign_in"]["enabled"] is True
+    body = resp.content.decode()
+    assert "3 wrong passwords per 600 s, then 60 s of cool-off" in body
+    assert "AD_AUTH_ENABLED" not in body
+
+    settings.AD_AUTH_ENABLED = False
+    body = as_user(admin_user).get(reverse("directory:admin_index")).content.decode()
+    assert "AD_AUTH_ENABLED" in body
+    assert "directory.W008" in body
+
+
 def test_admin_index_shows_check_warnings_inline(as_user, admin_user, settings):
     settings.AD_BIND_PASSWORD = ""
     resp = as_user(admin_user).get(reverse("directory:admin_index"))

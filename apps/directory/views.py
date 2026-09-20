@@ -292,6 +292,23 @@ def _active_counts(qs):
     return counts["active"], counts["inactive"]
 
 
+def _sign_in_context():
+    """What the Active Directory sign-in switch is doing, for the configuration card.
+
+    Deliberately not part of `DirectorySettings`: that object is what the LDAP client and the
+    sync read, and these settings are neither's. It belongs on this page because an
+    administrator whose synced people cannot sign in looks at the directory configuration
+    first, and the switch being off is invisible everywhere else.
+    """
+    return {
+        "enabled": settings.AD_AUTH_ENABLED,
+        "timeout": settings.AD_AUTH_TIMEOUT,
+        "max_failures": settings.AD_AUTH_MAX_FAILURES,
+        "failure_window": settings.AD_AUTH_FAILURE_WINDOW,
+        "lockout_seconds": settings.AD_AUTH_LOCKOUT_SECONDS,
+    }
+
+
 def _status_context(runs):
     last_run = next((run for run in runs if not run.is_stale), None)
     groups_active, groups_inactive = _active_counts(ADGroup.objects.all())
@@ -313,6 +330,7 @@ def admin_index(request):
     runs = list(DirectorySyncRun.objects.select_related("created_by")[:RECENT_RUNS])
     ctx = {
         "config": DirectorySettings.from_settings().public_dict(),
+        "sign_in": _sign_in_context(),
         "check_warnings": run_checks(tags=[checks.TAG]),
         "form": SyncStartForm(),
         "runs": runs,

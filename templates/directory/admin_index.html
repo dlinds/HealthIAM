@@ -31,8 +31,19 @@
           <dt class="col-sm-4">Group name patterns</dt><dd class="col-sm-8">{% if config.group_name_patterns %}<span class="text-mono">{{ config.group_name_patterns|join:", " }}</span>{% else %}<span class="text-body-secondary">all groups under the search bases</span>{% endif %}</dd>
           <dt class="col-sm-4">Excluded patterns</dt><dd class="col-sm-8">{% if config.group_exclude_patterns %}<span class="text-mono">{{ config.group_exclude_patterns|join:", " }}</span>{% else %}<span class="text-body-secondary">none</span>{% endif %}</dd>
           <dt class="col-sm-4">Page size</dt><dd class="col-sm-8">{{ config.page_size }}</dd>
+          <dt class="col-sm-4">Sign-in</dt>
+          <dd class="col-sm-8">
+            {% if sign_in.enabled %}<span class="badge text-bg-success">on</span> &mdash; a synced person signs in with their Active Directory password
+            {% else %}<span class="badge text-bg-secondary">off</span> &mdash; a synced login has no password here, so it cannot be signed in to; set <span class="text-mono">AD_AUTH_ENABLED</span>{% endif %}
+          </dd>
+          {% if sign_in.enabled %}
+          <dt class="col-sm-4">Sign-in budget</dt>
+          <dd class="col-sm-8">
+            {% if sign_in.max_failures %}{{ sign_in.max_failures }} wrong password{{ sign_in.max_failures|pluralize }} per {{ sign_in.failure_window }} s, then {{ sign_in.lockout_seconds }} s of cool-off{% else %}<span class="text-body-secondary">off &mdash; every attempt reaches the directory</span>{% endif %} &middot; bind timeout {{ sign_in.timeout }} s
+          </dd>
+          {% endif %}
         </dl>
-        <p class="text-body-secondary mb-0 mt-2">Set through <span class="text-mono">AD_*</span> environment variables; see docs/ad-setup.md.</p>
+        <p class="text-body-secondary mb-0 mt-2">Set through <span class="text-mono">AD_*</span> environment variables; see docs/ad-setup.md. Lockouts are listed and cleared in Django admin under <span class="text-mono">Active Directory &rarr; AD sign-in attempts</span>; that table counts only wrong passwords a domain controller answered, so it stays empty while sign-in is off.</p>
       </div>
     </div>
   </div>
