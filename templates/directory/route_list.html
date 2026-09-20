@@ -9,7 +9,12 @@
 <p class="text-body-secondary small">
   An AD group carries no pointer to the system it belongs to, so a naming convention is all there is to go on.
   A route says which application or service should hold groups matching a pattern, and the AD groups page shows the match.
-  Routes only suggest a home &mdash; nothing is created from them without someone confirming it, and the sync never reads them.
+  An application always outranks a service, whatever the priorities say; priority orders the rest.
+</p>
+<p class="text-body-secondary small">
+  For an ordinary application a route only suggests a home &mdash; nothing is created without someone confirming it.
+  For one marked <strong>Holds groups</strong> below, a route also creates and retires its access levels automatically,
+  for every matching group nobody has adopted by hand. A route can never change what the AD group mirror holds.
 </p>
 <div class="row g-3">
   <div class="col-lg-7">
@@ -23,6 +28,7 @@
           <td>
             <a href="{{ r.application.get_absolute_url }}">{{ r.application.name }}</a>
             {% if r.application.is_service %}<span class="badge text-bg-light border">Service</span>{% endif %}
+            {% if r.application.dynamic_ad_groups %}<span class="badge text-bg-info" title="Creates and retires its own access levels from this route">Holds groups</span>{% endif %}
           </td>
           <td class="text-end">{{ r.priority }}</td>
           <td>{% if r.is_active %}<span class="badge text-bg-success">Active</span>{% else %}<span class="badge text-bg-secondary">Inactive</span>{% endif %}</td>

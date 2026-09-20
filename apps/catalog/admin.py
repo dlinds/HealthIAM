@@ -26,7 +26,16 @@ class AnalystInline(admin.TabularInline):
 class AccessLevelInline(admin.TabularInline):
     model = AccessLevel
     extra = 0
-    fields = ("name", "access_model", "ad_group_name", "ticket_assignment_team", "is_active")
+    fields = (
+        "name",
+        "access_model",
+        "ad_group_name",
+        "ticket_assignment_team",
+        "source",
+        "is_active",
+    )
+    # Shown but not settable: `source` is the reconciler's to move.
+    readonly_fields = ("source",)
 
 
 class SupportTierInline(admin.TabularInline):
@@ -79,6 +88,9 @@ class ContactAdmin(admin.ModelAdmin):
 
 @admin.register(AccessLevel)
 class AccessLevelAdmin(admin.ModelAdmin):
-    list_display = ("application", "name", "access_model", "access_target", "is_active")
-    list_filter = ("access_model", "is_active")
+    list_display = ("application", "name", "access_model", "access_target", "source", "is_active")
+    list_filter = ("access_model", "source", "is_active")
     search_fields = ("name", "application__name", "ad_group_name")
+    # Observable but not settable: `source` is the reconciler's to move, and hand-setting a
+    # level to `route` would hand it to a reconciler that has no reason to keep it.
+    readonly_fields = ("source",)

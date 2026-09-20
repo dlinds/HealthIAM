@@ -56,7 +56,7 @@ A person or team that can be named as owner, support tier or vendor contact.
 ### Application
 | Group | Fields |
 |---|---|
-| Identity | `kind` (see below), `name` (unique), `description`, `vendor`, `website`, `admin_url`, aliases (separate table) |
+| Identity | `kind` (see below), `dynamic_ad_groups` (see *Route-managed access levels*), `name` (unique), `description`, `vendor`, `website`, `admin_url`, aliases (separate table) |
 | Classification | `tier` 1–4 (1 = mission critical), `lifecycle_status` pilot / active / retiring / retired, `go_live_date`, `sunset_date` |
 | Data sensitivity | `holds_phi`, `holds_pii`, `holds_clinical_records`, `holds_pci`, `holds_employee_data`, `holds_research_data`, `data_description` |
 | Hosting | `host_location` onsite / colo / aws / azure / gcp / vendor_hosted / hybrid / other, `host_details` |
@@ -98,6 +98,7 @@ at applications directly.
 | `in_app_instructions` | Required for `in_app`. |
 | `ticket_assignment_team` | Required for `ticket`. |
 | `is_active`, `sort_order` | Inactive levels stay on existing defaults but cannot be added. |
+| `source` | `manual` (added by hand), `route` (created and owned by an AD group route), `adopted` (a routed level somebody took over). See *Route-managed access levels*. |
 
 Indexed on `Lower(ad_group_name)`: every broken-reference check and the "unreferenced
 groups" filter join this column to `ADGroup.name` case-insensitively.
@@ -120,8 +121,16 @@ vendor_technical, internal_sme, other), `notes`.
 | `created_by`, timestamps | |
 
 All writes go through `apps/access/services.py` (`add_default`, `remove_default`,
-`copy_defaults`), which require a **reason**, enforce analyst scope, and store the reason
-plus position / application / level context on the audit entry.
+`copy_defaults`, `move_defaults`), which require a **reason** and store it plus position /
+application / level context on the audit entry.
+
+`move_defaults` is the exception to analyst scope: it is a **system** move, used when an AD
+group changes hands and its defaults have to follow, and the actor is often a scheduled sync
+with no user at all. It still writes a reason -- a generated one naming where the default came
+from, because the audit entry itself records only where it landed. A position that already
+holds the destination level keeps that row and the redundant one is deleted, rather than
+violating `unique_default_per_position_level`. **That merge is lossy**: a position that held
+both levels ends up holding one.
 
 ## Adopting AD groups (`apps/catalog/services.py`)
 
@@ -133,6 +142,13 @@ application the actor is not an analyst on, a retired application, a group alrea
 referenced by any access level (case-insensitively), or a name longer than
 `ad_group_name` holds — `ADGroup.name` is 256 characters, `AccessLevel.ad_group_name`
 200.
+
+A group is refused only when another level **claims** it: an active level whose `source` is
+`manual` or `adopted`. A `route` level never claims, so a group a dynamic application is
+holding stays adoptable -- adopting it is how the group reaches the system it belongs to.
+Adopting a group into the application already holding it by route takes that very row over
+(`source` becomes `adopted`) instead of adding a second one, which is the only way to edit a
+routed level.
 
 Unlike `PositionDefault` writes, adoption takes **no reason**: recording where a group
 belongs grants nobody anything, and the single-level form asks for none either. Assigning
@@ -201,11 +217,51 @@ only signal. A route says which application should hold groups matching a patter
 | `priority` | Lowest number wins when several patterns match. Ties break by `pk`, so resolution is stable. |
 | `notes`, `is_active`, `created_by` | |
 
-Routes are **advisory**: nothing is created from one without a person confirming it, and
-`sync` does not import `routing` at all, so a mistyped pattern can neither change what the
-mirror holds nor fill the catalog on its own. `apps/directory/routing.py` resolves a name;
-the AD groups page shows the match and offers a "No route matches" filter — the worklist
-of what is still unsorted.
+Resolution puts **application-kind targets ahead of every service**, then `priority`, then
+`pk`. A group a real application claims by name is that application's to hold, however broad
+the pattern that claims it; the number only orders routes within one kind.
+
+For an ordinary application a route is still **advisory**: it pre-fills a target a person
+confirms, and nothing is created from it. For one whose `dynamic_ad_groups` is on, a route
+also creates and retires that application's access levels — see below. What holds in both
+cases is that a route can never change what the **mirror** holds: the reconciler runs strictly
+after the mirror is committed, never on a preview, and writes only catalog and access rows.
+
+`apps/directory/routing.py` resolves a name; the AD groups page shows the match and offers
+"No route matches" and "Not claimed by hand" filters — the worklist of what is still unsorted.
+
+### Route-managed access levels (`apps/directory/reconcile.py`)
+
+An application with `dynamic_ad_groups` on holds one access level for every active AD group
+its routes claim and nobody owns by hand. Three rules decide everything:
+
+- **Claim.** A group is spoken for when an *active* level with `source` `manual` or `adopted`
+  references it. A `route` level never claims — if it did, a dynamic holder would block the
+  very hand-over it exists to allow. **An inactive hand-owned level releases its group**, so
+  inactivating a level hands it, and its defaults, to whatever route claims it next.
+- **Home.** An unclaimed group goes to the first *dynamic, non-retired* target among the
+  routes claiming it, in resolution order. A route pointing at an ordinary application stays
+  advisory, so resolution walks past it: the adopt page still suggests that application while
+  a dynamic service holds the group in the meantime.
+- **Defaults follow the group.** Whenever a group changes hands its position defaults move
+  with it, so nobody's effective access changes because the catalog reorganised itself. With
+  nowhere to move them, the old level is **deactivated and returned to `manual`** rather than
+  deleted — `PositionDefault.access_level` is `PROTECT`, and a level nothing manages must not
+  stay locked. A routed level with no defaults is deleted outright.
+
+Route-managed levels cannot be edited or toggled: the buttons are absent and
+`access_level_form` / `access_level_toggle` raise `PermissionDenied`. Adopting the group is
+the way to take one over. Turning the flag on converts an application's existing `manual`
+levels for groups its routes claim, keeping the name, description and sort order somebody
+chose; `adopted` levels are never recaptured.
+
+A reconcile runs at the end of every **applied** sync that included groups, from
+`manage.py reconcile_dynamic_levels`, from the Reconcile now button, and from signals on
+every relevant save (deferred to `transaction.on_commit`, coalesced per transaction, and
+guarded against re-entering its own writes). It is free when nobody has turned the feature
+on: two `EXISTS` queries and out. Creating levels is uncapped by design; *retiring* them is
+guarded, and a pass that would retire most of the route-managed levels at once refuses
+unless forced.
 
 ### DirectorySyncRun
 One sync against AD, the LDAP-sourced sibling of `ImportBatch`. Preview and apply share
@@ -219,7 +275,7 @@ the same row.
 | `created_by` | The admin who started it; empty for scheduled runs. |
 | `started_at`, `finished_at`, `server` | Timing and the domain controller that answered. |
 | `group_dn` | Resolved DN of `AD_USER_GROUP` (users scope). |
-| `summary` | `{"users": {...} or null, "groups": {...} or null}` with `created`, `updated`, `reactivated`, `deactivated`, `unchanged`, `errors`, `rows`, `skipped`. |
+| `summary` | `{"users": {...} or null, "groups": {...} or null}` with `created`, `updated`, `reactivated`, `deactivated`, `unchanged`, `errors`, `rows`, `skipped`. An applied run that changed route-managed levels adds a `"routes"` part; a quiet one adds nothing. |
 | `log` | Rows of `{kind, row, code, action, message, dn}`; `unchanged` rows are omitted. |
 | `error` | Why a failed run failed (the bind password is never included). |
 

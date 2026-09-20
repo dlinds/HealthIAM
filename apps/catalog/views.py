@@ -105,6 +105,9 @@ class ApplicationListView(PermissionCheckMixin, ListView):
 # A service adopted from AD can hold hundreds of levels; the tab renders a table row with
 # two htmx buttons each, so the page is what stops it becoming unusable.
 LEVELS_PER_PAGE = 25
+#: Above this many AD levels on one application, the tab's broken-reference badge stops
+#: being counted per page view. See `_detail_context`.
+LEVEL_STATUS_CAP = 500
 
 
 def _detail_context(request, application):
@@ -114,14 +117,6 @@ def _detail_context(request, application):
     can_manage_analysts = perms.can_manage_analysts(user, application)
 
     levels_qs = application.access_levels.order_by("sort_order", "name")
-    # Reference status is resolved over *every* AD level, not just the page or the filter:
-    # the warning badge on the tab counts the whole application, and `status_for_levels`
-    # costs the same two queries either way.
-    #
-    # Not `.only(...)`: auditlog's post_init receiver reads each instance, so a deferred
-    # field turns one query into one per row. Loading these rows whole is a single query.
-    ad_levels = list(levels_qs.filter(access_model=AccessLevel.AccessModel.AD_GROUP))
-    level_reference_status = references.status_for_levels(ad_levels)
 
     # The filter searches the columns the table actually shows, so a hit is always visible:
     # the level name, its description, and the Target cell for AD-group and ticket levels.
@@ -134,7 +129,34 @@ def _detail_context(request, application):
             | Q(ad_group_name__icontains=levels_q)
             | Q(ticket_assignment_team__icontains=levels_q)
         )
+    levels_source = request.GET.get("levels_source", "")
+    if levels_source == AccessLevel.Source.ROUTE:
+        shown = shown.filter(source=AccessLevel.Source.ROUTE)
+    elif levels_source == AccessLevel.Source.MANUAL:
+        # "Added by hand" covers a level taken over from a route: a person owns it either way.
+        shown = shown.filter(source__in=AccessLevel.CLAIMING_SOURCES)
+    else:
+        levels_source = ""
     levels_page = Paginator(shown, LEVELS_PER_PAGE).get_page(request.GET.get("levels_page"))
+
+    # Reference status is resolved over *every* AD level, not just the page: the warning
+    # badge on the tab counts the whole application. Not `.only(...)` -- auditlog's
+    # post_init receiver reads each instance, so a deferred field turns one query into one
+    # per row.
+    #
+    # Above the cap that stops being affordable: a dynamic application can hold a level per
+    # AD group, and instantiating thousands of them on every page view to colour one badge
+    # is not a trade worth making. The page's own rows still get their badges; the tab's
+    # count goes quiet rather than wrong, and the broken-reference report has the whole
+    # picture either way.
+    ad_levels_qs = levels_qs.filter(access_model=AccessLevel.AccessModel.AD_GROUP)
+    if ad_levels_qs.count() <= LEVEL_STATUS_CAP:
+        level_reference_status = references.status_for_levels(list(ad_levels_qs))
+        broken_level_count = sum(1 for r in level_reference_status.values() if r.is_broken)
+    else:
+        level_reference_status = references.status_for_levels(list(levels_page.object_list))
+        broken_level_count = None
+    route_level_count = levels_qs.filter(source=AccessLevel.Source.ROUTE).count()
     return {
         "application": application,
         "object": application,
@@ -147,13 +169,20 @@ def _detail_context(request, application):
         "levels": list(levels_page.object_list),
         "levels_page": levels_page,
         "levels_q": levels_q,
+        "levels_source": levels_source,
+        "route_level_count": route_level_count,
         # A list that fits on one page needs no filter; the box would just be clutter.
-        "show_level_filter": levels_page.paginator.count > LEVELS_PER_PAGE or bool(levels_q),
+        "show_level_filter": levels_page.paginator.count > LEVELS_PER_PAGE
+        or bool(levels_q)
+        or bool(levels_source),
+        # Only worth splitting the list when it actually holds both kinds.
+        "show_level_source_filter": bool(route_level_count)
+        and route_level_count != levels_page.paginator.count,
         # The tab badge counts the application, so it has to ignore the filter. Only a
         # filtered view pays the extra count.
         "level_count": levels_qs.count() if levels_q else levels_page.paginator.count,
         "level_reference_status": level_reference_status,
-        "broken_level_count": sum(1 for r in level_reference_status.values() if r.is_broken),
+        "broken_level_count": broken_level_count,
         "aliases": application.aliases.all(),
         "analysts": application.analyst_assignments.select_related("user"),
         "tiers": application.support_tiers.select_related("contact", "contact__vendor"),
@@ -278,6 +307,14 @@ def access_level_form(request, pk, level_id=None):
     level = (
         get_object_or_404(AccessLevel, application=application, pk=level_id) if level_id else None
     )
+    if level is not None and level.is_route_managed:
+        # The buttons are not rendered for a routed level, so reaching here is a forged post.
+        # Adopting the group is how you take one over; editing it by hand would only be
+        # undone by the next reconcile.
+        raise PermissionDenied(
+            f"'{level.name}' is managed by an AD group route. Adopt the group from "
+            f"AD groups \u2192 Add to catalog to take it over."
+        )
     form_url = (
         reverse("catalog:access_level_edit", args=[pk, level_id])
         if level
@@ -286,7 +323,9 @@ def access_level_form(request, pk, level_id=None):
     # The form posts back to this URL and the re-rendered section reads its state from the
     # query string, so saving from page 3 of a filtered list has to land back there.
     view_state = {
-        key: value for key in ("levels_page", "levels_q") if (value := request.GET.get(key))
+        key: value
+        for key in ("levels_page", "levels_q", "levels_source")
+        if (value := request.GET.get(key))
     }
     if view_state:
         form_url = f"{form_url}?{urlencode(view_state)}"
@@ -319,6 +358,10 @@ def access_level_form(request, pk, level_id=None):
 def access_level_toggle(request, pk, level_id):
     application = _app_for(request, pk, perms.can_edit_access_levels)
     level = get_object_or_404(AccessLevel, application=application, pk=level_id)
+    if level.is_route_managed:
+        raise PermissionDenied(
+            f"'{level.name}' is managed by an AD group route; the route decides whether it is held."
+        )
     level.is_active = not level.is_active
     level.save(update_fields=["is_active", "updated_at"])
     return _section(request, application, "catalog/partials/access_levels.html")

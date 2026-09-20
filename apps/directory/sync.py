@@ -57,6 +57,10 @@ class SyncResult(ImportResult):
     """`ImportResult` plus a `skipped` bucket for steps the run deliberately left out."""
 
     skipped: list[str] = field(default_factory=list)
+    #: `(old_name, new_name)` for groups Active Directory renamed in place. The mirror
+    #: follows a rename by objectGUID, but an access level names its group as free text, so
+    #: whatever acts on the catalog afterwards has to be told which name became which.
+    renames: list[tuple[str, str]] = field(default_factory=list)
 
     def record(self, row: int, code: str, action: str, message: str = "", **extra) -> None:
         entry = {
@@ -226,7 +230,55 @@ def run_sync(
         "previewed" if dry_run else "completed",
         run.summary,
     )
+    if groups_scope and not dry_run:
+        _reconcile_after_sync(run, groups_result)
     return run
+
+
+def _reconcile_after_sync(run: DirectorySyncRun, groups_result: SyncResult | None) -> None:
+    """Bring route-managed access levels in line with the mirror this run just wrote.
+
+    Deliberately after the mirror is committed and the run row saved: the mirror is the
+    record of what Active Directory holds and has to land whatever the catalog side does.
+    Never on a preview -- a dry run rolls back, and a route must not be able to change the
+    catalog off the back of a sync nobody applied.
+
+    A failure is recorded on the run and never raised: by this point `run_sync` has already
+    reported a completed sync, and the mirror really is up to date.
+    """
+    # Imported here, not at module scope: the mirror is built without ever consulting a
+    # route, and this call sits outside that work.
+    from . import reconcile
+
+    try:
+        result = reconcile.reconcile_all(
+            actor=run.created_by,
+            trigger=reconcile.Trigger.SYNC,
+            renames=groups_result.renames if groups_result else None,
+        )
+    except Exception as exc:  # noqa: BLE001 - recorded on the run, never fails the sync
+        logger.exception("Route reconcile after sync #%s failed", run.pk)
+        run.summary = {**run.summary, "routes": {**reconcile.EMPTY_SUMMARY, "errors": 1}}
+        run.log = [
+            *run.log,
+            {
+                "kind": "routes",
+                "row": 0,
+                "code": "reconcile",
+                "action": "error",
+                "message": redact(f"{type(exc).__name__}: {exc}")[:MAX_ERROR],
+                "dn": "",
+            },
+        ]
+    else:
+        if not (result.changed or result.errors or result.skipped):
+            # Nothing to say -- no application is dynamic, or every level already matched.
+            # A quiet pass leaves the run record exactly as a sync without this feature
+            # would have written it.
+            return
+        run.summary = {**run.summary, "routes": result.summary}
+        run.log = [*run.log, *result.log_entries]
+    run.save(update_fields=["summary", "log", "updated_at"])
 
 
 # --- Users ---------------------------------------------------------------------------
@@ -547,7 +599,8 @@ def _group_values(group: DirectoryGroup) -> dict:
     }
 
 
-def _sync_group(group: DirectoryGroup, existing: dict, now) -> tuple[str, str]:
+def _sync_group(group: DirectoryGroup, existing: dict, now) -> tuple[str, str, str]:
+    """`(action, message, renamed_from)`; `renamed_from` is empty unless the name changed."""
     values = _group_values(group)
     obj = existing.get(group.guid)
     if obj is None:
@@ -559,12 +612,14 @@ def _sync_group(group: DirectoryGroup, existing: dict, now) -> tuple[str, str]:
             **values,
         )
         existing[group.guid] = obj
-        return "created", f"{values['scope']} {values['category']} group"
+        return "created", f"{values['scope']} {values['category']} group", ""
 
     changed: list[str] = []
     notes: list[str] = []
+    renamed_from = ""
     if obj.name != group.name:
         notes.append(f"renamed: {obj.name} -> {group.name}")
+        renamed_from = obj.name
         obj.name = group.name
         changed.append("name")
     for name in GROUP_FIELDS:
@@ -581,10 +636,10 @@ def _sync_group(group: DirectoryGroup, existing: dict, now) -> tuple[str, str]:
         obj.save()
         if not notes:
             notes.append(", ".join(changed))
-        return ("reactivated" if reactivated else "updated"), "; ".join(notes)
+        return ("reactivated" if reactivated else "updated"), "; ".join(notes), renamed_from
     ADGroup.objects.filter(pk=obj.pk).update(last_seen_at=now)
     obj.last_seen_at = now
-    return "unchanged", ""
+    return "unchanged", "", ""
 
 
 def sync_groups(
@@ -610,10 +665,12 @@ def sync_groups(
         seen.add(group.guid)
         try:
             with transaction.atomic():
-                action, message = _sync_group(group, existing, now)
+                action, message, renamed_from = _sync_group(group, existing, now)
         except Exception as exc:  # noqa: BLE001 - one bad entry must not fail the run
             result.record(row, code, "error", f"{type(exc).__name__}: {exc}", dn=group.dn)
         else:
+            if renamed_from:
+                result.renames.append((renamed_from, group.name))
             result.record(row, code, action, message, dn=group.dn)
 
     stale = ADGroup.objects.filter(is_active=True).exclude(object_guid__in=seen).order_by("name")

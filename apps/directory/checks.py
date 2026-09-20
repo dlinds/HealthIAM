@@ -197,7 +197,7 @@ def check_synced_logins_can_be_signed_in_to(app_configs, **kwargs):
                 "attempts. Set AD_AUTH_ENABLED=true to have the login form verify their Active "
                 "Directory password, or configure Entra SSO (ENTRA_TENANT_ID and "
                 "OIDC_RP_CLIENT_ID). AUTH_LOCAL_LOGIN only covers accounts given a password "
-                "here, which a managed login never has. See docs/ad-setup.md section 9."
+                "here, which a managed login never has. See docs/ad-setup.md section 10."
             ),
             id="directory.W008",
         )

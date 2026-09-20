@@ -99,6 +99,13 @@ class ServiceFactory(ApplicationFactory):
     kind = "service"
 
 
+class DynamicServiceFactory(ServiceFactory):
+    """A service that holds its routed AD groups automatically."""
+
+    name = factory.Sequence(lambda n: f"Dynamic Service {n}")
+    dynamic_ad_groups = True
+
+
 class AccessLevelFactory(factory.django.DjangoModelFactory):
     class Meta:
         model = "catalog.AccessLevel"
@@ -107,6 +114,14 @@ class AccessLevelFactory(factory.django.DjangoModelFactory):
     name = factory.Sequence(lambda n: f"Level {n}")
     access_model = "ad_group"
     ad_group_name = factory.LazyAttribute(lambda o: f"APP_{o.name.upper().replace(' ', '_')}")
+
+
+class ADGroupRouteFactory(factory.django.DjangoModelFactory):
+    class Meta:
+        model = "directory.ADGroupRoute"
+
+    pattern = factory.Sequence(lambda n: f"ROUTE_{n}_*")
+    application = factory.SubFactory(ServiceFactory)
 
 
 def make_analyst(application, user, is_primary=False):

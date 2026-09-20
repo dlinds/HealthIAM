@@ -41,6 +41,7 @@
             <option value="{{ a.pk }}" {% if c.suggested and a.pk == c.suggested.pk %}selected{% endif %}>{{ a.name }}{% if a.is_service %} (service){% endif %}</option>
             {% endfor %}
           </select>
+          {% if c.held_by %}<div class="small text-body-secondary"><span class="badge text-bg-info">routed</span> held by {{ c.held_by.name }} until somebody claims it</div>{% endif %}
           {% if c.match %}<div class="small text-body-tertiary">matched <span class="text-mono">{{ c.match.pattern }}</span></div>
           {% else %}<div class="small text-body-tertiary">no route &mdash; pick one</div>{% endif %}
         </td>

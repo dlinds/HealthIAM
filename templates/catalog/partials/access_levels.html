@@ -8,14 +8,37 @@
     </button>
     {% endif %}
   </div>
-  {% if show_level_filter %}
-  <div class="mb-2" style="max-width: 24rem">
-    <input class="form-control form-control-sm" type="search" name="levels_q" value="{{ levels_q }}"
-           placeholder="Filter by name, AD group, team or description"
-           autocomplete="off"
-           hx-get="{% url 'catalog:access_levels' application.pk %}"
-           hx-trigger="input changed delay:250ms, search"
-           hx-target="#access-level-rows" hx-swap="outerHTML">
+  {% if route_level_count %}
+  <p class="text-body-secondary small mb-2">
+    <i class="bi bi-signpost-split me-1"></i>{{ route_level_count }} of these
+    {{ route_level_count|pluralize:"level is,levels are" }} held automatically by an
+    <a href="{% url 'directory:route_list' %}">AD group route</a>. Adopt the group to take one over.
+  </p>
+  {% endif %}
+  {% if show_level_filter or show_level_source_filter %}
+  <div class="d-flex flex-wrap gap-2 mb-2">
+    {% if show_level_filter %}
+    <div style="max-width: 24rem; flex: 1 1 16rem">
+      <input class="form-control form-control-sm" type="search" name="levels_q" value="{{ levels_q }}"
+             placeholder="Filter by name, AD group, team or description"
+             autocomplete="off"
+             hx-get="{% url 'catalog:access_levels' application.pk %}"
+             hx-trigger="input changed delay:250ms, search"
+             hx-target="#access-level-rows" hx-swap="outerHTML"
+             hx-include="[name='levels_source']">
+    </div>
+    {% endif %}
+    {% if show_level_source_filter %}
+    <select class="form-select form-select-sm" name="levels_source" style="max-width: 12rem"
+            hx-get="{% url 'catalog:access_levels' application.pk %}"
+            hx-trigger="change"
+            hx-target="#access-level-rows" hx-swap="outerHTML"
+            hx-include="[name='levels_q']">
+      <option value="">All levels</option>
+      <option value="manual" {% if levels_source == 'manual' %}selected{% endif %}>Added by hand</option>
+      <option value="route" {% if levels_source == 'route' %}selected{% endif %}>Routed</option>
+    </select>
+    {% endif %}
   </div>
   {% endif %}
   <div id="access-level-form-slot"></div>

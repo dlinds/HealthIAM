@@ -121,6 +121,15 @@ class Application(TimeStampedModel):
         db_index=True,
         help_text="Services hold AD groups that are not tied to a vendor application.",
     )
+    dynamic_ad_groups = models.BooleanField(
+        "Dynamic AD groups",
+        default=False,
+        db_index=True,
+        help_text=(
+            "Hold an access level automatically for every active AD group this "
+            "application's routes claim and nobody has adopted by hand."
+        ),
+    )
     name = models.CharField(max_length=200, unique=True)
     description = models.TextField(blank=True)
     vendor = models.ForeignKey(
@@ -296,6 +305,16 @@ class AccessLevel(ApplicationChildAuditMixin, TimeStampedModel):
         TICKET = "ticket", "Ticket to an assignment team"
         OTHER = "other", "Other"
 
+    class Source(models.TextChoices):
+        MANUAL = "manual", "Added by hand"
+        ROUTE = "route", "Managed by an AD group route"
+        ADOPTED = "adopted", "Taken over from a route"
+
+    #: The sources that own a group by hand, so a route may not claim it. `adopted` is
+    #: `manual` that a route once held: keeping them apart is what stops the reconciler
+    #: re-capturing a level somebody deliberately took over.
+    CLAIMING_SOURCES = (Source.MANUAL, Source.ADOPTED)
+
     application = models.ForeignKey(
         Application, on_delete=models.CASCADE, related_name="access_levels"
     )
@@ -309,19 +328,46 @@ class AccessLevel(ApplicationChildAuditMixin, TimeStampedModel):
     ticket_assignment_team = models.CharField("Ticket assignment team", max_length=150, blank=True)
     is_active = models.BooleanField(default=True)
     sort_order = models.PositiveSmallIntegerField(default=100)
+    source = models.CharField(
+        max_length=10,
+        choices=Source.choices,
+        default=Source.MANUAL,
+        db_index=True,
+        help_text=(
+            "Route-managed levels are created and retired automatically; adopting the "
+            "group by hand takes one over."
+        ),
+    )
 
     class Meta:
         ordering = ["application__name", "sort_order", "name"]
         # `ad_group_name` is joined to `ADGroup.name` case-insensitively on every
         # broken-reference check and on the "unreferenced groups" filter, which is a
         # `NOT EXISTS` over this column. Mirrors `directory_adgroup_lname_idx`.
-        indexes = [models.Index(Lower("ad_group_name"), name="catalog_level_adgroup_idx")]
+        indexes = [
+            models.Index(Lower("ad_group_name"), name="catalog_level_adgroup_idx"),
+            # The claim test -- "does an active, hand-owned level already hold this group?"
+            # -- runs as a `NOT EXISTS` per row of every AD group page, against a table a
+            # dynamic application can grow to tens of thousands of rows.
+            models.Index(
+                Lower("ad_group_name"), "source", "is_active", name="catalog_level_claim_idx"
+            ),
+        ]
         constraints = [
             models.UniqueConstraint(
                 fields=["application", "name"],
                 name="unique_access_level_name_per_application",
                 violation_error_message="This application already has a level with that name.",
-            )
+            ),
+            # One route-managed level per group, enforced by the database rather than by
+            # the reconciler alone: two applications granting the same AD group without
+            # anyone deciding so is the failure this feature must not have.
+            models.UniqueConstraint(
+                Lower("ad_group_name"),
+                condition=models.Q(source="route"),
+                name="unique_route_level_per_group",
+                violation_error_message="Another application already holds this AD group by route.",
+            ),
         ]
 
     def __str__(self):
@@ -340,6 +386,11 @@ class AccessLevel(ApplicationChildAuditMixin, TimeStampedModel):
             field, msg = required[self.access_model]
             if not getattr(self, field):
                 raise ValidationError({field: msg})
+
+    @property
+    def is_route_managed(self) -> bool:
+        """Created and owned by a route, so nobody may edit it by hand."""
+        return self.source == self.Source.ROUTE
 
     @property
     def access_target(self) -> str:
