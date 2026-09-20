@@ -99,11 +99,16 @@ def check_ca_bundle_exists(app_configs, **kwargs):
         return []
     return [
         Warning(
-            f"AD_CA_BUNDLE {bundle!r} does not exist or is not a file.",
+            # Quoted explicitly rather than with !r, which escapes the backslashes in a
+            # Windows path: the operator would be shown C:\\certs\\ca.pem for the
+            # C:\certs\ca.pem they configured, while reading this warning to find out
+            # what is wrong with that very path. Identical output on POSIX.
+            f"AD_CA_BUNDLE '{bundle}' does not exist or is not a file.",
             hint=(
-                "Every LDAPS connection will fail certificate verification. Mount the internal "
-                "CA PEM at that path (readable by the app user) or clear AD_CA_BUNDLE to use "
-                "the system trust store. TLS verification is never disabled."
+                "Every LDAPS connection will fail certificate verification. Put the internal "
+                "CA PEM at that path (readable by the account the app runs as) or clear "
+                "AD_CA_BUNDLE to use the system trust store, which on a domain-joined Windows "
+                "server already trusts the enterprise CA. TLS verification is never disabled."
             ),
             id="directory.W004",
         )
