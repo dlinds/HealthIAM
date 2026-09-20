@@ -78,6 +78,146 @@ jobs:
           SECRET_KEY: ci-only-not-a-real-secret
         run: .venv/bin/python -m pytest
 
+  windows:
+    name: Windows install path
+    # The native Windows deployment (docs/deploy-windows.md) shares no code path with
+    # the image, so nothing else here would notice it breaking: a dependency without a
+    # Windows wheel, a missing tzdata, or a change that stops the proxy headers reaching
+    # Django would all go unseen until somebody ran an install.
+    #
+    # Deliberately not in the publish job's `needs`. It is young; let it prove itself
+    # before it can block a release.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Start PostgreSQL
+        shell: pwsh
+        run: |
+          $svc = Get-Service -Name 'postgresql*' | Select-Object -First 1
+          if (-not $svc) { throw 'No PostgreSQL service on the runner.' }
+          Set-Service -Name $svc.Name -StartupType Manual
+          Start-Service -Name $svc.Name
+          $bin = (Get-ChildItem 'C:\Program Files\PostgreSQL\*\bin' | Sort-Object FullName -Descending | Select-Object -First 1).FullName
+          "$bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Create the database the way the installer does
+        shell: pwsh
+        env:
+          PGPASSWORD: root
+        run: |
+          # TEMPLATE template0 is the point of this step: a default Windows cluster has a
+          # locale like English_United States.1252 and refuses a UTF8 database copied from
+          # template1. deploy/windows/Install-HealthIAM.ps1 issues this same statement.
+          psql -h 127.0.0.1 -U postgres -v ON_ERROR_STOP=1 -c "CREATE ROLE healthiam LOGIN PASSWORD 'healthiam' SUPERUSER;"
+          psql -h 127.0.0.1 -U postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE healthiam OWNER healthiam ENCODING 'UTF8' TEMPLATE template0;"
+
+      - name: Install dependencies with the windows extra
+        shell: pwsh
+        run: |
+          # -r pyproject.toml, not `pip install .`: this project's pyproject is a
+          # dependency manifest and not a distributable package, so building it fails
+          # with "Multiple top-level packages discovered in a flat-layout". The same
+          # reason the Makefile, the Dockerfile and the Lint and test job all use uv.
+          python -m pip install --upgrade pip uv
+          python -m uv venv .venv --python 3.12
+          python -m uv pip install --python .venv\Scripts\python.exe -r pyproject.toml --extra dev --extra windows
+          # Put the venv first on PATH so every later step's `python` is this one.
+          "$PWD\.venv\Scripts" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Windows-only dependencies resolve and work
+        shell: pwsh
+        run: |
+          # Without tzdata this raises ZoneInfoNotFoundError on Windows and every request
+          # that renders a timestamp fails.
+          python -c "import zoneinfo; zoneinfo.ZoneInfo('America/Chicago'); print('tzdata ok')"
+          python -c "import waitress, win32serviceutil; print('waitress and pywin32 ok')"
+
+      - name: Test
+        shell: pwsh
+        env:
+          DATABASE_URL: postgres://healthiam:healthiam@127.0.0.1:5432/healthiam
+          SECRET_KEY: ci-only-not-a-real-secret
+        run: python -m pytest
+
+      - name: Serve with waitress and check the proxy headers reach Django
+        shell: pwsh
+        env:
+          DJANGO_SETTINGS_MODULE: config.settings.prod
+          DATABASE_URL: postgres://healthiam:healthiam@127.0.0.1:5432/healthiam
+          SECRET_KEY: ci-only-not-a-real-secret
+          ALLOWED_HOSTS: 127.0.0.1,localhost
+          AUTH_LOCAL_LOGIN: "true"
+          # Left on so the redirect itself is the probe: Django only skips it when it
+          # believes the request arrived over HTTPS, which it can only learn from the
+          # header IIS sets.
+          SECURE_SSL_REDIRECT: "true"
+        run: |
+          python manage.py migrate --noinput
+          python manage.py collectstatic --noinput
+
+          # HttpClient rather than Invoke-WebRequest: Actions runs pwsh steps with
+          # $ErrorActionPreference = 'stop', and Invoke-WebRequest raises on a redirect it
+          # was told not to follow -- so the 301 this test wants to *assert* would fail the
+          # step instead. HttpClient just returns the status.
+          function Get-Status {
+            param([hashtable]$Headers = @{})
+            $handler = [System.Net.Http.HttpClientHandler]::new()
+            $handler.AllowAutoRedirect = $false
+            $client = [System.Net.Http.HttpClient]::new($handler)
+            $client.Timeout = [TimeSpan]::FromSeconds(10)
+            $request = [System.Net.Http.HttpRequestMessage]::new('GET', 'http://127.0.0.1:8000/login/')
+            foreach ($key in $Headers.Keys) { $null = $request.Headers.TryAddWithoutValidation($key, $Headers[$key]) }
+            try { [int]$client.SendAsync($request).GetAwaiter().GetResult().StatusCode }
+            catch { 0 }
+            finally { $client.Dispose() }
+          }
+
+          $server = Start-Process python -ArgumentList 'deploy\windows\serve.py' -PassThru -NoNewWindow
+          try {
+            $up = $false
+            foreach ($attempt in 1..30) {
+              if ((Get-Status) -ne 0) { $up = $true; break }
+              Start-Sleep -Seconds 1
+            }
+            if (-not $up) { throw 'serve.py never answered on 127.0.0.1:8000.' }
+
+            # SECURE_SSL_REDIRECT is on, so Django redirects anything it believes arrived
+            # over plain HTTP. That makes the redirect itself the probe.
+            $plain = Get-Status
+            if ($plain -ne 301) { throw "Expected 301 without X-Forwarded-Proto, got $plain." }
+
+            # The regression test that matters. waitress strips every X-Forwarded-* header
+            # unless it is told which proxy to trust, which silently defeats the whole IIS
+            # configuration: cookies stay Secure while Django believes the connection is
+            # plain HTTP, and sign-in loops with no error anywhere.
+            $proxied = Get-Status @{ 'X-Forwarded-Proto' = 'https' }
+            if ($proxied -ne 200) {
+              throw "X-Forwarded-Proto did not reach Django (got $proxied, expected 200). Check trusted_proxy in deploy/windows/serve.py."
+            }
+            Write-Host 'Proxy headers reach Django correctly.'
+          } finally {
+            if ($server -and -not $server.HasExited) { Stop-Process -Id $server.Id -Force }
+          }
+
+      - name: PowerShell scripts parse
+        shell: pwsh
+        run: |
+          $failed = $false
+          Get-ChildItem deploy/windows -Filter *.ps1 | ForEach-Object {
+            $errors = $null
+            $null = [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$null, [ref]$errors)
+            if ($errors) { $failed = $true; Write-Host "::error file=$($_.FullName)::$($errors[0].Message)" }
+          }
+          if ($failed) { exit 1 }
+          Write-Host 'All deploy/windows scripts parse.'
+
   image:
     name: Build image
     # A pull request otherwise never builds the image, so a Dockerfile change

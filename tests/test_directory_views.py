@@ -470,6 +470,15 @@ def test_admin_index_shows_config_status_schedule_and_runs_without_the_secret(
     assert resp.context["check_warnings"] == []  # test settings are clean
 
 
+@override_settings(SYNC_SCHEDULE_COMMAND='schtasks /Run /TN "HealthIAM AD sync"')
+def test_admin_index_schedule_command_follows_the_deployment(as_user, admin_user):
+    """A native install has no container to exec into, so the page must show the command
+    that actually works there rather than the container default."""
+    body = as_user(admin_user).get(reverse("directory:admin_index")).content.decode()
+    assert "HealthIAM AD sync" in body
+    assert "docker exec" not in body
+
+
 def test_admin_index_before_any_sync(as_user, admin_user):
     resp = as_user(admin_user).get(reverse("directory:admin_index"))
     assert resp.status_code == 200

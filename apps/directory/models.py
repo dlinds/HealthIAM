@@ -175,7 +175,14 @@ class DirectorySyncRun(TimeStampedModel):
     error = models.TextField(blank=True)
 
     class Meta:
-        ordering = ["-created_at"]
+        # -pk is the tiebreaker, not decoration. created_at is auto_now_add, and runs
+        # written in a burst -- the four the demo seed fabricates, or a preview applied
+        # straight after itself -- can share it: the clock behind timezone.now() is only
+        # microsecond-resolution on Linux, and coarser than that on Windows, where all
+        # four seeded runs land inside one tick. Ordering on created_at alone is then a
+        # tie and Postgres may return either row first, so "the newest run" -- which is
+        # what the status card on Admin > Active Directory reports -- becomes arbitrary.
+        ordering = ["-created_at", "-pk"]
         verbose_name = "directory sync run"
 
     def __str__(self):

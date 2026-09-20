@@ -36,9 +36,19 @@ from .models import ADGroup, ADGroupRoute, DirectorySyncRun
 PICKER_LIMIT = 15
 RECENT_RUNS = 10
 
-# The exact scheduled-job line from docs/deploy-truenas.md; shown on the admin page so the
-# operator can paste it into a TrueNAS cron job. stdout is hidden so cron only mails errors.
+# The exact scheduled-job line from docs/deploy-truenas.md, and the default shown on the
+# admin page so the operator can paste it into a TrueNAS cron job. stdout is hidden so cron
+# only mails errors.
+# A deployment where that command is wrong -- a native install, where there is no container
+# to exec into -- sets SYNC_SCHEDULE_COMMAND instead of patching this. Deliberately not
+# derived from sys.platform: what runs the sync is a property of the deployment, not of the
+# kernel the app happens to be running on.
 SCHEDULE_COMMAND = "docker exec ix-healthiam-web-1 python manage.py sync_ad >/dev/null"
+
+
+def schedule_command() -> str:
+    """The scheduled-sync line to show the operator, for this deployment."""
+    return getattr(settings, "SYNC_SCHEDULE_COMMAND", "") or SCHEDULE_COMMAND
 
 
 def _referencing_levels_for(name):
@@ -379,7 +389,7 @@ def admin_index(request):
         "check_warnings": run_checks(tags=[checks.TAG]),
         "form": SyncStartForm(),
         "runs": runs,
-        "schedule_command": SCHEDULE_COMMAND,
+        "schedule_command": schedule_command(),
     }
     ctx.update(_status_context(runs))
     ctx.update(reconcile.counts_for_display())

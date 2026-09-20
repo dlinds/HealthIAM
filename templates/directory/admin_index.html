@@ -121,9 +121,9 @@
     <div class="card h-100">
       <div class="card-header">Schedule</div>
       <div class="card-body small">
-        <p>Run the sync nightly from the host with a TrueNAS cron job:</p>
+        <p>Run the sync nightly from the host, with this deployment's scheduler:</p>
         <pre class="bg-body-tertiary border rounded p-2 mb-2"><code>{{ schedule_command }}</code></pre>
-        <p class="mb-0 text-body-secondary">Add <span class="text-mono">--dry-run</span> to preview only, <span class="text-mono">--users-only</span> or <span class="text-mono">--groups-only</span> to limit the scope. The exit code is non-zero when the run fails or any entry has an error, so cron mails only problems. Every run is listed below.</p>
+        <p class="mb-0 text-body-secondary">Add <span class="text-mono">--dry-run</span> to preview only, <span class="text-mono">--users-only</span> or <span class="text-mono">--groups-only</span> to limit the scope. The exit code is non-zero when the run fails or any entry has an error, so the scheduler reports only problems. Every run is listed below.</p>
       </div>
     </div>
   </div>

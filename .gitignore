@@ -12,6 +12,13 @@ media/
 db.sqlite3
 *.log
 
+# A native Windows install runs from the source tree, so its runtime directories
+# appear here (deploy/windows/Install-HealthIAM.ps1).
+logs/
+backups/
+tmp/
+certs/
+
 # Local config
 .env
 .env.*

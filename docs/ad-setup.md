@@ -216,6 +216,12 @@ Nightly is usually right. Redirecting stdout keeps the summary out of the cron m
 are only mailed the errors, which are printed to stderr. `docs/deploy-truenas.md` has the
 details, including the container name.
 
+On a native Windows install it is a Scheduled Task instead, registered by
+`deploy\windows\Register-SyncTask.ps1`. There is no cron mail there, so the signal is the
+task's Last Run Result (the command's exit code), plus `logs\sync_ad.log`. See
+`docs/deploy-windows.md`. Either way the Schedule card on the admin page shows the command
+for the deployment you are actually running -- set `SYNC_SCHEDULE_COMMAND` if it does not.
+
 Every **applied** run also brings route-managed access levels in line with the mirror it just
 wrote; what it changed lands under `routes` in the run summary. A preview never does.
 
@@ -356,7 +362,9 @@ account to this host works well. Three things to know before relying on it:
   person approves it, which is why `AD_AUTH_TIMEOUT` defaults to 60 seconds rather than the
   sync's 10. The reverse proxy's read timeout and gunicorn's `--timeout` (120) must both be
   larger. Each waiting sign-in occupies one of the three gunicorn workers, so raise the worker
-  count if many people will approve prompts at once.
+  count if many people will approve prompts at once. A native Windows install serves from a
+  waitress thread pool instead, so the equivalent lever is the thread count in
+  `deploy/windows/serve.py` (8 by default), and waitress has no per-request timeout at all.
 - **A policy denial looks like a wrong password.** It is not distinguishable at the LDAP layer,
   so the person sees the generic message and the attempt counts against the budget. Set
   `AD_AUTH_MAX_FAILURES=0` to hand lockout decisions entirely to the directory and its policy

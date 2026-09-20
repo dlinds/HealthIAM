@@ -17,6 +17,8 @@ env = environ.Env(
     OIDC_RP_CLIENT_SECRET=(str, ""),
     ENTRA_GROUP_ROLE_MAP=(dict, {}),
     SUPPORT_CONTACT=(str, "the Information Security team"),
+    LOG_FILE=(str, ""),
+    SYNC_SCHEDULE_COMMAND=(str, ""),
     AD_SERVER_URIS=(list, []),
     AD_BASE_DN=(str, ""),
     AD_BIND_DN=(str, ""),
@@ -101,6 +103,15 @@ DATABASES = {
     ),
 }
 DATABASES["default"]["CONN_MAX_AGE"] = 60
+# What makes the line above safe across a database restart. Every connection held open by
+# CONN_MAX_AGE is dead once PostgreSQL has restarted, and with no check Django hands the
+# next request one of them: it fails with "server closed the connection unexpectedly",
+# once per worker or thread before things settle. The check is a cheap liveness probe, and
+# only on a connection being reused. It matters most where the database restarts on its
+# own schedule rather than alongside the app -- a native install patches PostgreSQL as a
+# separate service (docs/deploy-windows.md) -- but the container hits it too whenever the
+# db container comes back.
+DATABASES["default"]["CONN_HEALTH_CHECKS"] = True
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # --- Authentication ---------------------------------------------------------
@@ -113,6 +124,11 @@ AUTH_LOCAL_LOGIN = env("AUTH_LOCAL_LOGIN")
 ENTRA_TENANT_ID = env("ENTRA_TENANT_ID")
 OIDC_ENABLED = bool(ENTRA_TENANT_ID and env("OIDC_RP_CLIENT_ID"))
 SUPPORT_CONTACT = env("SUPPORT_CONTACT")
+
+# The scheduled-sync line shown on Admin > Active Directory. Empty keeps the container
+# default in apps/directory/views.py; a native install sets the command that actually
+# works there (docs/deploy-windows.md writes the Scheduled Task line into .env).
+SYNC_SCHEDULE_COMMAND = env("SYNC_SCHEDULE_COMMAND")
 
 # Entra group object ID -> app role name (see apps.accounts.roles).
 ENTRA_GROUP_ROLE_MAP = env("ENTRA_GROUP_ROLE_MAP")
@@ -225,10 +241,15 @@ AUDITLOG_INCLUDE_ALL_MODELS = False
 AUDITLOG_DISABLE_ON_RAW_SAVE = True
 
 # --- Logging ------------------------------------------------------------------
+# Console is the only handler by default: the container's logs are read with
+# `docker logs`, and development reads them in the terminal.
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
-    "formatters": {"simple": {"format": "%(levelname)s %(name)s: %(message)s"}},
+    "formatters": {
+        "simple": {"format": "%(levelname)s %(name)s: %(message)s"},
+        "timestamped": {"format": "%(asctime)s %(levelname)s %(name)s: %(message)s"},
+    },
     "handlers": {"console": {"class": "logging.StreamHandler", "formatter": "simple"}},
     "root": {"handlers": ["console"], "level": "INFO"},
     "loggers": {
@@ -237,3 +258,34 @@ LOGGING = {
         "apps.directory": {"level": "INFO"},
     },
 }
+
+# Setting LOG_FILE moves logging to a rotating file instead of the console. Empty is the
+# behaviour above, unchanged, which is what the container and development both want.
+#
+# It replaces the console handler rather than joining it, because the case this exists for
+# is a Windows service, and a service has no console: Python sets sys.stderr to None there,
+# StreamHandler binds that None at construction, and every record then costs an
+# AttributeError swallowed by logging's own error handling. A handler that cannot work is
+# worse than no handler -- it looks configured.
+LOG_FILE = env("LOG_FILE")
+if LOG_FILE:
+    # Relative to the project, not to the working directory: a Windows service starts in
+    # C:\Windows\System32, and a relative LOG_FILE would otherwise land there or fail.
+    LOG_FILE = str(Path(LOG_FILE) if Path(LOG_FILE).is_absolute() else BASE_DIR / LOG_FILE)
+    LOGGING["handlers"]["file"] = {
+        "class": "logging.handlers.RotatingFileHandler",
+        "formatter": "timestamped",
+        "filename": LOG_FILE,
+        "maxBytes": 10 * 1024 * 1024,
+        "backupCount": 5,
+        "encoding": "utf-8",
+        # No delay=True. Opening the file now means an unwritable path raises here, during
+        # django.setup(), where the service wrapper catches it and writes the traceback to
+        # the Windows event log. Deferred, the same mistake surfaces on the first log
+        # record inside logging's error handling, which discards it -- and the service
+        # then runs, logging nothing, with nothing anywhere saying why.
+    }
+    # Two processes must not share one file: the service and a scheduled `manage.py
+    # sync_ad` would collide over the rename at rollover, and on Windows the loser raises
+    # because the file is still open. Give each its own path (deploy/windows does).
+    LOGGING["root"]["handlers"] = ["file"]

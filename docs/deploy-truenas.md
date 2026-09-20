@@ -7,6 +7,9 @@ deploy key needs to live there.
 
 Image name: `ghcr.io/dlinds/healthiam` (GHCR names are always lowercase).
 
+For a native Windows Server install instead -- no Docker, IIS in front, the app as a
+Windows service -- see `docs/deploy-windows.md`. The two deployments are independent.
+
 ## One-time setup on GitHub
 
 Nothing to configure. `.github/workflows/publish-image.yml` authenticates with
