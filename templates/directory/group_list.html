@@ -3,11 +3,14 @@
 {% block content %}
 <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
   <h1 class="h3 mb-0">AD groups</h1>
-  {% if iam.can_manage_directory %}
   <div>
+    {% if iam.can_edit_any_access_levels %}
+    <a class="btn btn-primary" href="{% url 'directory:group_adopt' %}"><i class="bi bi-plus-lg me-1"></i>Add to catalog</a>
+    {% endif %}
+  {% if iam.can_manage_directory %}
     <a class="btn btn-outline-secondary" href="{% url 'directory:admin_index' %}"><i class="bi bi-arrow-repeat me-1"></i>Active Directory</a>
-  </div>
   {% endif %}
+  </div>
 </div>
 <p class="text-body-secondary small">
   Groups imported from Active Directory by the sync (name filter and search bases are set by the administrator). Membership is not imported.
@@ -36,11 +39,19 @@
       <label class="form-check-label" for="unreferenced">Not referenced by any access level</label>
     </div>
   </div>
+  {% if has_routes %}
+  <div class="col-auto d-flex align-items-center">
+    <div class="form-check">
+      <input class="form-check-input" type="checkbox" id="unrouted" name="unrouted" value="1" {% if unrouted %}checked{% endif %}>
+      <label class="form-check-label" for="unrouted">No route matches</label>
+    </div>
+  </div>
+  {% endif %}
   <div class="col-auto"><button class="btn btn-outline-secondary" type="submit">Filter</button></div>
 </form>
 <div class="table-responsive">
 <table class="table table-hover table-sm align-middle">
-  <thead><tr><th>Group</th><th>Description</th><th>Type</th><th>Referenced by</th><th>Last seen</th><th>Status</th></tr></thead>
+  <thead><tr><th>Group</th><th>Description</th><th>Type</th>{% if has_routes %}<th>Routes to</th>{% endif %}<th>Referenced by</th><th>Last seen</th><th>Status</th></tr></thead>
   <tbody>
   {% for g in object_list %}
     <tr>
@@ -51,6 +62,14 @@
       </td>
       <td class="small">{{ g.description|truncatechars:120 }}</td>
       <td><span class="badge text-bg-light border">{{ g.get_scope_display }} · {{ g.get_category_display|lower }}</span></td>
+      {% if has_routes %}
+      <td class="small">
+        {% if g.route_match %}
+          <a href="{{ g.route_match.application.get_absolute_url }}">{{ g.route_match.application.name }}</a>
+          <div class="text-body-tertiary text-mono" title="Matched by this route">{{ g.route_match.pattern }}</div>
+        {% else %}<span class="text-body-tertiary">no route</span>{% endif %}
+      </td>
+      {% endif %}
       <td class="small">
         {% for level in g.referencing_levels %}
           <div><a href="{{ level.get_absolute_url }}">{{ level.application.name }} · {{ level.name }}</a>{% if not level.is_active %} <span class="badge text-bg-secondary">inactive level</span>{% endif %}</div>
@@ -60,7 +79,7 @@
       <td>{% if g.is_active %}<span class="badge text-bg-success">Active</span>{% else %}<span class="badge text-bg-secondary" title="Not returned by the sync since {{ g.inactivated_at|date:'Y-m-d' }}">Inactive</span>{% endif %}</td>
     </tr>
   {% empty %}
-    <tr><td colspan="6" class="text-body-secondary">No AD groups found.</td></tr>
+    <tr><td colspan="{% if has_routes %}7{% else %}6{% endif %}" class="text-body-secondary">No AD groups found.</td></tr>
   {% endfor %}
   </tbody>
 </table>

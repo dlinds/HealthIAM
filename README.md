@@ -64,7 +64,7 @@ All settings are read from the environment (or `.env`); see `.env.example`.
 | `AD_BIND_DN`, `AD_BIND_PASSWORD` | Read-only service account for the bind |
 | `AD_CA_BUNDLE`, `AD_TIMEOUT` | PEM of the internal CA (empty = system store; verification is always on); connect/receive timeout in seconds (10) |
 | `AD_USER_GROUP`, `AD_BASELINE_ROLE` | Group whose nested members get a login (`IAM-Users`); role they are guaranteed (`Help Desk`) |
-| `AD_GROUPS_SEARCH_BASES`, `AD_GROUPS_NAME_PATTERNS` | Semicolon-separated OU DNs and comma-separated globs (`APP_*,LIC_*`) selecting the AD groups to import and reference-check |
+| `AD_GROUPS_SEARCH_BASES`, `AD_GROUPS_NAME_PATTERNS`, `AD_GROUPS_EXCLUDE_PATTERNS` | Semicolon-separated OU DNs, plus comma-separated globs to include and to exclude, selecting the AD groups to import and reference-check |
 | `AD_AUTH_ENABLED`, `AD_AUTH_TIMEOUT` | Let synced people sign in with their AD password (LDAPS bind); seconds to wait for the bind (60, long enough for a step-up approval) |
 | `AD_AUTH_MAX_FAILURES`, `AD_AUTH_FAILURE_WINDOW`, `AD_AUTH_LOCKOUT_SECONDS` | Wrong passwords per login inside the window before attempts stop reaching AD, and for how long. Keep under the domain's own lockout policy; `0` disables |
 | `SUPPORT_CONTACT` | Shown on the no-access page |
@@ -75,6 +75,10 @@ All settings are read from the environment (or `.env`); see `.env.example`.
 - **Applications**: create (Admin), edit (Admin / analyst / owner), manage access levels
   (Admin / analyst), assign analysts (Admin). Tabs: Overview · Access levels · Positions ·
   Contacts & support · History.
+- **Services**: applications of kind `service` — a home for AD groups that no application
+  owns (VPN, file shares, printing, physical access). Their access levels are assigned to
+  positions exactly like application access; keeping them as separate rows per owning team
+  rather than one bucket means analyst rights stay scoped per team.
 - **Positions**: create/inactivate (Admin). On a position: add a default (search your
   applications → pick a level → reason), copy defaults from another position, remove with a
   reason. Help desk uses this page to see expected access.
@@ -83,8 +87,11 @@ All settings are read from the environment (or `.env`); see `.env.example`.
 - **Reports**: position access matrix (CSV/XLSX, per department or all) and "who gets
   application X".
 - **Active Directory** (when `AD_SERVER_URIS` is set): the **AD groups** page lists the
-  imported groups with search, an unreferenced filter and the access levels that use each
-  one; the access-level form offers a picker for `ad_group_name` (free text still saves);
+  imported groups with search, an unreferenced filter, the route each name matches and the
+  access levels that use each one; **Add to catalog** turns a batch of unreferenced groups
+  into access levels under the application or service a route suggests (Admin / analyst),
+  and **Admin → Active Directory → Routes** maintains those naming-convention rules;
+  the access-level form offers a picker for `ad_group_name` (free text still saves);
   each level shows an *In AD* / *Not found in AD* badge and the dashboard and Reports carry a
   **broken references** list (CSV/XLSX). **Admin → Active Directory** shows the effective
   configuration, tests the connection, previews and applies a sync, and lists every run;
@@ -108,9 +115,11 @@ Project layout:
 config/          settings (base/dev/prod/test), urls, wsgi
 apps/accounts    User, roles, permissions, Entra OIDC backend, role middleware
 apps/orgs        Department, JobCode, Position, CSV importers, ImportBatch
-apps/catalog     Vendor, Contact, Application, AccessLevel, SupportTier, analysts
+apps/catalog     Vendor, Contact, Application, AccessLevel, SupportTier, analysts,
+                 services (bulk adoption of AD groups)
 apps/access      PositionDefault, services (reason-audited writes), reports
-apps/directory   ADGroup, DirectorySyncRun, LDAPS client, sync engine, sync_ad, AD pages
+apps/directory   ADGroup, ADGroupRoute, DirectorySyncRun, LDAPS client, sync engine,
+                 routing, sync_ad, AD pages
 apps/core        base layout, dashboard, global search, audit history views
 templates/       Django templates; partials/ for htmx fragments
 static/          app.css, app.js, vendored Bootstrap / Icons / htmx

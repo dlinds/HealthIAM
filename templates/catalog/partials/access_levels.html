@@ -1,41 +1,23 @@
 {% load ui %}
 <div id="access-levels">
-  <div class="d-flex align-items-center justify-content-between mb-2">
+  <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
     <p class="text-body-secondary small mb-0">Access levels are the units positions receive by default. Each records how it is granted.</p>
     {% if can_edit_levels %}
-    <button class="btn btn-sm btn-primary" type="button" hx-get="{% url 'catalog:access_level_add' application.pk %}" hx-target="#access-level-form-slot" hx-swap="innerHTML">
+    <button class="btn btn-sm btn-primary" type="button" hx-get="{% url 'catalog:access_level_add' application.pk %}?{% query_replace %}" hx-target="#access-level-form-slot" hx-swap="innerHTML">
       <i class="bi bi-plus-lg me-1"></i>Add level
     </button>
     {% endif %}
   </div>
-  <div id="access-level-form-slot"></div>
-  <div class="table-responsive">
-  <table class="table table-sm align-middle">
-    <thead><tr><th>Level</th><th>Granted via</th><th>Target</th><th>Description</th><th>Status</th>{% if can_edit_levels %}<th></th>{% endif %}</tr></thead>
-    <tbody>
-    {% for level in levels %}
-      <tr class="{% if not level.is_active %}text-body-tertiary{% endif %}">
-        <td class="fw-semibold">{{ level.name }}</td>
-        <td><span class="badge text-bg-light border">{{ level.get_access_model_display }}</span></td>
-        <td class="small">
-          {% if level.access_model == 'ad_group' %}<span class="text-mono">{{ level.ad_group_name }}</span>{% include "directory/partials/reference_badge.html" with ref=level_reference_status|dict_get:level.pk %}
-          {% elif level.access_model == 'ticket' %}{{ level.ticket_assignment_team }}
-          {% elif level.access_model == 'in_app' %}{{ level.in_app_instructions|truncatechars:120 }}
-          {% else %}—{% endif %}
-        </td>
-        <td class="small">{{ level.description|truncatechars:120 }}</td>
-        <td>{% if level.is_active %}<span class="badge text-bg-success">Active</span>{% else %}<span class="badge text-bg-secondary">Inactive</span>{% endif %}</td>
-        {% if can_edit_levels %}
-        <td class="text-end text-nowrap">
-          <button class="btn btn-sm btn-outline-primary" type="button" hx-get="{% url 'catalog:access_level_edit' application.pk level.pk %}" hx-target="#access-level-form-slot" hx-swap="innerHTML">Edit</button>
-          <button class="btn btn-sm btn-outline-secondary" type="button" hx-post="{% url 'catalog:access_level_toggle' application.pk level.pk %}" hx-target="#access-levels" hx-swap="outerHTML">{% if level.is_active %}Inactivate{% else %}Reactivate{% endif %}</button>
-        </td>
-        {% endif %}
-      </tr>
-    {% empty %}
-      <tr><td colspan="6" class="text-body-secondary">No access levels yet.{% if can_edit_levels %} Add one so positions can receive this application by default.{% endif %}</td></tr>
-    {% endfor %}
-    </tbody>
-  </table>
+  {% if show_level_filter %}
+  <div class="mb-2" style="max-width: 24rem">
+    <input class="form-control form-control-sm" type="search" name="levels_q" value="{{ levels_q }}"
+           placeholder="Filter by name, AD group, team or description"
+           autocomplete="off"
+           hx-get="{% url 'catalog:access_levels' application.pk %}"
+           hx-trigger="input changed delay:250ms, search"
+           hx-target="#access-level-rows" hx-swap="outerHTML">
   </div>
+  {% endif %}
+  <div id="access-level-form-slot"></div>
+  {% include "catalog/partials/access_level_rows.html" %}
 </div>

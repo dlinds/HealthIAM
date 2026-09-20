@@ -42,8 +42,16 @@ class ApplicationContactInline(admin.TabularInline):
 
 @admin.register(Application)
 class ApplicationAdmin(admin.ModelAdmin):
-    list_display = ("name", "vendor", "tier", "lifecycle_status", "host_location", "holds_phi")
-    list_filter = ("tier", "lifecycle_status", "host_location", "holds_phi", "holds_pii")
+    list_display = (
+        "name",
+        "kind",
+        "vendor",
+        "tier",
+        "lifecycle_status",
+        "host_location",
+        "holds_phi",
+    )
+    list_filter = ("kind", "tier", "lifecycle_status", "host_location", "holds_phi", "holds_pii")
     search_fields = ("name", "aliases__alias", "vendor__name")
     autocomplete_fields = ("vendor", "business_owner", "technical_owner")
     inlines = [

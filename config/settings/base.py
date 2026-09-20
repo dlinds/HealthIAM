@@ -27,6 +27,7 @@ env = environ.Env(
     AD_BASELINE_ROLE=(str, "Help Desk"),
     AD_GROUPS_SEARCH_BASES=(str, ""),
     AD_GROUPS_NAME_PATTERNS=(list, []),
+    AD_GROUPS_EXCLUDE_PATTERNS=(list, []),
     AD_AUTH_ENABLED=(bool, False),
     AD_AUTH_TIMEOUT=(int, 60),
     AD_AUTH_MAX_FAILURES=(int, 3),
@@ -153,6 +154,9 @@ AD_BASELINE_ROLE = env("AD_BASELINE_ROLE")
 AD_GROUPS_SEARCH_BASES = [b.strip() for b in env("AD_GROUPS_SEARCH_BASES").split(";") if b.strip()]
 # fnmatch globs matched case-insensitively against the group name. Empty = every group.
 AD_GROUPS_NAME_PATTERNS = env("AD_GROUPS_NAME_PATTERNS")
+# Globs that keep a group out however it matched above; excludes win over includes.
+# Empty = nothing is excluded. Use for AD built-ins and for IAM's own role groups.
+AD_GROUPS_EXCLUDE_PATTERNS = env("AD_GROUPS_EXCLUDE_PATTERNS")
 
 # --- Active Directory sign-in ------------------------------------------------------
 # Verify a password by binding to AD as the user. Needs the sync settings above; the login

@@ -14,21 +14,24 @@ from django.db.models import Case, Count, Exists, IntegerField, OuterRef, Q, Val
 from django.db.models.functions import Lower
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
+from django.utils.http import urlencode
 from django.views.decorators.debug import sensitive_variables
 from django.views.decorators.http import require_POST
 from django.views.generic import ListView
 from django_htmx.http import HttpResponseClientRedirect
 
 from apps.access import reports
+from apps.accounts import permissions as perms
 from apps.accounts.mixins import PermissionCheckMixin, role_required
 from apps.accounts.models import User
-from apps.catalog.models import AccessLevel
+from apps.catalog import services as catalog_services
+from apps.catalog.models import AccessLevel, Application
 
-from . import checks, references, sync
+from . import checks, references, routing, sync
 from .config import DirectorySettings
-from .forms import SyncStartForm
+from .forms import ADGroupRouteForm, SyncStartForm
 from .ldap_client import ConnectionInfo
-from .models import ADGroup, DirectorySyncRun
+from .models import ADGroup, ADGroupRoute, DirectorySyncRun
 
 PICKER_LIMIT = 15
 RECENT_RUNS = 10
@@ -36,6 +39,13 @@ RECENT_RUNS = 10
 # The exact scheduled-job line from docs/deploy-truenas.md; shown on the admin page so the
 # operator can paste it into a TrueNAS cron job. stdout is hidden so cron only mails errors.
 SCHEDULE_COMMAND = "docker exec ix-healthiam-web-1 python manage.py sync_ad >/dev/null"
+
+
+def _referencing_levels_for(name):
+    """`AccessLevel`s whose AD group name matches `name` (an expression or a string)."""
+    return AccessLevel.objects.filter(
+        access_model=AccessLevel.AccessModel.AD_GROUP, ad_group_name__iexact=name
+    )
 
 
 def _referencing_levels_by_name(names):
@@ -87,25 +97,35 @@ class ADGroupListView(PermissionCheckMixin, ListView):
             qs = qs.filter(category=self.category)
         self.unreferenced = g.get("unreferenced") == "1"
         if self.unreferenced:
-            referenced = AccessLevel.objects.filter(
-                access_model=AccessLevel.AccessModel.AD_GROUP,
-                ad_group_name__iexact=OuterRef("name"),
-            )
-            qs = qs.filter(~Exists(referenced))
+            qs = qs.filter(~Exists(_referencing_levels_for(OuterRef("name"))))
+        self.unrouted = g.get("unrouted") == "1"
+        if self.unrouted:
+            routes = routing.active_routes()
+            if routes:
+                routed = [
+                    pk
+                    for pk, name in qs.values_list("pk", "name")
+                    if routing.match_in(name, routes) is not None
+                ]
+                qs = qs.exclude(pk__in=routed)
         return qs.order_by("name")
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
         groups = list(ctx["object_list"])
         by_name = _referencing_levels_by_name({group.name.lower() for group in groups})
+        matches = routing.routes_for(group.name for group in groups)
         for group in groups:
             group.referencing_levels = by_name.get(group.name.lower(), [])
+            group.route_match = matches.get(group.name)
         ctx.update(
             object_list=groups,
             q=self.request.GET.get("q", ""),
             active=self.active,
             category=self.category,
             unreferenced=self.unreferenced,
+            unrouted=self.unrouted,
+            has_routes=ADGroupRoute.objects.exists(),
             categories=ADGroup.Category.choices,
             groups_synced=references.groups_synced(),
         )
@@ -141,6 +161,90 @@ def group_picker(request):
     return render(request, "directory/partials/group_picker.html", {"q": q, "results": results})
 
 
+# --- Adopting groups into the catalog ----------------------------------------------------
+
+
+ADOPT_LIMIT = 200
+
+
+def _adoptable(qs):
+    """Active groups no access level points at yet -- the same rule as `?unreferenced=1`."""
+    return qs.filter(is_active=True).filter(~Exists(_referencing_levels_for(OuterRef("name"))))
+
+
+def _adopt_targets(user):
+    """Applications the actor may add levels to, services first."""
+    qs = Application.objects.exclude(lifecycle_status=Application.Lifecycle.RETIRED)
+    if not perms.is_admin(user):
+        qs = qs.filter(analyst_assignments__user=user).distinct()
+    return qs.order_by("-kind", "name")
+
+
+@role_required("can_edit_any_access_levels")
+def group_adopt(request):
+    """Turn unreferenced AD groups into access levels: preview, then apply.
+
+    GET lists candidates with the target each route suggests and an editable level name.
+    POST creates only the rows that were ticked, one transaction each, and reports what
+    happened per row. Nothing is created from a route alone.
+    """
+    targets = list(_adopt_targets(request.user))
+    by_pk = {a.pk: a for a in targets}
+    q = request.GET.get("q", "").strip()
+
+    if request.method == "POST":
+        rows = []
+        for name in request.POST.getlist("adopt"):
+            application = by_pk.get(_int_or_none(request.POST.get(f"application-{name}")))
+            if application is None:
+                messages.error(request, f"{name}: choose an application you can edit.")
+                continue
+            rows.append((name, application, request.POST.get(f"level-{name}", "").strip(), ""))
+        result = catalog_services.adopt_groups(rows, actor=request.user)
+        added, skipped = result.counts
+        if added:
+            messages.success(request, f"Added {added} access level{'s' if added != 1 else ''}.")
+        for message in result.skipped:
+            messages.warning(request, message)
+        if not added and not skipped:
+            messages.info(request, "Nothing was selected.")
+        url = reverse("directory:group_adopt")
+        return redirect(f"{url}?{urlencode({'q': q})}" if q else url)
+
+    groups = _adoptable(ADGroup.objects.all())
+    if q:
+        groups = groups.filter(Q(name__icontains=q) | Q(description__icontains=q))
+    groups = list(groups.order_by("name")[:ADOPT_LIMIT])
+    matches = routing.routes_for(group.name for group in groups)
+    candidates = [
+        {
+            "group": group,
+            "match": matches.get(group.name),
+            "suggested": (matches.get(group.name).application if matches.get(group.name) else None),
+        }
+        for group in groups
+    ]
+    return render(
+        request,
+        "directory/group_adopt.html",
+        {
+            "candidates": candidates,
+            "targets": targets,
+            "q": q,
+            "limit": ADOPT_LIMIT,
+            "truncated": len(groups) == ADOPT_LIMIT,
+            "groups_synced": references.groups_synced(),
+        },
+    )
+
+
+def _int_or_none(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 # --- Broken references -----------------------------------------------------------------
 
 
@@ -171,6 +275,7 @@ def broken_references(request):
             "rows": rows,
             "groups_synced": references.groups_synced(),
             "patterns": settings.AD_GROUPS_NAME_PATTERNS,
+            "exclude_patterns": settings.AD_GROUPS_EXCLUDE_PATTERNS,
         },
     )
 
@@ -215,6 +320,52 @@ def admin_index(request):
     }
     ctx.update(_status_context(runs))
     return render(request, "directory/admin_index.html", ctx)
+
+
+# --- Routes ------------------------------------------------------------------------------
+
+
+@role_required("can_manage_directory")
+def route_list(request):
+    """Admin > Active Directory > Routes: the naming conventions that say where a group
+    belongs. GET renders the list plus an empty form; POST adds a route."""
+    form = ADGroupRouteForm(request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        route = form.save(commit=False)
+        route.created_by = request.user
+        route.save()
+        messages.success(request, f"Route {route.pattern} \u2192 {route.application.name} added.")
+        return redirect("directory:route_list")
+    return render(
+        request,
+        "directory/route_list.html",
+        {
+            "form": form,
+            "routes": ADGroupRoute.objects.select_related("application", "created_by"),
+        },
+    )
+
+
+@role_required("can_manage_directory")
+def route_update(request, pk):
+    route = get_object_or_404(ADGroupRoute, pk=pk)
+    form = ADGroupRouteForm(request.POST or None, instance=route)
+    if request.method == "POST" and form.is_valid():
+        form.save()
+        messages.success(request, f"Route {route.pattern} saved.")
+        return redirect("directory:route_list")
+    return render(request, "directory/route_form.html", {"form": form, "route": route})
+
+
+@require_POST
+@role_required("can_manage_directory")
+def route_delete(request, pk):
+    """Routes are real-deleted: nothing points at one, and the audit log keeps the record."""
+    route = get_object_or_404(ADGroupRoute, pk=pk)
+    label = str(route)
+    route.delete()
+    messages.success(request, f"Route {label} removed.")
+    return redirect("directory:route_list")
 
 
 @require_POST

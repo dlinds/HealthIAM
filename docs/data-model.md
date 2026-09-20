@@ -56,7 +56,7 @@ A person or team that can be named as owner, support tier or vendor contact.
 ### Application
 | Group | Fields |
 |---|---|
-| Identity | `name` (unique), `description`, `vendor`, `website`, `admin_url`, aliases (separate table) |
+| Identity | `kind` (see below), `name` (unique), `description`, `vendor`, `website`, `admin_url`, aliases (separate table) |
 | Classification | `tier` 1–4 (1 = mission critical), `lifecycle_status` pilot / active / retiring / retired, `go_live_date`, `sunset_date` |
 | Data sensitivity | `holds_phi`, `holds_pii`, `holds_clinical_records`, `holds_pci`, `holds_employee_data`, `holds_research_data`, `data_description` |
 | Hosting | `host_location` onsite / colo / aws / azure / gcp / vendor_hosted / hybrid / other, `host_details` |
@@ -66,6 +66,20 @@ A person or team that can be named as owner, support tier or vendor contact.
 | Other | `notes`, `created_by`, timestamps |
 
 Retired applications cannot be added as defaults; existing defaults are kept for history.
+
+**`kind`** is `application` (a real system) or `service` (an *infrastructure service*: a
+home for AD groups that no application owns — VPN, file shares, printing, physical
+access). A service is an ordinary `Application` row, so its access levels are assigned to
+positions exactly like any other; keeping them as separate rows rather than one catch-all
+bucket matters because analyst rights are scoped **per application**, so a service per
+owning team is also an authorization boundary per owning team.
+
+Services carry the Application defaults (`tier` 3, `host_location` onsite,
+`auth_method` sso_saml, `dr_status` none) without meaning them, so they are excluded from
+the application list, the dashboard counts and the data-quality buckets, and those fields
+are dropped from the form and the detail page. They are **not** excluded from the level
+picker, the position matrix or the broken-reference report — a service's access is
+expected access like any other.
 
 ### ApplicationAlias
 `alias`, unique per application (case-insensitive). Global search and the application
@@ -84,6 +98,9 @@ at applications directly.
 | `in_app_instructions` | Required for `in_app`. |
 | `ticket_assignment_team` | Required for `ticket`. |
 | `is_active`, `sort_order` | Inactive levels stay on existing defaults but cannot be added. |
+
+Indexed on `Lower(ad_group_name)`: every broken-reference check and the "unreferenced
+groups" filter join this column to `ADGroup.name` case-insensitively.
 
 ### SupportTier
 Ordered escalation: `level` (1 = first line, unique per application), `name` (team),
@@ -105,6 +122,23 @@ vendor_technical, internal_sme, other), `notes`.
 All writes go through `apps/access/services.py` (`add_default`, `remove_default`,
 `copy_defaults`), which require a **reason**, enforce analyst scope, and store the reason
 plus position / application / level context on the audit entry.
+
+## Adopting AD groups (`apps/catalog/services.py`)
+
+`adopt_groups` turns imported AD groups into access levels in bulk, from
+**AD groups → Add to catalog**. Each row commits in its own transaction, so a row that
+fails is reported and the rest still apply; a shared transaction could not survive
+catching the per-application unique-name `IntegrityError`. Rows are refused for an
+application the actor is not an analyst on, a retired application, a group already
+referenced by any access level (case-insensitively), or a name longer than
+`ad_group_name` holds — `ADGroup.name` is 256 characters, `AccessLevel.ad_group_name`
+200.
+
+Unlike `PositionDefault` writes, adoption takes **no reason**: recording where a group
+belongs grants nobody anything, and the single-level form asks for none either. Assigning
+that level to a position is the access-granting decision, and still requires one.
+Adoption is idempotent through the catalog itself — an adopted group is referenced, so it
+leaves the candidate list.
 
 ## Accounts and roles (`apps/accounts`)
 
@@ -155,6 +189,23 @@ patterns. Membership is **not** imported. There is no foreign key from `AccessLe
 | `is_active`, `inactivated_at` | Deactivated (never deleted) when a run does not return the group; reactivated when it reappears. |
 
 Audited excluding `last_seen_at`, so a quiet run writes no history.
+
+### ADGroupRoute
+An AD group carries no pointer to the system it belongs to; a naming convention is the
+only signal. A route says which application should hold groups matching a pattern.
+
+| Field | Notes |
+|---|---|
+| `pattern` | Case-insensitive glob (`VPN_*`), unique case-insensitively. The same syntax as `AD_GROUPS_NAME_PATTERNS`. |
+| `application` | The target, `PROTECT`. Usually a service; any application is allowed. |
+| `priority` | Lowest number wins when several patterns match. Ties break by `pk`, so resolution is stable. |
+| `notes`, `is_active`, `created_by` | |
+
+Routes are **advisory**: nothing is created from one without a person confirming it, and
+`sync` does not import `routing` at all, so a mistyped pattern can neither change what the
+mirror holds nor fill the catalog on its own. `apps/directory/routing.py` resolves a name;
+the AD groups page shows the match and offers a "No route matches" filter — the worklist
+of what is still unsorted.
 
 ### DirectorySyncRun
 One sync against AD, the LDAP-sourced sibling of `ImportBatch`. Preview and apply share

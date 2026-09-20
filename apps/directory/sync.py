@@ -31,13 +31,19 @@ from apps.orgs.importers import ImportResult
 from .config import DirectorySettings
 from .ldap_client import DirectoryClient, DirectoryError, DirectoryGroup, DirectoryUser
 from .ldap_client import build_client as build_client  # re-export: the seam tests patch
-from .matching import decode_group_type, matches_patterns
+from .matching import decode_group_type, excluded_by, matches_patterns
 from .models import ADGroup, DirectorySyncRun
 
 logger = logging.getLogger("apps.directory.sync")
 
 MAX_USERNAME = User._meta.get_field("username").max_length
 MAX_ERROR = 4000
+
+# A run may deactivate at most this share of the imported groups before it is treated as a
+# misconfiguration. Only applied once the mirror holds DEACTIVATION_FLOOR groups, so the
+# first real syncs and small test directories are never blocked by it.
+MAX_DEACTIVATION_SHARE = 0.5
+DEACTIVATION_FLOOR = 20
 
 _username_validator = UnicodeUsernameValidator()
 
@@ -96,12 +102,14 @@ def redact(text: str) -> str:
 
 
 def _collect_groups(client: DirectoryClient, cfg: DirectorySettings) -> list[DirectoryGroup]:
-    """Groups under every search base matching the name patterns, deduped by objectGUID."""
+    """Groups under every search base that pass the name filters, deduped by objectGUID."""
     found: list[DirectoryGroup] = []
     seen: set = set()
     for base in cfg.effective_search_bases:
         for group in client.iter_groups(base):
             if not matches_patterns(group.name, cfg.group_name_patterns):
+                continue
+            if excluded_by(group.name, cfg.group_exclude_patterns):
                 continue
             if group.guid is not None:
                 if group.guid in seen:
@@ -153,13 +161,25 @@ def run_sync(
                     f"{cfg.user_group} returned no members; refusing to deactivate "
                     f"{managed} managed login(s)"
                 )
-        if groups_scope and not found:
+        if groups_scope:
             active = ADGroup.objects.filter(is_active=True).count()
-            if active:
+            if not found and active:
                 raise DirectoryError(
                     "The group search returned no groups; refusing to deactivate "
                     f"{active} imported group(s)"
                 )
+            # Narrowing the filters removes groups from scope without the search failing,
+            # so the empty-listing guard above never fires. Losing most of the mirror in
+            # one run is a configuration mistake far more often than a real change.
+            if active >= DEACTIVATION_FLOOR:
+                returned = {g.guid for g in found if g.guid is not None}
+                surviving = ADGroup.objects.filter(is_active=True, object_guid__in=returned).count()
+                if surviving < active * (1 - MAX_DEACTIVATION_SHARE):
+                    raise DirectoryError(
+                        f"This run would deactivate {active - surviving} of {active} "
+                        f"imported group(s). Check AD_GROUPS_NAME_PATTERNS, "
+                        f"AD_GROUPS_EXCLUDE_PATTERNS and AD_GROUPS_SEARCH_BASES."
+                    )
 
         # Apply phase: one transaction, rolled back for a preview.
         now = timezone.now()

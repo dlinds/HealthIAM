@@ -92,6 +92,13 @@ class ApplicationFactory(factory.django.DjangoModelFactory):
     tier = 3
 
 
+class ServiceFactory(ApplicationFactory):
+    """An Application of kind `service`: the home for AD groups no application owns."""
+
+    name = factory.Sequence(lambda n: f"Service {n}")
+    kind = "service"
+
+
 class AccessLevelFactory(factory.django.DjangoModelFactory):
     class Meta:
         model = "catalog.AccessLevel"

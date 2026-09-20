@@ -118,17 +118,46 @@ class ApplicationForm(BootstrapModelForm):
         ("Notes", ["notes"]),
     ]
 
+    # A service is a home for AD groups, not a system: it has no vendor, holds no data of
+    # its own, is not hosted or tiered, and authenticates by definition through AD.
+    SERVICE_EXCLUDED = [
+        "vendor",
+        "tier",
+        "holds_phi",
+        "holds_pii",
+        "holds_clinical_records",
+        "holds_pci",
+        "holds_employee_data",
+        "holds_research_data",
+        "data_description",
+        "host_location",
+        "host_details",
+        "auth_method",
+        "mfa_enforced",
+        "rto_hours",
+        "dr_status",
+        "contract_renewal_date",
+    ]
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.fields["vendor"].queryset = Vendor.objects.filter(is_active=True)
+        if self.instance.is_service:
+            for name in self.SERVICE_EXCLUDED:
+                self.fields.pop(name, None)
+        if "vendor" in self.fields:
+            self.fields["vendor"].queryset = Vendor.objects.filter(is_active=True)
         contacts = Contact.objects.filter(is_active=True).select_related("vendor")
         self.fields["business_owner"].queryset = contacts
         self.fields["technical_owner"].queryset = contacts
-        self.fields["mfa_enforced"].widget.attrs["class"] = "form-select"
+        if "mfa_enforced" in self.fields:
+            self.fields["mfa_enforced"].widget.attrs["class"] = "form-select"
 
     def fieldsets(self):
+        """Skip fields the service form dropped, and fieldsets left empty by that."""
         for title, names in self.FIELDSETS:
-            yield title, [self[name] for name in names]
+            bound = [self[name] for name in names if name in self.fields]
+            if bound:
+                yield title, bound
 
 
 class ApplicationScopedForm(BootstrapModelForm):

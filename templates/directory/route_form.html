@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Edit route · HealthIAM{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb">
+  <li class="breadcrumb-item"><a href="{% url 'directory:admin_index' %}">Active Directory</a></li>
+  <li class="breadcrumb-item"><a href="{% url 'directory:route_list' %}">Routes</a></li>
+  <li class="breadcrumb-item active">{{ route.pattern }}</li>
+</ol></nav>
+<h1 class="h3 mb-3">Edit route</h1>
+<div class="row"><div class="col-lg-6">
+  <form method="post">
+    {% csrf_token %}
+    {% include "partials/form_fields.html" with form=form %}
+    <button class="btn btn-primary" type="submit">Save</button>
+    <a class="btn btn-outline-secondary" href="{% url 'directory:route_list' %}">Cancel</a>
+  </form>
+</div></div>
+{% endblock %}

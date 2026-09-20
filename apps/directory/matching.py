@@ -30,6 +30,18 @@ def matches_patterns(name: str, patterns: Iterable[str]) -> bool:
     return any(fnmatchcase(folded, pattern.casefold()) for pattern in patterns)
 
 
+def excluded_by(name: str, patterns: Iterable[str]) -> bool:
+    """True when `name` matches any of `patterns`; **no patterns means nothing is excluded**.
+
+    The inverse default of `matches_patterns`, which treats no patterns as "everything
+    matches". Writing the exclude test as `not matches_patterns(name, excludes)` reads
+    naturally and is exactly wrong: with no excludes configured it puts every group out
+    of scope. This function exists so that mistake cannot be made.
+    """
+    patterns = list(patterns)
+    return bool(patterns) and matches_patterns(name, patterns)
+
+
 def decode_group_type(value) -> tuple[str, str]:
     """Return `(scope, category)` for a raw groupType.
 

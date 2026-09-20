@@ -188,6 +188,12 @@ def can_edit_any_defaults(user) -> bool:
     return is_admin(user) or is_analyst(user)
 
 
+def can_edit_any_access_levels(user) -> bool:
+    """Gate for pages that edit levels across applications, such as adopting AD groups.
+    Which applications is still decided per row by `can_edit_access_levels`."""
+    return is_admin(user) or is_analyst(user)
+
+
 def can_add_contacts(user) -> bool:
     return is_admin(user) or is_analyst(user) or is_owner(user)
 

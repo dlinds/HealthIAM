@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}AD group routes · HealthIAM{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb">
+  <li class="breadcrumb-item"><a href="{% url 'directory:admin_index' %}">Active Directory</a></li>
+  <li class="breadcrumb-item active">Routes</li>
+</ol></nav>
+<h1 class="h3 mb-2">AD group routes</h1>
+<p class="text-body-secondary small">
+  An AD group carries no pointer to the system it belongs to, so a naming convention is all there is to go on.
+  A route says which application or service should hold groups matching a pattern, and the AD groups page shows the match.
+  Routes only suggest a home &mdash; nothing is created from them without someone confirming it, and the sync never reads them.
+</p>
+<div class="row g-3">
+  <div class="col-lg-7">
+    <div class="table-responsive">
+    <table class="table table-hover table-sm align-middle">
+      <thead><tr><th>Pattern</th><th>Routes to</th><th class="text-end">Priority</th><th>Status</th><th></th></tr></thead>
+      <tbody>
+      {% for r in routes %}
+        <tr>
+          <td><span class="text-mono">{{ r.pattern }}</span>{% if r.notes %}<div class="small text-body-secondary">{{ r.notes }}</div>{% endif %}</td>
+          <td>
+            <a href="{{ r.application.get_absolute_url }}">{{ r.application.name }}</a>
+            {% if r.application.is_service %}<span class="badge text-bg-light border">Service</span>{% endif %}
+          </td>
+          <td class="text-end">{{ r.priority }}</td>
+          <td>{% if r.is_active %}<span class="badge text-bg-success">Active</span>{% else %}<span class="badge text-bg-secondary">Inactive</span>{% endif %}</td>
+          <td class="text-end text-nowrap">
+            <a class="btn btn-sm btn-outline-secondary" href="{% url 'directory:route_update' r.pk %}">Edit</a>
+            <form class="d-inline" method="post" action="{% url 'directory:route_delete' r.pk %}" onsubmit="return confirm('Remove the route {{ r.pattern|escapejs }}?')">
+              {% csrf_token %}
+              <button class="btn btn-sm btn-outline-danger" type="submit">Remove</button>
+            </form>
+          </td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="5" class="text-body-secondary">No routes yet. Add one to start sorting unowned AD groups.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    <p class="small text-body-secondary">Lowest priority number wins when several patterns match the same group.</p>
+  </div>
+  <div class="col-lg-5">
+    <div class="card">
+      <div class="card-header">Add a route</div>
+      <div class="card-body">
+        <form method="post">
+          {% csrf_token %}
+          {% include "partials/form_fields.html" with form=form %}
+          <button class="btn btn-primary" type="submit">Add route</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

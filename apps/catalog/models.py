@@ -73,6 +73,10 @@ class Contact(TimeStampedModel):
 
 
 class Application(TimeStampedModel):
+    class Kind(models.TextChoices):
+        APPLICATION = "application", "Application"
+        SERVICE = "service", "Infrastructure service"
+
     class Tier(models.IntegerChoices):
         TIER_1 = 1, "Tier 1 – Mission critical"
         TIER_2 = 2, "Tier 2 – Business critical"
@@ -110,6 +114,13 @@ class Application(TimeStampedModel):
         NA = "na", "Not applicable"
 
     # Identity
+    kind = models.CharField(
+        max_length=20,
+        choices=Kind.choices,
+        default=Kind.APPLICATION,
+        db_index=True,
+        help_text="Services hold AD groups that are not tied to a vendor application.",
+    )
     name = models.CharField(max_length=200, unique=True)
     description = models.TextField(blank=True)
     vendor = models.ForeignKey(
@@ -213,6 +224,11 @@ class Application(TimeStampedModel):
         return self.lifecycle_status == self.Lifecycle.RETIRED
 
     @property
+    def is_service(self) -> bool:
+        """An infrastructure service: a home for AD groups no vendor application owns."""
+        return self.kind == self.Kind.SERVICE
+
+    @property
     def is_sensitive(self) -> bool:
         return self.holds_phi or self.holds_pii or self.holds_clinical_records or self.holds_pci
 
@@ -296,6 +312,10 @@ class AccessLevel(ApplicationChildAuditMixin, TimeStampedModel):
 
     class Meta:
         ordering = ["application__name", "sort_order", "name"]
+        # `ad_group_name` is joined to `ADGroup.name` case-insensitively on every
+        # broken-reference check and on the "unreferenced groups" filter, which is a
+        # `NOT EXISTS` over this column. Mirrors `directory_adgroup_lname_idx`.
+        indexes = [models.Index(Lower("ad_group_name"), name="catalog_level_adgroup_idx")]
         constraints = [
             models.UniqueConstraint(
                 fields=["application", "name"],

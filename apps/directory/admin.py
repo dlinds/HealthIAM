@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import ADGroup, DirectorySyncRun, SignInAttempt
+from .models import ADGroup, ADGroupRoute, DirectorySyncRun, SignInAttempt
 
 SYNC_OWNED_FIELDS = (
     "object_guid",
@@ -66,3 +66,12 @@ class SignInAttemptAdmin(admin.ModelAdmin):
     def clear_lockout(self, request, queryset):
         updated = queryset.update(failures=0, first_failure_at=None, locked_until=None)
         self.message_user(request, f"Cleared {updated} sign-in lockout(s).")
+
+
+@admin.register(ADGroupRoute)
+class ADGroupRouteAdmin(admin.ModelAdmin):
+    list_display = ("pattern", "application", "priority", "is_active")
+    list_filter = ("is_active", "application")
+    search_fields = ("pattern", "application__name", "notes")
+    autocomplete_fields = ("application",)
+    ordering = ("priority", "pk")

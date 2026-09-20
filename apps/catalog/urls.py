@@ -22,6 +22,7 @@ urlpatterns = [
         views.alias_delete,
         name="alias_delete",
     ),
+    path("applications/<int:pk>/levels/", views.access_levels, name="access_levels"),
     path("applications/<int:pk>/levels/add/", views.access_level_form, name="access_level_add"),
     path(
         "applications/<int:pk>/levels/<int:level_id>/edit/",

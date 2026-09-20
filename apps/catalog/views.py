@@ -1,9 +1,10 @@
 from django.contrib import messages
 from django.core.exceptions import PermissionDenied
+from django.core.paginator import Paginator
 from django.db.models import Count, Q
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
-from django.utils.http import url_has_allowed_host_and_scheme
+from django.utils.http import url_has_allowed_host_and_scheme, urlencode
 from django.views.decorators.http import require_POST
 from django.views.generic import CreateView, DetailView, ListView, UpdateView
 from django_htmx.http import reswap, retarget, trigger_client_event
@@ -49,6 +50,9 @@ class ApplicationListView(PermissionCheckMixin, ListView):
             .prefetch_related("aliases")
             .annotate(level_count=Count("access_levels", filter=Q(access_levels__is_active=True)))
         )
+        self.kind = g.get("kind", Application.Kind.APPLICATION)
+        if self.kind in Application.Kind.values:
+            qs = qs.filter(kind=self.kind)
         q = g.get("q", "").strip()
         if q:
             qs = qs.filter(
@@ -81,6 +85,9 @@ class ApplicationListView(PermissionCheckMixin, ListView):
         g = self.request.GET
         ctx.update(
             q=g.get("q", ""),
+            kind=self.kind,
+            is_service_list=self.kind == Application.Kind.SERVICE,
+            kinds=Application.Kind.choices,
             status=g.get("status", "current"),
             tier=g.get("tier", ""),
             host=g.get("host", ""),
@@ -95,13 +102,39 @@ class ApplicationListView(PermissionCheckMixin, ListView):
         return ctx
 
 
+# A service adopted from AD can hold hundreds of levels; the tab renders a table row with
+# two htmx buttons each, so the page is what stops it becoming unusable.
+LEVELS_PER_PAGE = 25
+
+
 def _detail_context(request, application):
     user = request.user
     can_edit = perms.can_edit_application(user, application)
     can_edit_levels = perms.can_edit_access_levels(user, application)
     can_manage_analysts = perms.can_manage_analysts(user, application)
-    levels = list(application.access_levels.order_by("sort_order", "name"))
-    level_reference_status = references.status_for_levels(levels)
+
+    levels_qs = application.access_levels.order_by("sort_order", "name")
+    # Reference status is resolved over *every* AD level, not just the page or the filter:
+    # the warning badge on the tab counts the whole application, and `status_for_levels`
+    # costs the same two queries either way.
+    #
+    # Not `.only(...)`: auditlog's post_init receiver reads each instance, so a deferred
+    # field turns one query into one per row. Loading these rows whole is a single query.
+    ad_levels = list(levels_qs.filter(access_model=AccessLevel.AccessModel.AD_GROUP))
+    level_reference_status = references.status_for_levels(ad_levels)
+
+    # The filter searches the columns the table actually shows, so a hit is always visible:
+    # the level name, its description, and the Target cell for AD-group and ticket levels.
+    levels_q = request.GET.get("levels_q", "").strip()
+    shown = levels_qs
+    if levels_q:
+        shown = shown.filter(
+            Q(name__icontains=levels_q)
+            | Q(description__icontains=levels_q)
+            | Q(ad_group_name__icontains=levels_q)
+            | Q(ticket_assignment_team__icontains=levels_q)
+        )
+    levels_page = Paginator(shown, LEVELS_PER_PAGE).get_page(request.GET.get("levels_page"))
     return {
         "application": application,
         "object": application,
@@ -111,7 +144,14 @@ def _detail_context(request, application):
         .values("position_defaults__position")
         .distinct()
         .count(),
-        "levels": levels,
+        "levels": list(levels_page.object_list),
+        "levels_page": levels_page,
+        "levels_q": levels_q,
+        # A list that fits on one page needs no filter; the box would just be clutter.
+        "show_level_filter": levels_page.paginator.count > LEVELS_PER_PAGE or bool(levels_q),
+        # The tab badge counts the application, so it has to ignore the filter. Only a
+        # filtered view pays the extra count.
+        "level_count": levels_qs.count() if levels_q else levels_page.paginator.count,
         "level_reference_status": level_reference_status,
         "broken_level_count": sum(1 for r in level_reference_status.values() if r.is_broken),
         "aliases": application.aliases.all(),
@@ -153,9 +193,18 @@ class ApplicationCreateView(PermissionCheckMixin, CreateView):
     form_class = ApplicationForm
     template_name = "catalog/application_form.html"
 
+    def get_form_kwargs(self):
+        """Seed the unsaved instance so the form knows which kind it is building."""
+        kwargs = super().get_form_kwargs()
+        kind = self.request.GET.get("kind", "")
+        if kind in Application.Kind.values:
+            kwargs["instance"] = Application(kind=kind)
+        return kwargs
+
     def form_valid(self, form):
         form.instance.created_by = self.request.user
-        messages.success(self.request, f"Application '{form.instance.name}' created.")
+        label = "Service" if form.instance.is_service else "Application"
+        messages.success(self.request, f"{label} '{form.instance.name}' created.")
         return super().form_valid(form)
 
 
@@ -166,7 +215,8 @@ class ApplicationUpdateView(PermissionCheckMixin, UpdateView):
     template_name = "catalog/application_form.html"
 
     def form_valid(self, form):
-        messages.success(self.request, f"Application '{form.instance.name}' saved.")
+        label = "Service" if form.instance.is_service else "Application"
+        messages.success(self.request, f"{label} '{form.instance.name}' saved.")
         return super().form_valid(form)
 
 
@@ -212,6 +262,17 @@ def alias_delete(request, pk, alias_id):
     return _section(request, application, "catalog/partials/aliases.html")
 
 
+@role_required("can_view")
+def access_levels(request, pk):
+    """The rows of the Access levels tab: another page, or another filter.
+
+    Returns the table alone rather than the whole section, so the filter input stays put
+    (and keeps focus) while its own results are swapped underneath it.
+    """
+    application = get_object_or_404(Application, pk=pk)
+    return _section(request, application, "catalog/partials/access_level_rows.html")
+
+
 def access_level_form(request, pk, level_id=None):
     application = _app_for(request, pk, perms.can_edit_access_levels)
     level = (
@@ -222,6 +283,13 @@ def access_level_form(request, pk, level_id=None):
         if level
         else reverse("catalog:access_level_add", args=[pk])
     )
+    # The form posts back to this URL and the re-rendered section reads its state from the
+    # query string, so saving from page 3 of a filtered list has to land back there.
+    view_state = {
+        key: value for key in ("levels_page", "levels_q") if (value := request.GET.get(key))
+    }
+    if view_state:
+        form_url = f"{form_url}?{urlencode(view_state)}"
     if request.method == "POST":
         form = AccessLevelForm(request.POST, instance=level, application=application)
         if form.is_valid():
