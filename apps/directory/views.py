@@ -27,7 +27,7 @@ from apps.accounts.models import User
 from apps.catalog import services as catalog_services
 from apps.catalog.models import AccessLevel, Application
 
-from . import checks, references, routing, sync
+from . import checks, reconcile, references, routing, sync
 from .config import DirectorySettings
 from .forms import ADGroupRouteForm, SyncStartForm
 from .ldap_client import ConnectionInfo
@@ -45,6 +45,17 @@ def _referencing_levels_for(name):
     """`AccessLevel`s whose AD group name matches `name` (an expression or a string)."""
     return AccessLevel.objects.filter(
         access_model=AccessLevel.AccessModel.AD_GROUP, ad_group_name__iexact=name
+    )
+
+
+def _claiming_levels_for(name):
+    """The levels that own the group by hand, so nobody else may adopt it.
+
+    Route-managed levels are excluded on purpose: a group a dynamic application holds is
+    still up for adoption, and taking it is how the group moves to the system it belongs to.
+    """
+    return _referencing_levels_for(name).filter(
+        source__in=AccessLevel.CLAIMING_SOURCES, is_active=True
     )
 
 
@@ -98,6 +109,11 @@ class ADGroupListView(PermissionCheckMixin, ListView):
         self.unreferenced = g.get("unreferenced") == "1"
         if self.unreferenced:
             qs = qs.filter(~Exists(_referencing_levels_for(OuterRef("name"))))
+        # Narrower than `unreferenced`: a group a route holds *is* in the catalog, but
+        # nobody has said which system it belongs to. That is the adoption worklist.
+        self.unclaimed = g.get("unclaimed") == "1"
+        if self.unclaimed:
+            qs = qs.filter(~Exists(_claiming_levels_for(OuterRef("name"))))
         self.unrouted = g.get("unrouted") == "1"
         if self.unrouted:
             routes = routing.active_routes()
@@ -124,6 +140,7 @@ class ADGroupListView(PermissionCheckMixin, ListView):
             active=self.active,
             category=self.category,
             unreferenced=self.unreferenced,
+            unclaimed=self.unclaimed,
             unrouted=self.unrouted,
             has_routes=ADGroupRoute.objects.exists(),
             categories=ADGroup.Category.choices,
@@ -168,8 +185,12 @@ ADOPT_LIMIT = 200
 
 
 def _adoptable(qs):
-    """Active groups no access level points at yet -- the same rule as `?unreferenced=1`."""
-    return qs.filter(is_active=True).filter(~Exists(_referencing_levels_for(OuterRef("name"))))
+    """Active groups nobody owns by hand yet -- the same rule as `?unclaimed=1`.
+
+    Not `?unreferenced=1`: a group a dynamic application holds by route is referenced but
+    unclaimed, and adopting it is exactly how it stops being held by a route.
+    """
+    return qs.filter(is_active=True).filter(~Exists(_claiming_levels_for(OuterRef("name"))))
 
 
 def _adopt_targets(user):
@@ -202,8 +223,20 @@ def group_adopt(request):
             rows.append((name, application, request.POST.get(f"level-{name}", "").strip(), ""))
         result = catalog_services.adopt_groups(rows, actor=request.user)
         added, skipped = result.counts
-        if added:
-            messages.success(request, f"Added {added} access level{'s' if added != 1 else ''}.")
+        # A group a route was already holding is taken over rather than added: the level is
+        # the same row, it just stops being the reconciler's.
+        taken = sum(1 for level in result.added if getattr(level, "adopted_from_route", False))
+        if added - taken:
+            new_levels = added - taken
+            messages.success(
+                request, f"Added {new_levels} access level{'s' if new_levels != 1 else ''}."
+            )
+        if taken:
+            messages.success(
+                request,
+                f"Took {taken} group{'s' if taken != 1 else ''} over from a route; "
+                f"{'they are' if taken != 1 else 'it is'} now yours to edit.",
+            )
         for message in result.skipped:
             messages.warning(request, message)
         if not added and not skipped:
@@ -216,11 +249,23 @@ def group_adopt(request):
         groups = groups.filter(Q(name__icontains=q) | Q(description__icontains=q))
     groups = list(groups.order_by("name")[:ADOPT_LIMIT])
     matches = routing.routes_for(group.name for group in groups)
+    # Which of these a route is already holding, so the page can say "take over" instead of
+    # "add" and name the application the group would be leaving.
+    held_by = {
+        level.lname: level.application
+        for level in (
+            AccessLevel.objects.filter(source=AccessLevel.Source.ROUTE)
+            .annotate(lname=Lower("ad_group_name"))
+            .filter(lname__in={group.name.lower() for group in groups})
+            .select_related("application")
+        )
+    }
     candidates = [
         {
             "group": group,
             "match": matches.get(group.name),
             "suggested": (matches.get(group.name).application if matches.get(group.name) else None),
+            "held_by": held_by.get(group.name.lower()),
         }
         for group in groups
     ]
@@ -337,7 +382,32 @@ def admin_index(request):
         "schedule_command": SCHEDULE_COMMAND,
     }
     ctx.update(_status_context(runs))
+    ctx.update(reconcile.counts_for_display())
     return render(request, "directory/admin_index.html", ctx)
+
+
+@require_POST
+@role_required("can_manage_directory")
+def reconcile_now(request):
+    """Bring route-managed access levels in line without waiting for a sync."""
+    try:
+        result = reconcile.reconcile_all(actor=request.user, trigger=reconcile.Trigger.ADMIN)
+    except reconcile.ReconcileRefused as exc:
+        messages.error(request, str(exc))
+        return redirect("directory:admin_index")
+    if not result.changed:
+        messages.info(request, "Route-managed access levels were already up to date.")
+    else:
+        s = result.summary
+        messages.success(
+            request,
+            f"Reconciled route-managed levels \u2014 {s['created']} added, "
+            f"{s['converted']} taken over, {s['deactivated']} deactivated, "
+            f"{s['deleted']} removed, {s['defaults_moved']} position default(s) moved.",
+        )
+    for message in result.skipped:
+        messages.warning(request, message)
+    return redirect("directory:admin_index")
 
 
 # --- Routes ------------------------------------------------------------------------------
@@ -359,7 +429,18 @@ def route_list(request):
         "directory/route_list.html",
         {
             "form": form,
-            "routes": ADGroupRoute.objects.select_related("application", "created_by"),
+            # `active_routes` order, so the page shows the order resolution really uses:
+            # applications ahead of services, then priority. Inactive routes tail the list.
+            "routes": sorted(
+                ADGroupRoute.objects.select_related("application", "created_by"),
+                key=lambda r: (
+                    not r.is_active,
+                    0 if r.application.kind == Application.Kind.APPLICATION else 1,
+                    r.priority,
+                    r.pk,
+                ),
+            ),
+            **reconcile.counts_for_display(),
         },
     )
 
@@ -477,9 +558,9 @@ def run_apply(request, pk):
         if not s:
             continue
         counts.append(
-            f"{kind}: {s['created']} created, {s['updated']} updated, "
-            f"{s['reactivated']} reactivated, {s['deactivated']} deactivated, "
-            f"{s['errors']} errors"
+            f"{kind}: {s.get('created', 0)} created, {s.get('updated', 0)} updated, "
+            f"{s.get('reactivated', 0)} reactivated, {s.get('deactivated', 0)} deactivated, "
+            f"{s.get('errors', 0)} errors"
         )
     messages.success(request, "Sync applied — " + "; ".join(counts) + ".")
     return redirect(run)

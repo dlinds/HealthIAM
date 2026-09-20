@@ -10,6 +10,22 @@
   </div>
 </div>
 
+{% if dynamic_application_count or route_level_count %}
+<div class="alert alert-light border d-flex flex-wrap align-items-center justify-content-between gap-2 py-2">
+  <div class="small mb-0">
+    <i class="bi bi-signpost-split me-1"></i>
+    {{ dynamic_application_count }} application{{ dynamic_application_count|pluralize }}
+    hold{{ dynamic_application_count|pluralize:"s," }} AD groups automatically, covering
+    {{ route_level_count }} access level{{ route_level_count|pluralize }}. Every applied sync
+    brings these in step; reconcile now to do it without one.
+  </div>
+  <form method="post" action="{% url 'directory:reconcile_now' %}" class="mb-0">
+    {% csrf_token %}
+    <button class="btn btn-sm btn-outline-secondary" type="submit">Reconcile now</button>
+  </form>
+</div>
+{% endif %}
+
 <div class="row g-3 mb-3">
   <div class="col-lg-6">
     <div class="card h-100">

@@ -139,13 +139,29 @@ def test_routing_column_is_hidden_until_a_route_exists(as_user, help_desk_user, 
 # --- The sync must stay independent of routing ---------------------------------------
 
 
-def test_sync_does_not_consult_routes():
-    """Routing is advisory. If `sync` imported it, a mistyped pattern could change what
-    the directory mirror contains, or fill the catalog without anyone confirming."""
+def test_building_the_mirror_never_consults_routes():
+    """A mistyped pattern must not be able to change what the directory mirror contains.
+
+    `sync` now hands off to the reconciler once a run is *applied*, so the old blanket
+    "the module never mentions routing" no longer holds. The half that mattered does, and
+    is what this pins: everything that reads Active Directory and writes `ADGroup` rows
+    decides nothing from a route. The catalog half is guarded separately -- see
+    `tests/test_dynamic_levels.py`, where a previewed sync is shown to reconcile nothing.
+    """
     import inspect
 
     from apps.directory import sync
 
-    source = inspect.getsource(sync)
-    assert "routing" not in source
-    assert "ADGroupRoute" not in source
+    mirror = "\n".join(
+        inspect.getsource(part)
+        for part in (
+            sync._collect_groups,
+            sync._group_values,
+            sync._sync_group,
+            sync.sync_groups,
+            sync.sync_users,
+            sync._UserSync,
+        )
+    )
+    for forbidden in ("routing", "ADGroupRoute", "reconcile"):
+        assert forbidden not in mirror

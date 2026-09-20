@@ -1,5 +1,9 @@
 """All writes to PositionDefault go through here so every change carries a reason
-and lands in the audit log with actor, before/after, and context."""
+and lands in the audit log with actor, before/after, and context.
+
+One of them, `move_defaults`, is a *system* move rather than a person granting access: an
+AD group changed hands and its defaults follow it. It skips the analyst check that every
+other function here enforces, and says why at its own docstring."""
 
 from __future__ import annotations
 
@@ -48,6 +52,64 @@ def add_default(
             {"access_level": "This position already has that access level by default."}
         )
     return default
+
+
+def move_defaults(
+    source_level: AccessLevel, target_level: AccessLevel, *, actor=None, reason: str
+) -> tuple[int, int]:
+    """Re-point every default on `source_level` at `target_level`. Returns `(moved, merged)`.
+
+    A system operation, so unlike every other write here it does *not* call
+    `_check_can_edit`: the AD group moved house and the defaults have to follow it whatever
+    rights the person who nudged it holds, and the actor is often a scheduled sync with no
+    user at all. The reason and the actor still reach the audit log, so the move is as
+    traceable as a hand-made one -- and the reason has to name where the default came from,
+    because the entry itself only records where it landed.
+
+    A position that already holds `target_level` keeps that row and the redundant source row
+    is deleted (`merged`), rather than violating `unique_default_per_position_level`. That is
+    lossy: a position that held both levels ends up holding one.
+    """
+    reason = _require_reason(reason)
+    if source_level.pk == target_level.pk:
+        return (0, 0)
+    # A system move is still not allowed to leave behind a row `PositionDefault.clean()`
+    # would refuse to create.
+    if target_level.application.is_retired:
+        raise ValidationError(
+            {"access_level": f"{target_level.application.name} is retired; it cannot be a default."}
+        )
+    if not target_level.is_active:
+        raise ValidationError({"access_level": f"Access level '{target_level.name}' is inactive."})
+
+    # `get_additional_data` reads `position.code` and `access_level.application.name` on
+    # every save and delete, so auditlog would otherwise issue two queries per row.
+    defaults = list(
+        source_level.position_defaults.select_related("position", "access_level__application")
+    )
+    if not defaults:
+        return (0, 0)
+    taken = set(
+        PositionDefault.objects.filter(
+            access_level=target_level, position_id__in=[d.position_id for d in defaults]
+        ).values_list("position_id", flat=True)
+    )
+
+    moved = merged = 0
+    with set_actor(actor), transaction.atomic():
+        for default in defaults:
+            default._audit_reason = reason
+            if default.position_id in taken:
+                default.delete()
+                merged += 1
+            else:
+                # The instance, not the id: it keeps the FK cache warm for the audit entry.
+                # And `save()` rather than a bulk `update()`, which would write no entry at
+                # all and break the contract this module exists to enforce.
+                default.access_level = target_level
+                default.save(update_fields=["access_level", "updated_at"])
+                moved += 1
+    return moved, merged
 
 
 def remove_default(default: PositionDefault, *, actor, reason: str) -> None:

@@ -39,6 +39,12 @@
       <label class="form-check-label" for="unreferenced">Not referenced by any access level</label>
     </div>
   </div>
+  <div class="col-auto d-flex align-items-center">
+    <div class="form-check">
+      <input class="form-check-input" type="checkbox" id="unclaimed" name="unclaimed" value="1" {% if unclaimed %}checked{% endif %}>
+      <label class="form-check-label" for="unclaimed" title="A group a route holds is in the catalog, but nobody has said which system it belongs to.">Not claimed by hand</label>
+    </div>
+  </div>
   {% if has_routes %}
   <div class="col-auto d-flex align-items-center">
     <div class="form-check">
@@ -72,7 +78,7 @@
       {% endif %}
       <td class="small">
         {% for level in g.referencing_levels %}
-          <div><a href="{{ level.get_absolute_url }}">{{ level.application.name }} · {{ level.name }}</a>{% if not level.is_active %} <span class="badge text-bg-secondary">inactive level</span>{% endif %}</div>
+          <div><a href="{{ level.get_absolute_url }}">{{ level.application.name }} · {{ level.name }}</a>{% if level.source == 'route' %} <span class="badge text-bg-info" title="Held automatically by a route until somebody adopts the group">routed</span>{% elif level.source == 'adopted' %} <span class="badge text-bg-light border" title="Taken over from a route by hand">taken over</span>{% endif %}{% if not level.is_active %} <span class="badge text-bg-secondary">inactive level</span>{% endif %}</div>
         {% empty %}<span class="text-body-tertiary">none</span>{% endfor %}
       </td>
       <td class="small text-nowrap">{{ g.last_seen_at|date:"Y-m-d" }}</td>

@@ -11,7 +11,7 @@ HealthIAM can read from on-prem Active Directory over LDAPS. Two things come out
   references on the dashboard and in a report.
 - **Sign-in, optionally.** With `AD_AUTH_ENABLED` set, those people sign in to HealthIAM with
   their Active Directory password: the login form verifies it by binding to a domain
-  controller as them. See section 9.
+  controller as them. See section 10.
 
 Nothing is ever written to AD, and nothing in HealthIAM is deleted by the sync: logins and
 groups are deactivated and can be reactivated by the next run. With `AD_SERVER_URIS` empty
@@ -216,7 +216,47 @@ Nightly is usually right. Redirecting stdout keeps the summary out of the cron m
 are only mailed the errors, which are printed to stderr. `docs/deploy-truenas.md` has the
 details, including the container name.
 
-## 9. Signing in with an AD password
+Every **applied** run also brings route-managed access levels in line with the mirror it just
+wrote; what it changed lands under `routes` in the run summary. A preview never does.
+
+## 9. Route-managed access levels
+
+A service exists to hold AD groups no application owns, and by default somebody has to adopt
+each one by hand. Tick **Dynamic AD groups** on an application and its routes start doing that
+for it: it holds an access level for every active group its routes claim and nobody has
+adopted. The flag is off everywhere until you turn it on, and works on any application, though
+a service is the usual home.
+
+What "nobody has adopted" means exactly: a group is spoken for when an **active** access level
+somebody made by hand points at it. A routed level does not count — that is what lets an
+application take a group off a service later. Note the corollary: **inactivating a hand-made
+level releases its group**, so the route picks it up and the position defaults go with it.
+Reactivating takes them back.
+
+Resolution puts **applications ahead of services**, then the priority number. So `* → Epic`
+beats `VPN_* → VPN Service` even at a worse priority: the adopt page will suggest Epic, which
+is where the group belongs. If Epic is not itself dynamic, the VPN Service still holds the
+group in the meantime, so nobody loses access while it waits to be adopted.
+
+Recommended order the first time:
+
+1. Sync groups, so the mirror is current.
+2. Add the routes and check them on the AD groups page.
+3. `manage.py reconcile_dynamic_levels --dry-run` and read what it would do. This is the only
+   preview; there is no cap on how many levels a reconcile will create.
+4. Tick the flag on the application.
+5. `manage.py reconcile_dynamic_levels`, or **Reconcile now** under Admin → Active Directory.
+
+```sh
+docker exec ix-healthiam-web-1 python manage.py reconcile_dynamic_levels --dry-run
+```
+
+`--group NAME` reconciles one group, `--application NAME` the groups one application's routes
+claim, `--force` overrides the guard that refuses to retire most of the route-managed levels
+at once, and `--no-audit` skips the audit entries — for a first pass over a large directory
+only, since the audit log is otherwise the only record a reconcile leaves.
+
+## 10. Signing in with an AD password
 
 Without this, a synced person has a login but no way to use it unless Entra SSO is configured:
 the sync stores an unusable Django password on purpose. Turn it on with:
@@ -280,7 +320,7 @@ roughly the order these turn out to be the answer:
 | Cause | How to tell | Fix |
 |---|---|---|
 | `AD_AUTH_ENABLED` is not set | **Admin > Active Directory** shows sign-in **off** and raises `directory.W008`; the login form shows no *Active Directory sign-in name* hint under the username box | Set `AD_AUTH_ENABLED=true` and restart |
-| The login is not managed by the sync | **Managed by AD** is unticked on the login in Django admin | Link it (see the Admin logins caveat in section 10) and run a sync |
+| The login is not managed by the sync | **Managed by AD** is unticked on the login in Django admin | Link it (see the Admin logins caveat in section 11) and run a sync |
 | The sync deactivated the login | *Account active* is unticked | Put the person back in the user group; the next sync reactivates them |
 | No **AD account name** on the login | The field is empty in Django admin | Run a sync to fill it in; the bind is refused without something to attribute it to |
 | The login is in its cool-off | A row under **AD sign-in attempts** with *Locked* ticked | Wait it out, or clear it with the admin action |
@@ -328,8 +368,21 @@ experience matters, federated sign-in through an identity provider is the strong
 point, and HealthIAM already supports OIDC (`docs/entra-setup.md`). A password bind is the
 weakest place to enforce identity-layer policy.
 
-## 10. Caveats
+## 11. Caveats
 
+- **A routed level cannot be edited.** The route owns it, so Edit and Inactivate are gone and
+  a hand-made request is refused. Adopt the group from **AD groups → Add to catalog** to take
+  that level over; it keeps its position defaults and becomes yours.
+- **Inactivating a hand-made level can move access to another application.** The group is
+  released, a route picks it up, and the position defaults follow. Reactivating moves them
+  back — except for positions that held *both* levels, where the two defaults were merged into
+  one on the way out and only one comes back.
+- **A group name over 200 characters can never be held automatically.** `ADGroup.name` holds
+  256 and `AccessLevel.ad_group_name` 200; the reconcile reports each one it skipped.
+- **Two applications cannot hold one group by route.** The database enforces it. Where several
+  routes match, the first in resolution order wins.
+- **Turning the flag off** deletes the routed levels that have no position defaults and
+  deactivates the ones that do. Turning it back on restores them without moving any defaults.
 - **AD owns `is_active` for managed logins.** For a login with the **AD** badge on the Users
   page, unticking *Account active* in the roles form is undone by the next sync if the person
   is still an enabled member of IAM-Users; remove them from the group instead. The same
@@ -388,7 +441,7 @@ weakest place to enforce identity-layer policy.
   `helpdesk` login (marked sync-managed) are not in the real directory, so the first real sync
   deactivates them. Do not seed demo data on a real instance.
 
-## 11. Local demo without a domain controller
+## 12. Local demo without a domain controller
 
 `manage.py seed_demo` loads a small synthetic directory (AD groups for the demo access
 levels, a completed sync run, and the `helpdesk` login marked as sync-managed), but the AD

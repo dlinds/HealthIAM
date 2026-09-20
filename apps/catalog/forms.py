@@ -82,6 +82,7 @@ class ApplicationForm(BootstrapModelForm):
             "business_owner",
             "technical_owner",
             "notes",
+            "dynamic_ad_groups",
         ]
         widgets = {
             "mfa_enforced": forms.Select(choices=[(None, "Unknown"), (True, "Yes"), (False, "No")]),
@@ -91,6 +92,9 @@ class ApplicationForm(BootstrapModelForm):
     FIELDSETS = [
         ("Identity", ["name", "description", "vendor", "website", "admin_url"]),
         ("Classification", ["tier", "lifecycle_status", "go_live_date", "sunset_date"]),
+        # Not in SERVICE_EXCLUDED: a service is the usual home for routed groups, but an
+        # application is allowed to hold them too.
+        ("AD group routes", ["dynamic_ad_groups"]),
         (
             "Data sensitivity",
             [

@@ -4,7 +4,8 @@
 (never deleted) when the group stops appearing in the configured search. `DirectorySyncRun`
 records every sync, manual or scheduled, with counts and a per-row log, mirroring
 `orgs.ImportBatch` for LDAP-sourced data. `ADGroupRoute` records the naming conventions that
-say which application a group belongs to; it is advisory and the sync never reads it.
+say which application a group belongs to; it is advisory for an ordinary application, and
+creates access levels by itself only for one whose `dynamic_ad_groups` is on.
 """
 
 from datetime import timedelta
@@ -83,9 +84,15 @@ class ADGroupRoute(TimeStampedModel):
     network team's, `FS_*` is file shares. A route records one such convention so the
     adopt flow can propose a home instead of asking someone to pick per group.
 
-    Routes are **advisory**. Nothing here creates catalog rows, and `sync` never consults
-    them: a route only pre-fills a target a person then confirms. Patterns use the same
-    case-insensitive globs as `AD_GROUPS_NAME_PATTERNS`.
+    For an ordinary application a route is **advisory**: it pre-fills a target that a person
+    confirms, and nothing is created from it. For one with `dynamic_ad_groups` on, a route
+    also creates and retires that application's access levels -- see
+    `apps.directory.reconcile`. What survives in both cases is that a route can never change
+    what the **mirror** holds: the reconciler runs strictly after the mirror is committed,
+    never on a preview, and writes only catalog and access rows.
+
+    Patterns use the same case-insensitive globs as `AD_GROUPS_NAME_PATTERNS`. Resolution
+    puts application-kind targets ahead of services, then `priority` -- see `routing`.
     """
 
     pattern = models.CharField(
@@ -98,7 +105,11 @@ class ADGroupRoute(TimeStampedModel):
         help_text="Usually a service; any application is allowed.",
     )
     priority = models.PositiveSmallIntegerField(
-        default=100, help_text="Lowest number wins when several patterns match."
+        default=100,
+        help_text=(
+            "Lowest number wins among routes to the same kind of target. An application "
+            "always outranks a service, whatever the numbers say."
+        ),
     )
     notes = models.CharField(max_length=255, blank=True, help_text="Why this route exists.")
     is_active = models.BooleanField(default=True)

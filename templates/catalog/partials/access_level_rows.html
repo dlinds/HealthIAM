@@ -7,7 +7,10 @@
     <tbody>
     {% for level in levels %}
       <tr class="{% if not level.is_active %}text-body-tertiary{% endif %}">
-        <td class="fw-semibold">{{ level.name }}</td>
+        <td class="fw-semibold">{{ level.name }}
+          {% if level.source == 'route' %}<span class="badge text-bg-info" title="Held automatically because an AD group route points {{ level.ad_group_name }} at this application. Adopt the group from AD groups &rarr; Add to catalog to take it over.">Routed</span>
+          {% elif level.source == 'adopted' %}<span class="badge text-bg-light border" title="Taken over from an AD group route by hand.">Taken over</span>{% endif %}
+        </td>
         <td><span class="badge text-bg-light border">{{ level.get_access_model_display }}</span></td>
         <td class="small">
           {% if level.access_model == 'ad_group' %}<span class="text-mono">{{ level.ad_group_name }}</span>{% include "directory/partials/reference_badge.html" with ref=level_reference_status|dict_get:level.pk %}
@@ -19,8 +22,12 @@
         <td>{% if level.is_active %}<span class="badge text-bg-success">Active</span>{% else %}<span class="badge text-bg-secondary">Inactive</span>{% endif %}</td>
         {% if can_edit_levels %}
         <td class="text-end text-nowrap">
+          {% if level.source == 'route' %}
+          <span class="small text-body-tertiary">Managed by a route</span>
+          {% else %}
           <button class="btn btn-sm btn-outline-primary" type="button" hx-get="{% url 'catalog:access_level_edit' application.pk level.pk %}?{% query_replace %}" hx-target="#access-level-form-slot" hx-swap="innerHTML">Edit</button>
           <button class="btn btn-sm btn-outline-secondary" type="button" hx-post="{% url 'catalog:access_level_toggle' application.pk level.pk %}?{% query_replace %}" hx-target="#access-levels" hx-swap="outerHTML">{% if level.is_active %}Inactivate{% else %}Reactivate{% endif %}</button>
+          {% endif %}
         </td>
         {% endif %}
       </tr>

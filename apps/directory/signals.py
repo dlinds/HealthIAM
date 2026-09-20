@@ -57,7 +57,7 @@ def explain_ad_sign_in_failure(sender, credentials=None, request=None, **kwargs)
             "Sign-in for %s failed before Active Directory was asked: AD sign-in is off. The "
             "sync stores an unusable password on a managed login, so nothing typed on the form "
             "can match one until AD_AUTH_ENABLED is set; no attempt reaches a domain controller "
-            "and none is recorded. See docs/ad-setup.md section 9.",
+            "and none is recorded. See docs/ad-setup.md section 10.",
             user.username,
         )
     elif not user.is_active:

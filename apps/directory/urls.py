@@ -10,6 +10,7 @@ urlpatterns = [
     path("directory/groups/adopt/", views.group_adopt, name="group_adopt"),
     path("directory/references/", views.broken_references, name="broken_references"),
     path("directory/admin/", views.admin_index, name="admin_index"),
+    path("directory/admin/reconcile/", views.reconcile_now, name="reconcile_now"),
     path("directory/admin/routes/", views.route_list, name="route_list"),
     path("directory/admin/routes/<int:pk>/", views.route_update, name="route_update"),
     path("directory/admin/routes/<int:pk>/delete/", views.route_delete, name="route_delete"),

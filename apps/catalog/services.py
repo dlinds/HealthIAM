@@ -34,9 +34,28 @@ class AdoptionResult:
 
 
 def _referencing(group_name: str):
+    """Every level pointing at the group, whatever owns it. For display and reports."""
     return AccessLevel.objects.filter(
         access_model=AccessLevel.AccessModel.AD_GROUP, ad_group_name__iexact=group_name
     ).select_related("application")
+
+
+def _claims(group_name: str):
+    """Levels that own the group by hand, and so bar anyone else from adopting it.
+
+    A route-managed level is deliberately not one of them: it holds the group only until
+    somebody claims it, and treating it as a claim would make the hand-over impossible.
+    """
+    return _referencing(group_name).filter(source__in=AccessLevel.CLAIMING_SOURCES, is_active=True)
+
+
+def _route_held(group_name: str, application):
+    """The route-managed level this application already holds for the group, if any."""
+    return (
+        _referencing(group_name)
+        .filter(source=AccessLevel.Source.ROUTE, application=application)
+        .first()
+    )
 
 
 def adopt_group(
@@ -60,10 +79,27 @@ def adopt_group(
     if application.is_retired:
         raise ValidationError({"application": f"{application.name} is retired."})
 
-    existing = _referencing(group_name).first()
+    existing = _claims(group_name).first()
     if existing is not None:
         where = f"{existing.application.name} \u00b7 {existing.name}"
         raise ValidationError({"ad_group_name": f"Already referenced by {where}"})
+
+    held = _route_held(group_name, application)
+    if held is not None:
+        # Adopting a group the application already holds by route takes that very row over
+        # rather than adding a second one, so its position defaults stay where they are.
+        # `adopted` rather than `manual`: it is the one source the reconciler will not
+        # re-capture, which is what makes this the escape hatch from a locked level.
+        held.source = AccessLevel.Source.ADOPTED
+        held.is_active = True
+        if level_name:
+            held.name = level_name.strip()[:MAX_LEVEL_NAME]
+        if description:
+            held.description = description
+        held.clean()
+        held.save()
+        held.adopted_from_route = True
+        return held
 
     level = AccessLevel(
         application=application,

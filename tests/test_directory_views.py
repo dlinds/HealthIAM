@@ -364,7 +364,7 @@ def test_broken_reference_page_before_first_sync(as_user, help_desk_user, app):
 
 READ_ONLY = ("group_list", "group_picker", "broken_references")
 ADMIN_GET = ("admin_index", "run_list", "run_detail", "route_list", "route_update")
-ADMIN_POST = ("connection_test", "sync_start", "run_apply", "route_delete")
+ADMIN_POST = ("connection_test", "sync_start", "run_apply", "route_delete", "reconcile_now")
 # Adopting groups is an analyst's job, not only a directory administrator's: which
 # applications they may adopt into is decided per row by `can_edit_access_levels`.
 ANALYST_GET = ("group_adopt",)
