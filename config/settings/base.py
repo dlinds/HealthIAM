@@ -103,6 +103,15 @@ DATABASES = {
     ),
 }
 DATABASES["default"]["CONN_MAX_AGE"] = 60
+# What makes the line above safe across a database restart. Every connection held open by
+# CONN_MAX_AGE is dead once PostgreSQL has restarted, and with no check Django hands the
+# next request one of them: it fails with "server closed the connection unexpectedly",
+# once per worker or thread before things settle. The check is a cheap liveness probe, and
+# only on a connection being reused. It matters most where the database restarts on its
+# own schedule rather than alongside the app -- a native install patches PostgreSQL as a
+# separate service (docs/deploy-windows.md) -- but the container hits it too whenever the
+# db container comes back.
+DATABASES["default"]["CONN_HEALTH_CHECKS"] = True
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # --- Authentication ---------------------------------------------------------
