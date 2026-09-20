@@ -121,8 +121,15 @@ jobs:
       - name: Install dependencies with the windows extra
         shell: pwsh
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install ".[windows]" pytest pytest-django factory-boy
+          # -r pyproject.toml, not `pip install .`: this project's pyproject is a
+          # dependency manifest and not a distributable package, so building it fails
+          # with "Multiple top-level packages discovered in a flat-layout". The same
+          # reason the Makefile, the Dockerfile and the Lint and test job all use uv.
+          python -m pip install --upgrade pip uv
+          python -m uv venv .venv --python 3.12
+          python -m uv pip install --python .venv\Scripts\python.exe -r pyproject.toml --extra dev --extra windows
+          # Put the venv first on PATH so every later step's `python` is this one.
+          "$PWD\.venv\Scripts" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - name: Windows-only dependencies resolve and work
         shell: pwsh

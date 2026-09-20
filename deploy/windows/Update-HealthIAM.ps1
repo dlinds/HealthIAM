@@ -73,8 +73,12 @@ $global:LASTEXITCODE = 0
 Write-Step 'Reinstalling dependencies'
 Push-Location $InstallRoot
 try {
-    & $venvPython -m pip install ".[windows]" --quiet --upgrade
-    if ($LASTEXITCODE -ne 0) { throw "pip install failed with exit code $LASTEXITCODE." }
+    # As in Install-HealthIAM.ps1: pyproject.toml is a dependency manifest, not a
+    # buildable package, so it is read with uv rather than `pip install .`.
+    & $venvPython -m pip install --upgrade uv --quiet
+    if ($LASTEXITCODE -ne 0) { throw "Could not install uv (exit $LASTEXITCODE)." }
+    & $venvPython -m uv pip install --python $venvPython -r pyproject.toml --extra windows
+    if ($LASTEXITCODE -ne 0) { throw "Installing dependencies failed with exit code $LASTEXITCODE." }
 
     $env:DJANGO_SETTINGS_MODULE = 'config.settings.prod'
 

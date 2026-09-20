@@ -140,15 +140,22 @@ Write-Step 'Creating the virtual environment'
 $venv = Join-Path $InstallRoot '.venv'
 $venvPython = Join-Path $venv 'Scripts\python.exe'
 if (-not (Test-Path $venvPython)) { & $PythonExe -m venv $venv }
-& $venvPython -m pip install --upgrade pip --quiet
+# uv alongside pip: pyproject.toml here is a dependency manifest, not a distributable
+# package, so `pip install .` tries to build the project and setuptools refuses it --
+# "Multiple top-level packages discovered in a flat-layout". `uv pip install -r
+# pyproject.toml` reads it as the manifest it is, which is how the Makefile, the
+# Dockerfile and CI all install this project. uv is an ordinary wheel, so this adds a
+# PyPI package rather than a binary to vet.
+& $venvPython -m pip install --upgrade pip uv --quiet
+if ($LASTEXITCODE -ne 0) { throw "Could not install pip/uv into the virtual environment (exit $LASTEXITCODE)." }
 
 Write-Step 'Installing dependencies (base + windows extra)'
-# The windows extra carries waitress (gunicorn imports fcntl and cannot run here),
-# pywin32 (the service host) and tzdata (Windows ships no zoneinfo database).
+# The windows extra carries waitress (gunicorn imports fcntl and cannot run here) and
+# pywin32 (the service host); tzdata comes from the base list behind a win32 marker.
 Push-Location $InstallRoot
 try {
-    & $venvPython -m pip install ".[windows]" --quiet
-    if ($LASTEXITCODE -ne 0) { throw "pip install failed with exit code $LASTEXITCODE." }
+    & $venvPython -m uv pip install --python $venvPython -r pyproject.toml --extra windows
+    if ($LASTEXITCODE -ne 0) { throw "Installing dependencies failed with exit code $LASTEXITCODE." }
 } finally { Pop-Location }
 
 # pywin32 drops pythonservice.exe and its DLLs where the service manager can find them.

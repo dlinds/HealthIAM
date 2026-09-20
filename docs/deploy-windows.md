@@ -59,16 +59,29 @@ works, and the installer takes whichever with `-SourcePath`:
   tree first, or PowerShell refuses to run the scripts.
 
 If the server cannot reach PyPI either, build a wheelhouse on a machine that can and
-carry it over with the source:
+carry it over with the source. Note that `pyproject.toml` here is a dependency manifest
+rather than a distributable package, so anything of the form `pip install .` tries to
+build the project and fails with *Multiple top-level packages discovered in a
+flat-layout*. Read it with `uv` instead, as the installer does:
 
 ```powershell
 # on a connected Windows machine, same Python version and architecture
-pip download "healthiam[windows] @ ." --dest wheelhouse
+python -m pip install uv
+python -m uv pip compile pyproject.toml --extra windows --output-file requirements-windows.txt
+python -m pip download -r requirements-windows.txt --dest wheelhouse
+# and the installer's own bootstrap, so the offline server needs no PyPI at all
+python -m pip download uv --dest wheelhouse
 ```
 
-then install with `pip install --no-index --find-links wheelhouse ".[windows]"`. Every
-dependency has a Windows wheel; `psycopg[binary]` and `pywin32` are the two that are
-architecture-specific, which is why the wheelhouse must be built on Windows.
+Carry `wheelhouse\` and `requirements-windows.txt` over with the source, then on the
+server:
+
+```powershell
+.venv\Scripts\python.exe -m pip install --no-index --find-links wheelhouse -r requirements-windows.txt
+```
+
+Every dependency has a Windows wheel; `psycopg[binary]` and `pywin32` are the two that
+are architecture-specific, which is why the wheelhouse must be built on Windows.
 
 ## First install
 
@@ -271,6 +284,11 @@ pg_restore --clean --if-exists --no-owner --dbname "postgres://..." C:\HealthIAM
 - **`Error 1067: The process terminated unexpectedly`** — look in Event Viewer → Windows
   Logs → Application, source **HealthIAM**. The service writes the startup traceback
   there before it dies.
+- **`error: Multiple top-level packages discovered in a flat-layout`** — something ran
+  `pip install .` against this repository. `pyproject.toml` is a dependency manifest
+  here, not a distributable package. Install with
+  `python -m uv pip install -r pyproject.toml --extra windows`, which is what the
+  installer does.
 - **`ModuleNotFoundError: No module named 'fcntl'`** — something invoked gunicorn. It
   installs on Windows but cannot run there; Windows serves through waitress.
 - **`ZoneInfoNotFoundError: 'No time zone found with key America/Chicago'`** — `tzdata`
