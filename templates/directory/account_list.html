@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}AD accounts · HealthIAM{% endblock %}
+{% block content %}
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+  <h1 class="h3 mb-0">AD accounts</h1>
+  <div>
+    <a class="btn btn-outline-primary" href="?{{ request.GET.urlencode }}&format=xlsx"><i class="bi bi-file-earmark-excel me-1"></i>Excel</a>
+    <a class="btn btn-outline-primary" href="?{{ request.GET.urlencode }}&format=csv"><i class="bi bi-filetype-csv me-1"></i>CSV</a>
+  </div>
+</div>
+{% if not accounts_enabled %}
+<div class="alert alert-light border small"><i class="bi bi-info-circle me-1"></i>The account mirror is off: set <span class="text-mono">AD_ACCOUNTS_SEARCH_BASES</span> to the OUs that hold user accounts and run a sync. See docs/ad-setup.md.</div>
+{% endif %}
+<form class="row g-2 mb-3 js-autosubmit" method="get">
+  <div class="col-md-3"><input class="form-control" type="search" name="q" value="{{ q }}" placeholder="Account, name, e-mail, employee ID"></div>
+  <div class="col-md-3">
+    <select class="form-select" name="show">
+      {% for value, label in show_choices %}<option value="{{ value }}" {% if show == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="col-md-2">
+    <select class="form-select" name="active">
+      <option value="1" {% if active == '1' %}selected{% endif %}>In AD</option>
+      <option value="0" {% if active == '0' %}selected{% endif %}>No longer in AD</option>
+      <option value="all" {% if active == 'all' %}selected{% endif %}>All</option>
+    </select>
+  </div>
+  {% if person_id %}<input type="hidden" name="person" value="{{ person_id }}">{% endif %}
+  <div class="col-auto"><button class="btn btn-outline-secondary" type="submit">Filter</button></div>
+</form>
+<div class="table-responsive">
+<table class="table table-hover table-sm align-middle">
+  <thead><tr><th>Account</th><th>Name</th><th>Employee ID</th><th>State</th><th>Last logon</th><th>Person</th><th>Kind</th>{% if can_link %}<th></th>{% endif %}</tr></thead>
+  <tbody>
+  {% for a in object_list %}
+    <tr class="{% if not a.is_active %}text-body-tertiary{% endif %}">
+      <td><span class="text-mono">{{ a.sam_account_name }}</span><div class="small text-body-secondary">{{ a.upn }}</div></td>
+      <td>{{ a.display_name|default:a.given_name }}{% if not a.display_name %} {{ a.surname }}{% endif %}<div class="small text-body-secondary">{{ a.title }}{% if a.department %} · {{ a.department }}{% endif %}</div></td>
+      <td class="text-mono">{{ a.employee_id }}</td>
+      <td>
+        {% if not a.is_active %}<span class="badge text-bg-secondary">not in AD</span>
+        {% elif not a.enabled %}<span class="badge text-bg-secondary">disabled</span>
+        {% elif a.is_expired %}<span class="badge text-bg-warning">expired</span>
+        {% else %}<span class="badge text-bg-success">enabled</span>{% endif %}
+        {% if a.account_expires and not a.is_expired %}<div class="small text-body-secondary">until {{ a.account_expires|date:"Y-m-d" }}</div>{% endif %}
+      </td>
+      <td class="text-nowrap small">{% if a.last_logon_at %}{{ a.last_logon_at|date:"Y-m-d" }}{% else %}<span class="text-body-tertiary">—</span>{% endif %}</td>
+      <td>
+        {% if a.person %}<a href="{{ a.person.get_absolute_url }}">{{ a.person.sort_name }}</a>{% if not a.person.is_active %} <span class="badge text-bg-danger">person inactive</span>{% endif %}<div class="small text-body-secondary">{{ a.get_link_method_display|lower }}</div>
+        {% elif a.unlinked_by_hand %}<span class="text-body-secondary">unlinked by hand</span>
+        {% elif a.employee_id %}<span class="badge text-bg-warning">no person with this employee ID</span>
+        {% else %}<span class="text-body-tertiary">—</span>{% endif %}
+      </td>
+      <td><span class="badge text-bg-light border">{{ a.get_kind_display }}</span></td>
+      {% if can_link %}
+      <td class="text-end text-nowrap">
+        {% if a.person %}<button class="btn btn-sm btn-link text-danger p-0" type="button" hx-post="{% url 'directory:account_unlink' a.pk %}?next={{ request.get_full_path|urlencode }}" hx-prompt="Reason for unlinking {{ a.sam_account_name }} from {{ a.person.display_name }}:">Unlink</button>
+        {% else %}<a class="btn btn-sm btn-link p-0" href="{% url 'directory:account_link' a.pk %}?next={{ request.get_full_path|urlencode }}">Link…</a>{% endif %}
+      </td>
+      {% endif %}
+    </tr>
+  {% empty %}
+    <tr><td colspan="8" class="text-body-secondary">No accounts{% if accounts_enabled %} match{% else %} mirrored yet{% endif %}.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% include "partials/pagination.html" %}
+{% endblock %}

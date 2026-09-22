@@ -3,9 +3,10 @@
 `ADGroup` rows are keyed by objectGUID so renames and moves are tracked, and are deactivated
 (never deleted) when the group stops appearing in the configured search. `DirectorySyncRun`
 records every sync, manual or scheduled, with counts and a per-row log, mirroring
-`orgs.ImportBatch` for LDAP-sourced data. `ADGroupRoute` records the naming conventions that
-say which application a group belongs to; it is advisory for an ordinary application, and
-creates access levels by itself only for one whose `dynamic_ad_groups` is on.
+`orgs.ImportBatch` for LDAP-sourced data. `DirectoryAccount` rows mirror user accounts under
+the configured OUs and are linked to people by employee ID. `ADGroupRoute` records the naming
+conventions that say which application a group belongs to; it is advisory for an ordinary
+application, and creates access levels by itself only for one whose `dynamic_ad_groups` is on.
 """
 
 from datetime import timedelta
@@ -142,13 +143,120 @@ class ADGroupRoute(TimeStampedModel):
         return reverse("directory:route_list")
 
 
+class DirectoryAccount(TimeStampedModel):
+    """One user account in Active Directory, mirrored by the sync and linked to the person it
+    belongs to. Keyed by objectGUID like `ADGroup`; deactivated, never deleted, when a run
+    stops returning it. The link is made by employee ID, or by hand."""
+
+    class Kind(models.TextChoices):
+        USER = "user", "User"
+        ADMIN = "admin", "Admin account"
+        SERVICE = "service", "Service account"
+        SHARED = "shared", "Shared / generic"
+        UNKNOWN = "unknown", "Unknown"
+
+    class LinkMethod(models.TextChoices):
+        EMPLOYEE_ID = "employee_id", "By employee ID"
+        MANUAL = "manual", "By hand"
+
+    object_guid = models.UUIDField("objectGUID", unique=True)
+    sam_account_name = models.CharField("Account name", max_length=256, db_index=True)
+    upn = models.CharField("User principal name", max_length=256, blank=True)
+    distinguished_name = models.CharField(max_length=1024, db_index=True)
+    given_name = models.CharField(max_length=150, blank=True)
+    surname = models.CharField(max_length=150, blank=True)
+    display_name = models.CharField(max_length=256, blank=True)
+    mail = models.EmailField(blank=True)
+    title = models.CharField(max_length=150, blank=True)
+    department = models.CharField(max_length=150, blank=True)
+    manager_dn = models.CharField("Manager DN", max_length=1024, blank=True)
+    employee_id = models.CharField("Employee ID", max_length=64, blank=True, db_index=True)
+    enabled = models.BooleanField(default=True, help_text="Not disabled in AD.")
+    account_expires = models.DateTimeField(null=True, blank=True)
+    when_created = models.DateTimeField(null=True, blank=True)
+    when_changed = models.DateTimeField(null=True, blank=True)
+    last_logon_at = models.DateTimeField(
+        "Last logon",
+        null=True,
+        blank=True,
+        help_text="lastLogonTimestamp, which replicates only every 9-14 days.",
+    )
+    kind = models.CharField(
+        max_length=10,
+        choices=Kind.choices,
+        default=Kind.USER,
+        help_text="Set by hand: the directory does not say what an account is for.",
+    )
+    person = models.ForeignKey(
+        "people.Person",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="directory_accounts",
+    )
+    link_method = models.CharField(max_length=12, choices=LinkMethod.choices, blank=True)
+    linked_at = models.DateTimeField(null=True, blank=True)
+    first_seen_at = models.DateTimeField()
+    last_seen_at = models.DateTimeField()
+    is_active = models.BooleanField(default=True, help_text="Still returned by the sync.")
+    inactivated_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        verbose_name = "AD account"
+        ordering = ["sam_account_name", "pk"]
+        indexes = [models.Index(Lower("sam_account_name"), name="directory_account_lsam_idx")]
+
+    def __str__(self):
+        return self.sam_account_name
+
+    def get_absolute_url(self):
+        return reverse("directory:account_list") + "?" + urlencode({"q": self.sam_account_name})
+
+    @property
+    def is_expired(self) -> bool:
+        return bool(self.account_expires and self.account_expires < timezone.now())
+
+    @property
+    def is_linked(self) -> bool:
+        return self.person_id is not None
+
+    @property
+    def unlinked_by_hand(self) -> bool:
+        """Somebody unlinked it and wants it to stay that way: the sync leaves it alone."""
+        return self.person_id is None and self.link_method == self.LinkMethod.MANUAL
+
+    def deactivate(self, save=True):
+        if self.is_active:
+            self.is_active = False
+            self.inactivated_at = timezone.now()
+            if save:
+                self.save(update_fields=["is_active", "inactivated_at", "updated_at"])
+
+    def activate(self, save=True):
+        if not self.is_active:
+            self.is_active = True
+            self.inactivated_at = None
+            if save:
+                self.save(update_fields=["is_active", "inactivated_at", "updated_at"])
+
+    # Linking is what the audit trail is for here: the person's History collects it.
+    def get_additional_data(self):
+        return {
+            "reason": getattr(self, "_audit_reason", ""),
+            "person_id": self.person_id,
+            "person": self.person.display_name if self.person_id else "",
+            "kind": self._meta.verbose_name,
+        }
+
+
 class DirectorySyncRun(TimeStampedModel):
     """One sync against Active Directory. Preview = dry run; apply = real sync on the same row."""
 
     class Scope(models.TextChoices):
-        ALL = "all", "Users and groups"
+        ALL = "all", "Users, groups and accounts"
         USERS = "users", "Users only"
         GROUPS = "groups", "Groups only"
+        ACCOUNTS = "accounts", "Accounts only"
 
     class Status(models.TextChoices):
         PENDING = "pending", "Pending"

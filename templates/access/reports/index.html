@@ -95,6 +95,19 @@
       </div>
     </div>
   </div>
+  {% if AD_ACCOUNTS_ENABLED %}
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-header"><i class="bi bi-person-badge me-1"></i>AD accounts</div>
+      <div class="card-body">
+        <p class="text-body-secondary small">The mirrored user accounts with the person each belongs to. Two worklists: accounts still enabled for people who have left, and live accounts nobody has been identified for.</p>
+        <a class="btn btn-primary" href="{% url 'directory:account_list' %}?show=orphaned"><i class="bi bi-person-x me-1"></i>Enabled, person inactive</a>
+        <a class="btn btn-outline-primary" href="{% url 'directory:account_list' %}?show=unlinked"><i class="bi bi-person-dash me-1"></i>Unlinked</a>
+        <a class="btn btn-outline-primary" href="{% url 'directory:account_list' %}?active=all&format=xlsx"><i class="bi bi-file-earmark-excel me-1"></i>Download all</a>
+      </div>
+    </div>
+  </div>
+  {% endif %}
   {% if AD_ENABLED %}
   <div class="col-lg-6">
     <div class="card h-100">

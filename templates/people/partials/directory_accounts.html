@@ -1,0 +1,33 @@
+{# The AD accounts linked to this person. Only included when AD_ENABLED, so the directory URLs resolve. #}
+<div class="card mb-3" id="directory-accounts">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <span>AD accounts <span class="badge text-bg-secondary">{{ accounts|length }}</span></span>
+    {% if iam.can_link_accounts %}<a class="small" href="{% url 'directory:account_list' %}?show=unlinked" title="Link an unlinked account to this person from the accounts list">Link…</a>{% endif %}
+  </div>
+  <ul class="list-group list-group-flush small">
+    {% for a in accounts %}
+    <li class="list-group-item">
+      <div class="d-flex justify-content-between align-items-start gap-2">
+        <span>
+          <a class="text-mono" href="{{ a.get_absolute_url }}">{{ a.sam_account_name }}</a>
+          {% if not a.is_active %}<span class="badge text-bg-secondary">not in AD</span>
+          {% elif not a.enabled %}<span class="badge text-bg-secondary">disabled</span>
+          {% elif a.is_expired %}<span class="badge text-bg-warning">expired</span>
+          {% else %}<span class="badge text-bg-success">enabled</span>{% endif %}
+          {% if a.kind != 'user' %}<span class="badge text-bg-light border">{{ a.get_kind_display }}</span>{% endif %}
+          <div class="text-body-secondary">
+            {% if a.upn %}{{ a.upn }} · {% endif %}{% if a.last_logon_at %}last logon {{ a.last_logon_at|date:"Y-m-d" }}{% else %}no logon recorded{% endif %}
+            {% if a.account_expires %} · expires {{ a.account_expires|date:"Y-m-d" }}{% endif %}
+            · linked {{ a.get_link_method_display|lower }}
+          </div>
+        </span>
+        {% if iam.can_link_accounts %}
+        <button class="btn btn-sm btn-link text-danger p-0" type="button" hx-post="{% url 'directory:account_unlink' a.pk %}?next={{ person.get_absolute_url|urlencode }}" hx-prompt="Reason for unlinking {{ a.sam_account_name }} from {{ person.display_name }}:">Unlink</button>
+        {% endif %}
+      </div>
+    </li>
+    {% empty %}
+    <li class="list-group-item text-body-secondary">No AD account linked{% if person.employee_id %}; the sync links one whose employee ID is <span class="text-mono">{{ person.employee_id }}</span>{% endif %}.</li>
+    {% endfor %}
+  </ul>
+</div>

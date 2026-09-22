@@ -27,13 +27,15 @@ from .config import DirectorySettings
 
 logger = logging.getLogger("apps.directory")
 
-# Field lengths on accounts.User / directory.ADGroup; values are truncated on the way in.
+# Field lengths on accounts.User / directory.ADGroup / directory.DirectoryAccount; values are
+# truncated on the way in.
 MAX_USERNAME = 150
 MAX_NAME = 150
 MAX_EMAIL = 254
 MAX_SAM = 256
 MAX_CN = 256
 MAX_DN = 1024
+MAX_EMPLOYEE_ID = 64
 
 USER_ATTRIBUTES = [
     "objectGUID",
@@ -59,6 +61,29 @@ GROUP_ATTRIBUTES = [
 ]
 
 GROUP_FILTER = "(objectCategory=group)"
+ACCOUNT_FILTER = "(&(objectCategory=person)(objectClass=user))"
+# The extra attributes the account mirror reads on top of USER_ATTRIBUTES; the employee-ID
+# attribute is configurable and appended by `account_attributes`.
+ACCOUNT_EXTRA_ATTRIBUTES = [
+    "displayName",
+    "manager",
+    "accountExpires",
+    "lastLogonTimestamp",
+    "whenCreated",
+    "whenChanged",
+]
+# Windows FILETIME: 100-nanosecond ticks since 1601-01-01. Zero and the maximum both mean
+# "never" on accountExpires.
+FILETIME_EPOCH = datetime(1601, 1, 1, tzinfo=UTC)
+FILETIME_NEVER = 0x7FFFFFFFFFFFFFFF
+
+
+def account_attributes(employee_id_attribute: str) -> list[str]:
+    attrs = [*USER_ATTRIBUTES, *ACCOUNT_EXTRA_ATTRIBUTES]
+    if employee_id_attribute and employee_id_attribute not in attrs:
+        attrs.append(employee_id_attribute)
+    return attrs
+
 
 # Sub-codes Active Directory puts in the diagnostic message of an invalidCredentials (49)
 # result, e.g. "...AcceptSecurityContext error, data 52e, v4563". Only a genuinely wrong
@@ -116,6 +141,9 @@ class DirectoryAccountState(DirectoryError):
 
 @dataclass(frozen=True)
 class DirectoryUser:
+    """A user entry. The first block is what the login sync reads; the rest is filled only
+    by the account mirror, which asks the directory for more attributes."""
+
     guid: uuid.UUID | None
     upn: str
     sam: str
@@ -126,6 +154,13 @@ class DirectoryUser:
     title: str = ""
     department: str = ""
     uac: int = 0
+    employee_id: str = ""
+    display_name: str = ""
+    manager_dn: str = ""
+    account_expires: datetime | None = None
+    last_logon_at: datetime | None = None
+    when_created: datetime | None = None
+    when_changed: datetime | None = None
 
     @property
     def enabled(self) -> bool:
@@ -170,6 +205,10 @@ class DirectoryClient:
         raise NotImplementedError
 
     def iter_groups(self, base_dn: str) -> Iterator[DirectoryGroup]:
+        raise NotImplementedError
+
+    def iter_accounts(self, base_dn: str) -> Iterator[DirectoryUser]:
+        """Every user object under `base_dn`, enabled or not, for the account mirror."""
         raise NotImplementedError
 
     def check_password(self, upn: str, password: str, *, expect_sam: str) -> bool:
@@ -277,7 +316,30 @@ def parse_generalized_time(value) -> datetime | None:
     return naive.replace(tzinfo=offset).astimezone(UTC)
 
 
-def parse_user_entry(entry: dict) -> DirectoryUser:
+def parse_filetime(value) -> datetime | None:
+    """Decode a Windows FILETIME attribute (accountExpires, lastLogonTimestamp).
+
+    ldap3 formats attributes only when it knows the schema, and the client runs with
+    `get_info=NONE` reading `raw_attributes`, so the decoding is done here. Zero and the
+    maximum both mean "never"; anything unparsable reads as unknown.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bytes):
+        value = value.decode("ascii", "replace").strip()
+    try:
+        ticks = int(value)
+    except (TypeError, ValueError):
+        return None
+    if ticks <= 0 or ticks >= FILETIME_NEVER:
+        return None
+    try:
+        return FILETIME_EPOCH + timedelta(microseconds=ticks // 10)
+    except OverflowError:
+        return None
+
+
+def parse_user_entry(entry: dict, *, employee_id_attribute: str = "employeeID") -> DirectoryUser:
     raw = _raw(entry)
     dn = _text(raw, "distinguishedName", MAX_DN) or str(entry.get("dn") or "")[:MAX_DN]
     return DirectoryUser(
@@ -291,6 +353,15 @@ def parse_user_entry(entry: dict) -> DirectoryUser:
         title=_text(raw, "title", MAX_NAME),
         department=_text(raw, "department", MAX_NAME),
         uac=_int(raw, "userAccountControl"),
+        employee_id=(
+            _text(raw, employee_id_attribute, MAX_EMPLOYEE_ID) if employee_id_attribute else ""
+        ),
+        display_name=_text(raw, "displayName", MAX_SAM),
+        manager_dn=_text(raw, "manager", MAX_DN),
+        account_expires=parse_filetime(_first(raw, "accountExpires")),
+        last_logon_at=parse_filetime(_first(raw, "lastLogonTimestamp")),
+        when_created=parse_generalized_time(_first(raw, "whenCreated")),
+        when_changed=parse_generalized_time(_first(raw, "whenChanged")),
     )
 
 
@@ -546,6 +617,11 @@ class Ldap3Client(DirectoryClient):
     def iter_groups(self, base_dn: str) -> Iterator[DirectoryGroup]:
         for entry in self._paged(base_dn, GROUP_FILTER, GROUP_ATTRIBUTES):
             yield parse_group_entry(entry)
+
+    def iter_accounts(self, base_dn: str) -> Iterator[DirectoryUser]:
+        attribute = self._settings.employee_id_attribute
+        for entry in self._paged(base_dn, ACCOUNT_FILTER, account_attributes(attribute)):
+            yield parse_user_entry(entry, employee_id_attribute=attribute)
 
     @sensitive_variables()
     def check_password(self, upn: str, password: str, *, expect_sam: str) -> bool:

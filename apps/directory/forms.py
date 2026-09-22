@@ -1,9 +1,11 @@
 from django import forms
 
+from apps.access.forms import ReasonForm
 from apps.catalog.models import Application
 from apps.core.forms import BootstrapForm, BootstrapModelForm
 
-from .models import ADGroupRoute, DirectorySyncRun
+from .config import DirectorySettings
+from .models import ADGroupRoute, DirectoryAccount, DirectorySyncRun
 
 
 class SyncStartForm(BootstrapForm):
@@ -19,6 +21,27 @@ class SyncStartForm(BootstrapForm):
             "and apply them on the same run."
         ),
     )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if not DirectorySettings.from_settings().accounts_enabled:
+            # Without a search base for accounts the pass cannot run; a full sync simply
+            # has no account part, so the choice is not offered.
+            self.fields["scope"].choices = [
+                (value, "Users and groups" if value == DirectorySyncRun.Scope.ALL else label)
+                for value, label in DirectorySyncRun.Scope.choices
+                if value != DirectorySyncRun.Scope.ACCOUNTS
+            ]
+
+
+class AccountLinkForm(ReasonForm):
+    """Link an AD account to a person by hand: the person from the picker, plus a reason."""
+
+    person = forms.IntegerField(widget=forms.HiddenInput)
+
+
+class AccountKindForm(ReasonForm):
+    kind = forms.ChoiceField(choices=DirectoryAccount.Kind.choices)
 
 
 class ADGroupRouteForm(BootstrapModelForm):

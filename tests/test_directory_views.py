@@ -17,6 +17,7 @@ from apps.directory import references
 from apps.directory.models import ADGroup, ADGroupRoute, DirectorySyncRun
 
 from . import factories
+from .fake_directory import fake_guid
 
 SECRET = "test-secret-not-real"  # config/settings/test.py AD_BIND_PASSWORD
 
@@ -362,9 +363,17 @@ def test_broken_reference_page_before_first_sync(as_user, help_desk_user, app):
 
 # --- Permission matrix ----------------------------------------------------------------------
 
-READ_ONLY = ("group_list", "group_picker", "broken_references")
-ADMIN_GET = ("admin_index", "run_list", "run_detail", "route_list", "route_update")
-ADMIN_POST = ("connection_test", "sync_start", "run_apply", "route_delete", "reconcile_now")
+READ_ONLY = ("group_list", "group_picker", "broken_references", "account_list")
+ADMIN_GET = ("admin_index", "run_list", "run_detail", "route_list", "route_update", "account_link")
+ADMIN_POST = (
+    "connection_test",
+    "sync_start",
+    "run_apply",
+    "route_delete",
+    "reconcile_now",
+    "account_unlink",
+    "account_kind",
+)
 # Adopting groups is an analyst's job, not only a directory administrator's: which
 # applications they may adopt into is decided per row by `can_edit_access_levels`.
 ANALYST_GET = ("group_adopt",)
@@ -375,7 +384,26 @@ def _url(name, run, route):
         return reverse(f"directory:{name}", args=[route.pk])
     if name in ("run_detail", "run_apply"):
         return reverse(f"directory:{name}", args=[run.pk])
+    if name in ("account_link", "account_unlink", "account_kind"):
+        return reverse(f"directory:{name}", args=[_matrix_account().pk])
     return reverse(f"directory:{name}")
+
+
+def _matrix_account():
+    from django.utils import timezone
+
+    from apps.directory.models import DirectoryAccount
+
+    now = timezone.now()
+    return DirectoryAccount.objects.get_or_create(
+        object_guid=fake_guid("user:matrix"),
+        defaults={
+            "sam_account_name": "matrix",
+            "distinguished_name": "CN=matrix,OU=People,DC=test,DC=invalid",
+            "first_seen_at": now,
+            "last_seen_at": now,
+        },
+    )[0]
 
 
 def test_every_directory_url_is_in_the_permission_matrix():

@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import ADGroup, ADGroupRoute, DirectorySyncRun, SignInAttempt
+from .models import ADGroup, ADGroupRoute, DirectoryAccount, DirectorySyncRun, SignInAttempt
 
 SYNC_OWNED_FIELDS = (
     "object_guid",
@@ -75,3 +75,33 @@ class ADGroupRouteAdmin(admin.ModelAdmin):
     search_fields = ("pattern", "application__name", "notes")
     autocomplete_fields = ("application",)
     ordering = ("priority", "pk")
+
+
+@admin.register(DirectoryAccount)
+class DirectoryAccountAdmin(admin.ModelAdmin):
+    """The mirror is the sync's; only the link and the kind are a person's to set."""
+
+    list_display = (
+        "sam_account_name",
+        "display_name",
+        "employee_id",
+        "enabled",
+        "person",
+        "link_method",
+        "kind",
+        "is_active",
+    )
+    list_filter = ("enabled", "is_active", "kind", "link_method")
+    search_fields = ("sam_account_name", "upn", "display_name", "employee_id", "mail")
+    autocomplete_fields = ("person",)
+    readonly_fields = tuple(
+        f.name
+        for f in DirectoryAccount._meta.fields
+        if f.name not in ("person", "link_method", "kind")
+    )
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False

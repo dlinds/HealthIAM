@@ -1513,7 +1513,7 @@ def test_unchanged_groups_run_touches_last_seen_without_audit(fake_directory):
 
 def test_sync_run_is_stale_and_str():
     run = DirectorySyncRun.objects.create(scope="all")
-    assert str(run) == f"Users and groups sync #{run.pk} (Pending)"
+    assert str(run) == f"Users, groups and accounts sync #{run.pk} (Pending)"
     assert run.is_stale is False  # never started
     run.started_at = timezone.now() - timedelta(minutes=5)
     assert run.is_stale is False
@@ -1521,7 +1521,7 @@ def test_sync_run_is_stale_and_str():
     assert run.is_stale is True
     run.status = DirectorySyncRun.Status.COMPLETED
     assert run.is_stale is False
-    assert str(run) == f"Users and groups sync #{run.pk} (Completed)"
+    assert str(run) == f"Users, groups and accounts sync #{run.pk} (Completed)"
     run.scope, run.status = "groups", DirectorySyncRun.Status.FAILED
     assert str(run) == f"Groups only sync #{run.pk} (Failed)"
     assert run.get_absolute_url() == f"/directory/admin/runs/{run.pk}/"
@@ -1671,6 +1671,7 @@ ALL_CHECKS = [
     checks.check_ad_sign_in_is_not_the_only_way_in,
     checks.check_group_filters_are_not_wide_open,
     checks.check_synced_logins_can_be_signed_in_to,
+    checks.check_account_mirror_can_link,
 ]
 
 

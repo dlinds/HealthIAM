@@ -30,6 +30,9 @@ env = environ.Env(
     AD_GROUPS_SEARCH_BASES=(str, ""),
     AD_GROUPS_NAME_PATTERNS=(list, []),
     AD_GROUPS_EXCLUDE_PATTERNS=(list, []),
+    AD_ACCOUNTS_SEARCH_BASES=(str, ""),
+    AD_ACCOUNTS_EXCLUDE_PATTERNS=(list, []),
+    AD_EMPLOYEE_ID_ATTRIBUTE=(str, "employeeID"),
     AD_AUTH_ENABLED=(bool, False),
     AD_AUTH_TIMEOUT=(int, 60),
     AD_AUTH_MAX_FAILURES=(int, 3),
@@ -177,6 +180,18 @@ AD_GROUPS_NAME_PATTERNS = env("AD_GROUPS_NAME_PATTERNS")
 # Globs that keep a group out however it matched above; excludes win over includes.
 # Empty = nothing is excluded. Use for AD built-ins and for IAM's own role groups.
 AD_GROUPS_EXCLUDE_PATTERNS = env("AD_GROUPS_EXCLUDE_PATTERNS")
+# The account mirror: user accounts under these OUs (semicolon-separated) are mirrored as
+# `DirectoryAccount` rows and linked to people by employee ID. Empty = off, with no fallback
+# to the base DN -- mirroring every account in the domain has to be an explicit choice.
+AD_ACCOUNTS_SEARCH_BASES = [
+    b.strip() for b in env("AD_ACCOUNTS_SEARCH_BASES").split(";") if b.strip()
+]
+# Globs on sAMAccountName that keep an account out of the mirror (service accounts, admin
+# accounts that follow a naming convention).
+AD_ACCOUNTS_EXCLUDE_PATTERNS = env("AD_ACCOUNTS_EXCLUDE_PATTERNS")
+# The AD attribute that carries the HR employee ID; the link between an account and a person.
+AD_EMPLOYEE_ID_ATTRIBUTE = env("AD_EMPLOYEE_ID_ATTRIBUTE")
+AD_ACCOUNTS_ENABLED = AD_ENABLED and bool(AD_ACCOUNTS_SEARCH_BASES)
 
 # --- Active Directory sign-in ------------------------------------------------------
 # Verify a password by binding to AD as the user. Needs the sync settings above; the login

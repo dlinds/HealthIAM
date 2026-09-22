@@ -148,6 +148,27 @@ class ADGroupFactory(factory.django.DjangoModelFactory):
     last_seen_at = factory.LazyAttribute(lambda o: o.first_seen_at)
 
 
+class DirectoryAccountFactory(factory.django.DjangoModelFactory):
+    """An enabled, unlinked user account as the sync would mirror it."""
+
+    class Meta:
+        model = "directory.DirectoryAccount"
+
+    object_guid = factory.LazyFunction(uuid.uuid4)
+    sam_account_name = factory.Sequence(lambda n: f"account{n}")
+    upn = factory.LazyAttribute(lambda o: f"{o.sam_account_name}@test.invalid")
+    distinguished_name = factory.LazyAttribute(
+        lambda o: f"CN={o.sam_account_name},OU=People,DC=test,DC=invalid"
+    )
+    given_name = factory.Faker("first_name")
+    surname = factory.Faker("last_name")
+    display_name = factory.LazyAttribute(lambda o: f"{o.given_name} {o.surname}")
+    mail = factory.LazyAttribute(lambda o: o.upn)
+    enabled = True
+    first_seen_at = factory.LazyFunction(timezone.now)
+    last_seen_at = factory.LazyAttribute(lambda o: o.first_seen_at)
+
+
 # --- People ---------------------------------------------------------------------------
 
 

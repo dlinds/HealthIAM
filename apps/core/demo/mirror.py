@@ -188,6 +188,43 @@ def upsert_staff_login(spec: data.StaffSpec, *, baseline_role: str, now=None) ->
     return user, created
 
 
+def upsert_directory_account(spec, *, now=None):
+    """Create or refresh one mirrored account from a `StaffSpec` or an `AccountSpec`, the
+    way the account pass of a sync would. The GUID is the same one the login carries for a
+    staff member: it is the same AD object."""
+    from apps.directory.models import DirectoryAccount
+
+    now = now or timezone.now()
+    is_staff = isinstance(spec, data.StaffSpec)
+    values = {
+        "sam_account_name": spec.sam,
+        "upn": spec.upn,
+        "distinguished_name": spec.dn,
+        "given_name": spec.first_name,
+        "surname": spec.last_name,
+        "display_name": spec.cn if spec.first_name else "",
+        "mail": spec.upn if spec.first_name else "",
+        "title": spec.job_title if is_staff else spec.title,
+        "department": spec.department_name if is_staff else spec.department,
+        "employee_id": spec.employee_id,
+        "enabled": spec.enabled,
+        "when_created": data.ACCOUNT_CREATED,
+    }
+    account, created = DirectoryAccount.objects.get_or_create(
+        object_guid=data.user_guid(spec.sam),
+        defaults={
+            **values,
+            "kind": "user" if is_staff else spec.kind,
+            "last_logon_at": data.ACCOUNT_LAST_LOGON if spec.enabled else None,
+            "first_seen_at": now,
+            "last_seen_at": now,
+        },
+    )
+    if not created:
+        _apply(account, values)
+    return account, created
+
+
 def link_existing_login(username: str, cn: str, *, now=None) -> User | None:
     """Mark a pre-existing local login as one the sync manages.
 

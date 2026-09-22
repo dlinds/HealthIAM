@@ -78,6 +78,7 @@ All settings are read from the environment (or `.env`); see `.env.example`.
 | `AD_CA_BUNDLE`, `AD_TIMEOUT` | PEM of the internal CA (empty = system store; verification is always on); connect/receive timeout in seconds (10) |
 | `AD_USER_GROUP`, `AD_BASELINE_ROLE` | Group whose nested members get a login (`IAM-Users`); role they are guaranteed (`Help Desk`) |
 | `AD_GROUPS_SEARCH_BASES`, `AD_GROUPS_NAME_PATTERNS`, `AD_GROUPS_EXCLUDE_PATTERNS` | Semicolon-separated OU DNs, plus comma-separated globs to include and to exclude, selecting the AD groups to import and reference-check |
+| `AD_ACCOUNTS_SEARCH_BASES`, `AD_ACCOUNTS_EXCLUDE_PATTERNS`, `AD_EMPLOYEE_ID_ATTRIBUTE` | OUs whose user accounts are mirrored and linked to people by the employee ID in that attribute (`employeeID`); empty bases = no account mirror |
 | `AD_AUTH_ENABLED`, `AD_AUTH_TIMEOUT` | Let synced people sign in with their AD password (LDAPS bind); seconds to wait for the bind (60, long enough for a step-up approval) |
 | `AD_AUTH_MAX_FAILURES`, `AD_AUTH_FAILURE_WINDOW`, `AD_AUTH_LOCKOUT_SECONDS` | Wrong passwords per login inside the window before attempts stop reaching AD, and for how long. Keep under the domain's own lockout policy; `0` disables |
 | `SUPPORT_CONTACT` | Shown on the no-access page |
@@ -127,7 +128,12 @@ All settings are read from the environment (or `.env`); see `.env.example`.
   each level shows an *In AD* / *Not found in AD* badge and the dashboard and Reports carry a
   **broken references** list (CSV/XLSX). **Admin → Active Directory** shows the effective
   configuration, tests the connection, previews and applies a sync, and lists every run;
-  `manage.py sync_ad` does the same from a scheduled job. With `AD_AUTH_ENABLED` those people also
+  `manage.py sync_ad` does the same from a scheduled job. With `AD_ACCOUNTS_SEARCH_BASES`
+  the sync also mirrors the user accounts in those OUs and links each to the person with
+  that employee ID (or an Admin links one by hand, with a reason); the **AD accounts** page
+  is the deprovisioning worklist: enabled accounts of people who have left, accounts linked
+  to nobody, employee IDs matching nobody, disabled and expired accounts, all exportable, and
+  each person page shows their accounts. With `AD_AUTH_ENABLED` those people also
   sign in with their AD password, verified by an LDAPS bind. `manage.py demo_ad` drifts the
   seeded demo directory so a demo can show the catalog noticing a rename, a group that
   disappeared and one that arrived. See `docs/ad-setup.md`.
@@ -156,8 +162,8 @@ apps/people      PersonType (+ coordinators), ExternalOrganization, Person, Pers
                  PersonIdentifier, PositionAssignment, PersonAccess, services (reason-audited
                  writes, expected access), importers (HR people feed), reports,
                  bootstrap_person_types
-apps/directory   ADGroup, ADGroupRoute, DirectorySyncRun, LDAPS client, sync engine,
-                 routing, sync_ad, AD pages
+apps/directory   ADGroup, ADGroupRoute, DirectoryAccount, DirectorySyncRun, LDAPS client,
+                 sync engine (groups, logins, accounts + linking), routing, sync_ad, AD pages
 apps/core        base layout, dashboard, global search, audit history views,
                  demo/ (the synthetic directory seed_demo and demo_ad write)
 templates/       Django templates; partials/ for htmx fragments

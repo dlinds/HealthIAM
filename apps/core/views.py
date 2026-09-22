@@ -15,12 +15,18 @@ from apps.accounts.mixins import role_required
 from apps.accounts.models import User
 from apps.catalog.models import Application, Vendor
 from apps.directory import references
+from apps.directory.models import DirectoryAccount
 from apps.orgs.models import Department, JobCode, Position
 from apps.people.models import Person, PositionAssignment
 
 from . import audit
 
-PRE_ORDERED_BUCKETS = ("assignments_expiring_30", "people_without_current_assignment")
+PRE_ORDERED_BUCKETS = (
+    "assignments_expiring_30",
+    "people_without_current_assignment",
+    "enabled_accounts_inactive_people",
+    "accounts_without_person",
+)
 
 
 def _sample(key, qs):
@@ -84,6 +90,15 @@ def dashboard(request):
         # Already ordered by application and level; the items are AccessLevel objects.
         broken = [level for level, _status, _group in references.broken_references()]
         quality_items["broken_ad_references"] = (len(broken), broken[:8])
+    if getattr(settings, "AD_ACCOUNTS_ENABLED", False) or DirectoryAccount.objects.exists():
+        live = DirectoryAccount.objects.filter(is_active=True, enabled=True)
+        orphaned = live.filter(person__is_active=False).select_related("person")
+        unlinked = live.filter(person__isnull=True, kind=DirectoryAccount.Kind.USER)
+        for key, qs in (
+            ("enabled_accounts_inactive_people", orphaned),
+            ("accounts_without_person", unlinked),
+        ):
+            quality_items[key] = (qs.count(), list(qs.order_by("sam_account_name")[:8]))
     return render(
         request,
         "core/dashboard.html",

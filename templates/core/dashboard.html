@@ -50,12 +50,14 @@
               {% elif key == 'broken_ad_references' %}Access levels pointing at AD groups not found
               {% elif key == 'assignments_expiring_30' %}Position assignments ending within 30 days
               {% elif key == 'people_without_current_assignment' %}Active people with no current position
+              {% elif key == 'enabled_accounts_inactive_people' %}Enabled AD accounts of people who have left
+              {% elif key == 'accounts_without_person' %}AD accounts linked to nobody
               {% else %}Active positions with no defaults{% endif %}
             </button>
           </h2>
           <div id="q-{{ key }}" class="accordion-collapse collapse" data-bs-parent="#quality">
             <ul class="list-group list-group-flush small">
-              {% for obj in sample %}<li class="list-group-item"><a href="{{ obj.get_absolute_url }}">{% if key == 'positions_without_defaults' %}<span class="text-mono">{{ obj.code }}</span> {{ obj.display_name }}{% elif key == 'broken_ad_references' %}{{ obj.application.name }} · {{ obj.name }}{% elif key == 'assignments_expiring_30' %}{{ obj.person.display_name }} · <span class="text-mono">{{ obj.position.code }}</span> ends {{ obj.end_date|date:"Y-m-d" }}{% elif key == 'people_without_current_assignment' %}{{ obj.sort_name }}{% else %}{{ obj.name }}{% endif %}</a></li>{% endfor %}
+              {% for obj in sample %}<li class="list-group-item"><a href="{{ obj.get_absolute_url }}">{% if key == 'positions_without_defaults' %}<span class="text-mono">{{ obj.code }}</span> {{ obj.display_name }}{% elif key == 'broken_ad_references' %}{{ obj.application.name }} · {{ obj.name }}{% elif key == 'assignments_expiring_30' %}{{ obj.person.display_name }} · <span class="text-mono">{{ obj.position.code }}</span> ends {{ obj.end_date|date:"Y-m-d" }}{% elif key == 'people_without_current_assignment' %}{{ obj.sort_name }}{% elif key == 'enabled_accounts_inactive_people' or key == 'accounts_without_person' %}<span class="text-mono">{{ obj.sam_account_name }}</span>{% if obj.person %} · {{ obj.person.display_name }}{% elif obj.display_name %} · {{ obj.display_name }}{% endif %}{% else %}{{ obj.name }}{% endif %}</a></li>{% endfor %}
               {% if count > sample|length %}<li class="list-group-item text-body-tertiary">… and {{ count|add:"-8" }} more</li>{% endif %}
               {% if not count %}<li class="list-group-item text-body-secondary">Nothing to fix.</li>{% endif %}
             </ul>

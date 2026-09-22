@@ -7,6 +7,7 @@
 <li class="nav-item"><a class="nav-link {% if ns == 'orgs' and 'department' in url %}active{% endif %}" href="{% url 'orgs:department_list' %}">Departments</a></li>
 <li class="nav-item"><a class="nav-link {% if ns == 'orgs' and 'job_code' in url %}active{% endif %}" href="{% url 'orgs:job_code_list' %}">Job codes</a></li>
 {% if AD_ENABLED %}<li class="nav-item"><a class="nav-link {% if ns == 'directory' and url == 'group_list' %}active{% endif %}" href="{% url 'directory:group_list' %}">AD groups</a></li>{% endif %}
+{% if AD_ACCOUNTS_ENABLED %}<li class="nav-item"><a class="nav-link {% if ns == 'directory' and url == 'account_list' %}active{% endif %}" href="{% url 'directory:account_list' %}">AD accounts</a></li>{% endif %}
 <li class="nav-item dropdown">
   <a class="nav-link dropdown-toggle {% if ns == 'catalog' and 'application' not in url %}active{% endif %}" href="#" role="button" data-bs-toggle="dropdown">Vendors &amp; contacts</a>
   <ul class="dropdown-menu">

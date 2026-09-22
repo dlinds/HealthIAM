@@ -328,8 +328,9 @@ All authorization decisions live in `apps/accounts/permissions.py`.
 ## Directory (`apps/directory`)
 
 A read-only mirror of the parts of on-prem Active Directory HealthIAM cares about, filled
-by the LDAPS sync (`manage.py sync_ad` or Admin → Active Directory). Present but empty
-when `AD_SERVER_URIS` is not set. See `docs/ad-setup.md`.
+by the LDAPS sync (`manage.py sync_ad` or Admin → Active Directory): the groups access
+levels point at, and the user accounts linked to people. Present but empty when
+`AD_SERVER_URIS` is not set. See `docs/ad-setup.md`.
 
 ### ADGroup
 One AD group under the configured search bases whose name matches the configured
@@ -346,6 +347,30 @@ patterns. Membership is **not** imported. There is no foreign key from `AccessLe
 | `is_active`, `inactivated_at` | Deactivated (never deleted) when a run does not return the group; reactivated when it reappears. |
 
 Audited excluding `last_seen_at`, so a quiet run writes no history.
+
+### DirectoryAccount
+One AD user account under `AD_ACCOUNTS_SEARCH_BASES` (empty = the mirror is off; there is no
+fallback to the base DN). The lifecycle of `ADGroup`: keyed by objectGUID, deactivated and
+never deleted. Linked to a `Person` by employee ID or by hand; `docs/ad-setup.md` section 13
+has the linking rules.
+
+| Field | Notes |
+|---|---|
+| `object_guid` | objectGUID, unique. |
+| `sam_account_name` (indexed, also by `Lower`), `upn`, `distinguished_name` | Names. |
+| `given_name`, `surname`, `display_name`, `mail`, `title`, `department`, `manager_dn` | Copied from AD. |
+| `employee_id` | From the attribute named by `AD_EMPLOYEE_ID_ATTRIBUTE` (`employeeID`); indexed, not unique. |
+| `enabled` | From `userAccountControl`. |
+| `account_expires`, `last_logon_at` | Windows FILETIME attributes decoded by the client; 0 and the maximum mean never (null). `lastLogonTimestamp` replicates only every 9-14 days. |
+| `when_created`, `when_changed` | Copied from AD. |
+| `kind` | `user` / `admin` / `service` / `shared` / `unknown`, set by hand (Admin); the directory does not say what an account is for. Only `user` accounts count as *unlinked*. |
+| `person` | `SET_NULL` link to `people.Person` (`related_name="directory_accounts"`): a person is never deleted, but the link is a link, not ownership. |
+| `link_method`, `linked_at` | `employee_id` (the sync) or `manual` (the accounts page). A `manual` row is never touched by the sync: with a person it means "theirs, whatever the attribute says", without one "leave it unlinked". |
+| `first_seen_at`, `last_seen_at`, `is_active`, `inactivated_at` | As `ADGroup`. |
+
+Audited excluding `last_seen_at`, `last_logon_at` and `when_changed`, so a quiet run writes
+no history; a link or unlink stamps `person_id` and `person`, so it appears on the person's
+History tab with the reason (the employee ID for the sync, the typed reason for a hand link).
 
 ### ADGroupRoute
 An AD group carries no pointer to the system it belongs to; a naming convention is the
@@ -412,13 +437,13 @@ the same row.
 
 | Field | Notes |
 |---|---|
-| `scope` | `all`, `users`, `groups`. |
+| `scope` | `all`, `users`, `groups`, `accounts`. `all` includes the account pass only when `AD_ACCOUNTS_SEARCH_BASES` is set; `accounts` without it is a failed run. |
 | `status` | `pending` → `previewed` (dry run) → `completed`, or `failed`. A run left `pending` for more than 15 minutes is shown as abandoned. |
 | `trigger` | `manual` (admin page) or `scheduled` (`sync_ad`). |
 | `created_by` | The admin who started it; empty for scheduled runs. |
 | `started_at`, `finished_at`, `server` | Timing and the domain controller that answered. |
 | `group_dn` | Resolved DN of `AD_USER_GROUP` (users scope). |
-| `summary` | `{"users": {...} or null, "groups": {...} or null}` with `created`, `updated`, `reactivated`, `deactivated`, `unchanged`, `errors`, `rows`, `skipped`. An applied run that changed route-managed levels adds a `"routes"` part; a quiet one adds nothing. |
+| `summary` | `{"users": {...} or null, "groups": {...} or null}` with `created`, `updated`, `reactivated`, `deactivated`, `unchanged`, `errors`, `rows`, `skipped`, `read`. An `"accounts"` part is present only when the account pass ran, with `linked`, `unlinked` and `unmatched` on top. An applied run that changed route-managed levels adds a `"routes"` part; a quiet one adds nothing. |
 | `log` | Rows of `{kind, row, code, action, message, dn}`; `unchanged` rows are omitted. |
 | `error` | Why a failed run failed (the bind password is never included). |
 
@@ -453,12 +478,10 @@ including deletions.
 
 ## Future hooks
 
-- **AD accounts**: a mirror of user accounts linked to `Person` by `employeeID`, so a person
-  page shows their accounts and the dashboard shows enabled accounts of people who left.
-- **AD group membership**: `ADGroup` is keyed by objectGUID and carries the DN, so a
-  membership import (a `member` list per group, or per-user `memberOf`) can attach to it
-  without changing the group rows.
-- **Actual vs expected access**: with membership imported and accounts linked to people,
-  comparing a person's AD groups against the `ad_group` levels of their expected access gives
-  the "who has access they should not" report; the broken-reference report already uses the
-  same `ad_group_name` ↔ `ADGroup.name` match.
+- **AD group membership**: `ADGroup` is keyed by objectGUID and carries the DN, and
+  `DirectoryAccount` carries each account's DN, so a membership import (a `member` list per
+  group, or per-account `memberOf`) can attach to both without changing their rows.
+- **Actual vs expected access**: with membership imported, comparing the groups of a
+  person's linked accounts against the `ad_group` levels of their expected access gives the
+  "who has access they should not" report; the broken-reference report already uses the same
+  `ad_group_name` ↔ `ADGroup.name` match.

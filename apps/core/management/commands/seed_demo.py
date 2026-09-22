@@ -33,8 +33,8 @@ from apps.catalog.models import (
 from apps.core.demo import data as demo
 from apps.core.demo import mirror
 from apps.directory import reconcile
-from apps.directory.models import ADGroup, ADGroupRoute, DirectorySyncRun
-from apps.directory.sync import MISSING_GROUP_MESSAGE, SyncResult
+from apps.directory.models import ADGroup, ADGroupRoute, DirectoryAccount, DirectorySyncRun
+from apps.directory.sync import MISSING_GROUP_MESSAGE, SyncResult, link_accounts
 from apps.orgs.models import Department, JobCode, Position, Source
 from apps.people import services as people_services
 from apps.people.bootstrap import ensure_person_types
@@ -149,7 +149,7 @@ class Command(BaseCommand):
         self.stdout.write(
             "Demo directory: {groups} group(s) ({inactive} inactive), {routes} route(s), "
             "{route_levels} route-managed level(s), {logins} AD-managed login(s), "
-            "{runs} sync run(s).".format(**counts)
+            "{accounts} mirrored account(s), {runs} sync run(s).".format(**counts)
         )
         if settings.AD_SERVER_URIS == [demo.SERVER_URI]:
             self.stdout.write(
@@ -784,7 +784,13 @@ class Command(BaseCommand):
             )
             assign(who, code, "employee", -1000)
 
-        # Left last month. The Phase 4 demo directory keeps his account enabled.
+        # The seven AD-managed logins of the demo directory are people too: their accounts
+        # link to these records by employee ID.
+        for spec in demo.STAFF:
+            who = person(spec.first_name, spec.last_name, spec.employee_id, hire_date=day(-1000))
+            assign(who, spec.position_code, "employee", -1000)
+
+        # Left last month. The demo directory keeps his account enabled: the orphan worklist.
         paul = person("Paul", "Grant", "E1016", hire_date=day(-1300), manager=grace)
         assign(paul, "0400-7300", "employee", -1300)
         if paul.is_active:
@@ -868,6 +874,7 @@ class Command(BaseCommand):
         for spec in demo.GROUPS:
             mirror.upsert_group(spec, now=now)
         self._directory_logins(users, now)
+        self._directory_accounts(now)
         for spec in demo.ROUTES:
             mirror.upsert_route(spec, actor=users["admin"])
         mirror.reconcile_and_attach(None, demo.MIRRORED_NAMES, actor=users["admin"])
@@ -882,6 +889,7 @@ class Command(BaseCommand):
                 source=AccessLevel.Source.ROUTE, is_active=True
             ).count(),
             "logins": User.objects.filter(ad_managed=True).count(),
+            "accounts": DirectoryAccount.objects.count(),
             "runs": DirectorySyncRun.objects.count(),
         }
 
@@ -909,6 +917,13 @@ class Command(BaseCommand):
         for spec in demo.STAFF:
             mirror.upsert_staff_login(spec, baseline_role=settings.AD_BASELINE_ROLE, now=now)
         mirror.link_existing_login(demo.LINKED_LOGIN, demo.LINKED_LOGIN_CN, now=now)
+
+    def _directory_accounts(self, now):
+        """The account mirror: one account per managed login, plus the ones that have no
+        login, then the same employee-ID link pass a sync runs."""
+        for spec in (*demo.STAFF, *demo.ACCOUNTS):
+            mirror.upsert_directory_account(spec, now=now)
+        link_accounts(now=now)
 
     def _adopt_from_route(self, actor):
         """Take one route-managed level over by hand, so the "Taken over" badge has a row.

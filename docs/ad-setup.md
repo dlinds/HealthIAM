@@ -158,6 +158,9 @@ AD_GROUPS_EXCLUDE_PATTERNS=Domain *,Enterprise *,DnsAdmins,Protected Users,Key A
 | `AD_GROUPS_SEARCH_BASES` | `AD_BASE_DN` | Semicolon-separated OU DNs. |
 | `AD_GROUPS_NAME_PATTERNS` | empty (all) | Comma-separated globs, case-insensitive. Prefer empty. |
 | `AD_GROUPS_EXCLUDE_PATTERNS` | empty (none) | Comma-separated globs kept out; beats the patterns above. |
+| `AD_ACCOUNTS_SEARCH_BASES` | empty (off) | Semicolon-separated OU DNs holding user accounts to mirror and link to people. No fallback to the base DN. Section 13. |
+| `AD_ACCOUNTS_EXCLUDE_PATTERNS` | empty (none) | Comma-separated globs on the account name kept out of the mirror. |
+| `AD_EMPLOYEE_ID_ATTRIBUTE` | `employeeID` | The attribute carrying the HR employee ID that links an account to a person. `W009` warns when empty while accounts are mirrored. |
 
 Then run `python manage.py check`. The `directory.W00x` warnings are the AD configuration
 checks; they never stop the app from starting, so read them. **Admin → Active Directory**
@@ -189,13 +192,16 @@ Recommended order the first time:
    login). Logins with the **Admin** role (or superusers) are never linked by UPN or e-mail:
    the row is an error until you set **AD objectGUID** on that login in Django admin (Users →
    login → Directory) to the value the error names. Apply.
+3. **Accounts only**, once `AD_ACCOUNTS_SEARCH_BASES` is set and the HR people feed has
+   run (section 13). Compare the created count with the user count of those OUs; the
+   *unmatched* count is how many accounts carry an employee ID no person has. Apply.
 
 The same thing from the command line:
 
 ```sh
 python manage.py sync_ad --dry-run            # preview, recorded as a run, writes nothing
 python manage.py sync_ad                      # apply
-python manage.py sync_ad --groups-only        # or --users-only
+python manage.py sync_ad --groups-only        # or --users-only, --accounts-only
 ```
 
 The exit code is non-zero when the run failed or any entry had an error, and each error is
@@ -537,3 +543,86 @@ happened to it. `demo_ad restore` is the way back.
 
 The demo world lives in `apps/core/demo/data.py` (the inventory, and what each entry is there
 to demonstrate) and `apps/core/demo/mirror.py` (the writers both commands share).
+
+## 13. Account mirror
+
+With `AD_ACCOUNTS_SEARCH_BASES` set, every sync (or `sync_ad --accounts-only`) also mirrors
+the user accounts under those OUs and links each one to the person whose employee ID it
+carries. That is what turns the people database into an audit tool: the **AD accounts** page
+lists enabled accounts of people who have left, accounts nobody has been identified for, and
+accounts whose employee ID matches no person, and every person page shows their accounts.
+Membership is still not imported; the mirror is about accounts, not what they can reach.
+
+```
+AD_ACCOUNTS_SEARCH_BASES=OU=Staff,DC=corp,DC=example,DC=org;OU=Contractors,DC=corp,DC=example,DC=org
+AD_ACCOUNTS_EXCLUDE_PATTERNS=svc-*,*-adm
+AD_EMPLOYEE_ID_ATTRIBUTE=employeeID
+```
+
+There is deliberately no fallback to the base DN: mirroring every account in the domain,
+computers' and service accounts' OUs included, has to be an explicit choice. Name the OUs
+that hold people, and keep service, admin and shared accounts out with the exclude patterns
+or classify them afterwards (**Kind** on the accounts page: user, admin, service, shared),
+which takes them off the *unlinked* worklist.
+
+### What is mirrored
+
+The search is `(&(objectCategory=person)(objectClass=user))` under each base, paged like the
+group search, deduplicated by objectGUID across overlapping bases. Per account: the names
+(sAMAccountName, UPN, DN, given name, surname, display name), mail, title, department,
+manager DN, the employee ID from `AD_EMPLOYEE_ID_ATTRIBUTE`, the enabled flag from
+`userAccountControl`, `accountExpires`, `whenCreated`, `whenChanged` and
+`lastLogonTimestamp`. Rows are keyed by objectGUID, so a rename or a move updates the same
+row; an account that stops being returned is marked *no longer in AD* (never deleted) and
+comes back when it reappears. The same guards as for groups apply: an empty listing while
+mirrored accounts exist fails the run, and so does a run that would deactivate more than half
+of a mirror of twenty or more.
+
+### Linking rules
+
+1. After the upsert, every active account that is not linked *by hand* is matched by employee
+   ID against the people database (`Person.employee_id`, unique when set, active or inactive).
+   A match links the account (*by employee ID*, with the ID as the audit reason); an
+   employee-ID link whose ID changed or vanished is unlinked and the run page says so.
+2. A link made on the accounts page (**Link…**, with a reason) is *by hand* and survives every
+   later sync, whatever the attribute says. Unlinking by hand also sticks: the sync will not
+   re-link that account by employee ID until it is linked again.
+3. Two accounts may belong to one person (an admin account beside the daily one). One account
+   never belongs to two people.
+4. An account whose employee ID matches nobody is counted as *unmatched* on the run and listed
+   under **AD accounts → Employee ID matches nobody**: usually a person the HR feed has not
+   delivered yet, or an ID typed differently in the two systems.
+
+Run the HR people import before the first account sync, or link afterwards: a person created
+later is linked by the next run.
+
+### Worklists
+
+- **Enabled accounts of people who have left** (dashboard, admin page, `?show=orphaned`): the
+  deprovisioning list. The person is inactive in HealthIAM (separated by the HR feed or by
+  hand) while the account is still enabled.
+- **Accounts linked to nobody** (`?show=unlinked`): enabled user accounts (kind *user*) with no
+  person. Classify the ones that are not people, link the rest.
+- **Employee ID matches nobody** (`?show=unmatched`), **Disabled** and **Expired** (an
+  `accountExpires` in the past while still enabled).
+
+All lists export as CSV/XLSX. Every link and unlink lands in the person's History with the
+actor and reason.
+
+### Caveats
+
+- **`lastLogonTimestamp` is coarse.** It replicates only when it is more than 9-14 days out of
+  date, so *last logon* on the page can lag by two weeks. It is fine for "has not signed in
+  this quarter", not for "signed in yesterday".
+- **`accountExpires`** of 0 or the maximum value means *never*, shown as no expiry. An expired
+  account is still *enabled* in the `userAccountControl` sense; the page shows it as expired.
+- **Employee IDs are compared exactly** (after trimming). Leading zeros or a prefix present in
+  one system and not the other prevent the match; fix the attribute or link by hand.
+- **The employee ID attribute can be edited by AD operators.** A changed ID re-links the
+  account on the next run and the run page records it; links that must not move are made by
+  hand.
+- **Disabled and inactive are different things.** *Disabled* is AD's flag on the account;
+  *no longer in AD* means the sync stopped seeing it (deleted, or moved outside the search
+  bases). Both keep the row and its link.
+- **Seeded demo accounts** are synthetic like the rest of the demo directory: a real sync
+  marks them *no longer in AD*. Do not seed demo data on a real instance.

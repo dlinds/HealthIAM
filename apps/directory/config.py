@@ -26,6 +26,9 @@ class DirectorySettings:
     group_name_patterns: tuple[str, ...]
     group_exclude_patterns: tuple[str, ...] = ()
     page_size: int = 500
+    account_search_bases: tuple[str, ...] = ()
+    account_exclude_patterns: tuple[str, ...] = ()
+    employee_id_attribute: str = "employeeID"
 
     @classmethod
     def from_settings(cls) -> DirectorySettings:
@@ -41,12 +44,22 @@ class DirectorySettings:
             group_search_bases=tuple(settings.AD_GROUPS_SEARCH_BASES),
             group_name_patterns=tuple(settings.AD_GROUPS_NAME_PATTERNS),
             group_exclude_patterns=tuple(settings.AD_GROUPS_EXCLUDE_PATTERNS),
+            account_search_bases=tuple(getattr(settings, "AD_ACCOUNTS_SEARCH_BASES", ())),
+            account_exclude_patterns=tuple(getattr(settings, "AD_ACCOUNTS_EXCLUDE_PATTERNS", ())),
+            employee_id_attribute=getattr(settings, "AD_EMPLOYEE_ID_ATTRIBUTE", "employeeID") or "",
         )
 
     @property
     def effective_search_bases(self) -> tuple[str, ...]:
         """Configured group search bases, falling back to the domain base DN."""
         return self.group_search_bases or (self.base_dn,)
+
+    @property
+    def accounts_enabled(self) -> bool:
+        """The account mirror is on only when a search base names where accounts live.
+        Deliberately no fallback to the base DN: mirroring every account in the domain has
+        to be an explicit choice."""
+        return bool(self.account_search_bases)
 
     def public_dict(self) -> dict:
         """Everything an administrator may see. Never includes the bind password."""
@@ -63,4 +76,8 @@ class DirectorySettings:
             "group_name_patterns": list(self.group_name_patterns),
             "group_exclude_patterns": list(self.group_exclude_patterns),
             "page_size": self.page_size,
+            "account_search_bases": list(self.account_search_bases),
+            "account_exclude_patterns": list(self.account_exclude_patterns),
+            "employee_id_attribute": self.employee_id_attribute,
+            "accounts_enabled": self.accounts_enabled,
         }
