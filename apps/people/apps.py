@@ -28,4 +28,5 @@ class PeopleConfig(AppConfig):
             models.PersonName,
             models.PersonIdentifier,
             models.PositionAssignment,
+            models.PersonAccess,
         )

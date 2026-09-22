@@ -251,12 +251,34 @@ question. Ending an assignment keeps the row; deactivating a person ends every o
 the separation date and removes rows that had not started yet (audited, with the reason).
 Adding an assignment to an inactive person reactivates them under the same reason.
 
+### PersonAccess
+An access level one person should have beyond their positions' defaults (a **grant**), or
+should not have although a position gives it (an **exclusion**). Sits beside
+`PositionDefault`, with the approval trail an exception deserves.
+
+| Field | Notes |
+|---|---|
+| `person`, `access_level` | `access_level` is `PROTECT`. |
+| `kind` | `grant` / `exclusion`. |
+| `start_date`, `end_date` | Empty end = until removed. |
+| `approved_by` | A person: the manager, the sponsor or the application owner. |
+| `ticket_ref`, `justification` | The durable trail on the row; the audit `reason` is still required on every write. |
+| `notes`, `created_by` | |
+
+An exclusion constraint refuses two rows of the same kind for one person and level over
+overlapping dates. A grant follows the rules of a default: no retired application, no
+inactive level. Writes need the same right as a position default (`can_edit_defaults`: an
+Admin or an analyst for that application), and the entries are stamped with the person *and*
+the application, so both History tabs show them. When a route moves an AD group between
+levels, `services.move_person_access` moves the grants along with the defaults.
+
 ### Expected access
 `services.expected_access(person, on)` is the defaults of every position the person holds on
-that day, primary and alternates alike, one row per access level with the position codes it
-comes from. It is empty (with a stated reason) while the person is inactive or on leave, and
-marks rows whose level is inactive or whose application is retired as stale. The person page
-shows it, exports it, and refreshes it whenever the page's history changes.
+that day, primary and alternates alike, plus their current grants, minus their current
+exclusions -- one row per access level with the position codes it comes from and the grant or
+exclusion that applies. It is empty (with a stated reason) while the person is inactive or on
+leave, and marks rows whose level is inactive or whose application is retired as stale. The
+person page shows it, exports it, and refreshes it whenever the page's history changes.
 
 ### HR feed
 The `people` import kind (`docs/import-format.md`) upserts people by employee ID through the
@@ -363,10 +385,12 @@ its routes claim and nobody owns by hand. Three rules decide everything:
   advisory, so resolution walks past it: the adopt page still suggests that application while
   a dynamic service holds the group in the meantime.
 - **Defaults follow the group.** Whenever a group changes hands its position defaults move
-  with it, so nobody's effective access changes because the catalog reorganised itself. With
-  nowhere to move them, the old level is **deactivated and returned to `manual`** rather than
-  deleted — `PositionDefault.access_level` is `PROTECT`, and a level nothing manages must not
-  stay locked. A routed level with no defaults is deleted outright.
+  with it, and so do the person-level grants and exclusions on it, so nobody's effective
+  access changes because the catalog reorganised itself. With nowhere to move them, the old
+  level is **deactivated and returned to `manual`** rather than deleted —
+  `PositionDefault.access_level` and `PersonAccess.access_level` are `PROTECT`, and a level
+  nothing manages must not stay locked. A routed level with no defaults and no grants is
+  deleted outright.
 
 Route-managed levels cannot be edited or toggled: the buttons are absent and
 `access_level_form` / `access_level_toggle` raise `PermissionDenied`. Adopting the group is
@@ -421,15 +445,14 @@ lockout in Django admin.
 
 django-auditlog records create / update / delete for every model above. Entries carry
 `additional_data` with `reason` (for defaults and every people write), `application_id` (for
-application children), `position_id` (for defaults and position assignments), `person_id`
-(for a person's names, identifiers and assignments) and `person_type_id` (for coordinators)
+application children and person grants), `position_id` (for defaults and position
+assignments), `person_id` (for a person's names, identifiers, assignments and grants) and
+`person_type_id` (for coordinators)
 so the History tab on an application, position, person or person type shows related changes,
 including deletions.
 
 ## Future hooks
 
-- **Exceptions / grants**: a model linking a person to an `AccessLevel` with an approval
-  trail sits beside `PositionDefault` and is layered into `expected_access`.
 - **AD accounts**: a mirror of user accounts linked to `Person` by `employeeID`, so a person
   page shows their accounts and the dashboard shows enabled accounts of people who left.
 - **AD group membership**: `ADGroup` is keyed by objectGUID and carries the DN, so a

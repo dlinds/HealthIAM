@@ -10,6 +10,7 @@ from apps.orgs.models import Source
 from .models import (
     ExternalOrganization,
     Person,
+    PersonAccess,
     PersonIdentifier,
     PersonType,
     PersonTypeCoordinator,
@@ -293,6 +294,25 @@ class ExternalOrganizationForm(BootstrapModelForm):
         model = ExternalOrganization
         fields = ["name", "kind", "vendor", "contact_email", "contact_phone", "notes", "is_active"]
         widgets = {"notes": forms.Textarea(attrs={"rows": 2})}
+
+
+class PersonAccessForm(ReasonForm):
+    """A grant or an exclusion. The level comes from the picker (a hidden field the radio
+    supplies), the approver from the person picker."""
+
+    access_level = forms.IntegerField(widget=forms.HiddenInput)
+    kind = forms.ChoiceField(choices=PersonAccess.Kind.choices, initial=PersonAccess.Kind.GRANT)
+    start_date = forms.DateField(widget=_date_widget(), initial=timezone.localdate)
+    end_date = forms.DateField(
+        required=False, widget=_date_widget(), help_text="Leave empty until it is removed."
+    )
+    approved_by = forms.IntegerField(required=False, widget=forms.HiddenInput)
+    ticket_ref = forms.CharField(max_length=100, required=False, label="Ticket")
+    justification = forms.CharField(
+        required=False,
+        widget=forms.Textarea(attrs={"rows": 2}),
+        help_text="Why this person needs it beyond their position; kept on the row.",
+    )
 
 
 class PickerForm(BootstrapForm):

@@ -3,13 +3,19 @@
     <div class="small text-body-secondary">
       As of {{ expected.on|date:"Y-m-d" }}: the defaults of every position held today{% if expected.assignments %} ({% for a in expected.assignments %}<span class="text-mono">{{ a.position.code }}</span>{% if not forloop.last %}, {% endif %}{% endfor %}){% endif %}.
     </div>
-    {% if iam.can_export %}
     <div>
+      {% if expected.can_add %}
+      <button class="btn btn-sm btn-primary" type="button" hx-get="{% url 'people:access_add' person.pk %}" hx-target="#access-form-slot" hx-swap="innerHTML"><i class="bi bi-plus-lg me-1"></i>Grant or exclude…</button>
+      {% endif %}
+      {% if iam.can_export %}
       <a class="btn btn-sm btn-outline-primary" href="{% url 'people:expected_access' person.pk %}?format=xlsx"><i class="bi bi-file-earmark-excel me-1"></i>Excel</a>
       <a class="btn btn-sm btn-outline-primary" href="{% url 'people:expected_access' person.pk %}?format=csv"><i class="bi bi-filetype-csv me-1"></i>CSV</a>
+      {% endif %}
     </div>
-    {% endif %}
   </div>
+  {% if notice %}<div class="alert alert-success py-2">{{ notice }}</div>{% endif %}
+  {% for e in errors %}<div class="alert alert-danger py-2">{{ e }}</div>{% endfor %}
+  <div id="access-form-slot"></div>
   {% if expected.is_suspended %}
   <div class="alert alert-warning py-2">
     <i class="bi bi-pause-circle me-1"></i>{{ person.display_name }} is <strong>{{ expected.suspended_reason }}</strong>: expected access is suspended. What is listed is what they would have.
@@ -35,9 +41,15 @@
           {% elif r.access_level.access_model == 'in_app' %}{{ r.access_level.in_app_instructions|truncatechars:100 }}{% endif %}
         </td>
         <td class="small text-body-secondary">
-          {% if r.excluded_by %}<span class="badge text-bg-danger-subtle border border-danger-subtle text-danger-emphasis">Excluded</span>{% endif %}
-          {% if r.grant %}<span class="badge text-bg-primary-subtle border border-primary-subtle text-primary-emphasis">Grant</span>{% endif %}
+          {% if r.excluded_by %}<span class="badge text-bg-danger-subtle border border-danger-subtle text-danger-emphasis" title="{{ r.excluded_by.justification }}">Excluded{% if r.excluded_by.end_date %} until {{ r.excluded_by.end_date|date:"Y-m-d" }}{% endif %}</span>{% endif %}
+          {% if r.grant %}<span class="badge text-bg-primary-subtle border border-primary-subtle text-primary-emphasis" title="{{ r.grant.justification }}">Grant{% if r.grant.end_date %} until {{ r.grant.end_date|date:"Y-m-d" }}{% endif %}</span>{% if r.grant.ticket_ref %} <span class="text-mono">{{ r.grant.ticket_ref }}</span>{% endif %}{% if r.grant.approved_by %} · approved by {{ r.grant.approved_by.display_name }}{% endif %}{% endif %}
           {% for code in r.via_positions %}<span class="text-mono">{{ code }}</span>{% if not forloop.last %}, {% endif %}{% endfor %}
+        </td>
+        <td class="text-end text-nowrap">
+          {% if r.can_edit %}
+            {% if r.grant %}<button class="btn btn-sm btn-link text-danger p-0" type="button" hx-post="{% url 'people:access_end' person.pk r.grant.pk %}" hx-target="#expected-access" hx-swap="outerHTML" hx-prompt="Reason for ending the grant of {{ r.application.name }} · {{ r.access_level.name }}:">End grant</button>{% endif %}
+            {% if r.excluded_by %}<button class="btn btn-sm btn-link p-0" type="button" hx-post="{% url 'people:access_end' person.pk r.excluded_by.pk %}" hx-target="#expected-access" hx-swap="outerHTML" hx-prompt="Reason for lifting the exclusion of {{ r.application.name }} · {{ r.access_level.name }}:">Lift exclusion</button>{% endif %}
+          {% endif %}
         </td>
       </tr>
       {% endfor %}
@@ -47,4 +59,12 @@
   {% empty %}
   <p class="text-body-secondary mb-0">{% if expected.assignments %}The positions held today have no default access recorded.{% else %}No current position, so nothing is expected.{% endif %}</p>
   {% endfor %}
+  {% if past_access %}
+  <details class="mt-2">
+    <summary class="small text-body-secondary">{{ past_access|length }} past grant{{ past_access|length|pluralize }} / exclusion{{ past_access|length|pluralize }}</summary>
+    <ul class="list-group list-group-flush small mt-2">
+      {% for a in past_access %}<li class="list-group-item text-body-tertiary">{{ a.get_kind_display }} · {{ a.access_level.application.name }} · {{ a.access_level.name }} · {{ a.start_date|date:"Y-m-d" }} – {{ a.end_date|date:"Y-m-d" }}{% if a.ticket_ref %} · <span class="text-mono">{{ a.ticket_ref }}</span>{% endif %}</li>{% endfor %}
+    </ul>
+  </details>
+  {% endif %}
 </div>

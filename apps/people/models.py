@@ -637,3 +637,158 @@ class PositionAssignment(TimeStampedModel):
             "assignment": self.get_kind_display(),
             "kind": self._meta.verbose_name,
         }
+
+
+# --- Person-level access -------------------------------------------------------------------
+
+
+class PersonAccessQuerySet(models.QuerySet):
+    def current(self, on: date | None = None):
+        on = on or today()
+        return self.filter(start_date__lte=on).filter(
+            Q(end_date__isnull=True) | Q(end_date__gte=on)
+        )
+
+    def ended(self, on: date | None = None):
+        return self.filter(end_date__lt=on or today())
+
+    def grants(self):
+        return self.filter(kind=PersonAccess.Kind.GRANT)
+
+    def exclusions(self):
+        return self.filter(kind=PersonAccess.Kind.EXCLUSION)
+
+    def overlapping(
+        self, person, access_level, kind, start: date, end: date | None, *, exclude_pk=None
+    ):
+        qs = self.filter(person=person, access_level=access_level, kind=kind).filter(
+            Q(end_date__isnull=True) | Q(end_date__gte=start)
+        )
+        if end is not None:
+            qs = qs.filter(start_date__lte=end)
+        if exclude_pk:
+            qs = qs.exclude(pk=exclude_pk)
+        return qs
+
+
+class PersonAccess(TimeStampedModel):
+    """An access level one person should have beyond their positions' defaults (a *grant*),
+    or should not have although a position grants it (an *exclusion*). Sits beside
+    `PositionDefault`: the defaults say what a position gets, this says what a person gets
+    on top, with the approval trail the exception deserves."""
+
+    class Kind(models.TextChoices):
+        GRANT = "grant", "Grant"
+        EXCLUSION = "exclusion", "Exclusion"
+
+    person = models.ForeignKey(Person, on_delete=models.CASCADE, related_name="access_grants")
+    access_level = models.ForeignKey(
+        "catalog.AccessLevel", on_delete=models.PROTECT, related_name="person_grants"
+    )
+    kind = models.CharField(max_length=10, choices=Kind.choices, default=Kind.GRANT)
+    start_date = models.DateField()
+    end_date = models.DateField(null=True, blank=True, help_text="Empty until removed.")
+    approved_by = models.ForeignKey(
+        Person,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="approved_access",
+        help_text="Who approved it: the manager, the sponsor or the application owner.",
+    )
+    ticket_ref = models.CharField(
+        "Ticket", max_length=100, blank=True, help_text="Request or ticket number."
+    )
+    justification = models.TextField(
+        blank=True, help_text="Why this person needs it beyond their position."
+    )
+    notes = models.TextField(blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="+",
+        editable=False,
+    )
+
+    objects = PersonAccessQuerySet.as_manager()
+
+    class Meta:
+        ordering = ["-start_date", "-pk"]
+        verbose_name = "person access"
+        verbose_name_plural = "person access"
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(end_date__isnull=True) | Q(end_date__gte=F("start_date")),
+                name="person_access_end_after_start",
+                violation_error_message="The end date cannot be before the start date.",
+            ),
+            ExclusionConstraint(
+                name="exclude_overlapping_person_access",
+                expressions=[
+                    ("person", RangeOperators.EQUAL),
+                    ("access_level", RangeOperators.EQUAL),
+                    ("kind", RangeOperators.EQUAL),
+                    (_inclusive_range(), RangeOperators.OVERLAPS),
+                ],
+                violation_error_message="This person already has that row for the period.",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.person} · {self.access_level} ({self.get_kind_display().lower()})"
+
+    def get_absolute_url(self):
+        return reverse("people:person_detail", args=[self.person_id]) + "#tab-access"
+
+    @property
+    def application(self):
+        return self.access_level.application
+
+    @property
+    def is_grant(self) -> bool:
+        return self.kind == self.Kind.GRANT
+
+    def status_on(self, on: date | None = None) -> str:
+        on = on or today()
+        if self.start_date > on:
+            return PositionAssignment.Status.UPCOMING
+        if self.end_date is not None and self.end_date < on:
+            return PositionAssignment.Status.ENDED
+        return PositionAssignment.Status.ACTIVE
+
+    @property
+    def status(self) -> str:
+        return self.status_on()
+
+    def clean(self):
+        errors = {}
+        if self.end_date and self.start_date and self.end_date < self.start_date:
+            errors["end_date"] = "The end date cannot be before the start date."
+        if self.access_level_id and self.kind == self.Kind.GRANT:
+            level = self.access_level
+            if level.application.is_retired:
+                errors["access_level"] = (
+                    f"{level.application.name} is retired; it cannot be granted."
+                )
+            elif not level.is_active:
+                errors["access_level"] = f"Access level '{level.name}' is inactive."
+        if self.approved_by_id and self.approved_by_id == self.person_id:
+            errors["approved_by"] = "A person cannot approve their own access."
+        if errors:
+            raise ValidationError(errors)
+
+    # Stamped with the person and the application, so both History tabs collect it, as
+    # `PositionDefault` does for the position and the application.
+    def get_additional_data(self):
+        return {
+            "reason": getattr(self, "_audit_reason", ""),
+            "person_id": self.person_id,
+            "person": self.person.display_name,
+            "application_id": self.access_level.application_id,
+            "application": self.access_level.application.name,
+            "access_level": self.access_level.name,
+            "access": self.get_kind_display(),
+            "kind": self._meta.verbose_name,
+        }

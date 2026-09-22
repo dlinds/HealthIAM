@@ -12,10 +12,10 @@ from django.views.generic import CreateView, ListView, UpdateView
 from django_htmx.http import HttpResponseClientRedirect, reswap, retarget, trigger_client_event
 
 from apps.access.forms import ReasonForm
-from apps.access.views import _position_search
+from apps.access.views import _level_search, _position_search
 from apps.accounts import permissions as perms
 from apps.accounts.mixins import PermissionCheckMixin, role_required
-from apps.catalog.models import Application
+from apps.catalog.models import AccessLevel, Application
 from apps.orgs.models import Department, Position
 
 from . import services
@@ -29,6 +29,7 @@ from .forms import (
     ExternalOrganizationForm,
     IdentifierForm,
     NameChangeForm,
+    PersonAccessForm,
     PersonCreateForm,
     PersonForm,
     PersonTypeForm,
@@ -36,6 +37,7 @@ from .forms import (
 from .models import (
     ExternalOrganization,
     Person,
+    PersonAccess,
     PersonIdentifier,
     PersonType,
     PersonTypeCoordinator,
@@ -226,7 +228,10 @@ def _detail_context(request, person):
         "sponsored": list(
             person.sponsored_assignments.current().select_related("person", "position")
         ),
-        "expected": services.expected_access(person),
+        "expected": _expected(request, person),
+        "past_access": list(
+            person.access_grants.ended().select_related("access_level__application")[:20]
+        ),
         "can_edit": perms.can_edit_person(user, person),
         "can_add": perms.can_manage_people(user),
         "expiring_days": EXPIRING_DAYS,
@@ -255,6 +260,16 @@ def _form_slot(request, template, slot, **ctx):
     return reswap(retarget(resp, slot), "innerHTML")
 
 
+def _expected(request, person):
+    """The expected-access rows with what this user may do about each of them."""
+    user = request.user
+    expected = services.expected_access(person)
+    for row in expected.rows:
+        row.can_edit = perms.can_edit_defaults(user, row.application.pk)
+    expected.can_add = perms.can_edit_any_defaults(user) and person.is_active
+    return expected
+
+
 @role_required("can_view")
 def expected_access(request, pk):
     """The Expected access tab, and its export."""
@@ -273,7 +288,121 @@ def expected_access(request, pk):
     return render(
         request,
         "people/partials/expected_access.html",
-        {"person": person, "expected": services.expected_access(person)},
+        {
+            "person": person,
+            "expected": _expected(request, person),
+            "past_access": list(
+                person.access_grants.ended().select_related("access_level__application")[:20]
+            ),
+        },
+    )
+
+
+# --- Person-level access -------------------------------------------------------------------
+
+
+def _access_section(request, person, **extra):
+    ctx = {
+        "person": person,
+        "expected": _expected(request, person),
+        "past_access": list(
+            person.access_grants.ended().select_related("access_level__application")[:20]
+        ),
+    }
+    ctx.update(extra)
+    resp = render(request, "people/partials/expected_access.html", ctx)
+    return trigger_client_event(resp, "historyChanged")
+
+
+@role_required("can_edit_any_defaults")
+def access_add(request, pk):
+    person = get_object_or_404(Person, pk=pk)
+    user = request.user
+    if request.method == "POST":
+        form = PersonAccessForm(request.POST)
+        if form.is_valid():
+            d = form.cleaned_data
+            level = (
+                AccessLevel.objects.filter(pk=d["access_level"])
+                .select_related("application")
+                .first()
+            )
+            if level is None:
+                form.add_error("access_level", "Pick an access level from the list.")
+            approver = _person_or_none(d["approved_by"], field_name="approved_by", form=form)
+        if form.is_valid():
+            try:
+                row = services.add_person_access(
+                    person,
+                    level,
+                    kind=d["kind"],
+                    start_date=d["start_date"],
+                    end_date=d["end_date"],
+                    approved_by=approver,
+                    ticket_ref=d["ticket_ref"],
+                    justification=d["justification"],
+                    actor=user,
+                    reason=d["reason"],
+                )
+            except ValidationError as exc:
+                _add_errors(form, exc)
+            else:
+                label = f"{row.access_level.application.name} · {row.access_level.name}"
+                return _access_section(
+                    request, person, notice=f"Recorded {row.get_kind_display().lower()}: {label}."
+                )
+        return _form_slot(
+            request,
+            "people/partials/access_form.html",
+            "#access-form-slot",
+            person=person,
+            form=form,
+        )
+    q = request.GET.get("q", "").strip()
+    if "q" in request.GET:
+        taken = set(
+            person.access_grants.current()
+            .filter(kind=request.GET.get("kind") or PersonAccess.Kind.GRANT)
+            .values_list("access_level_id", flat=True)
+        )
+        return render(
+            request,
+            "access/partials/level_picker.html",
+            {
+                "results": _level_search(user, q, taken_ids=taken),
+                "q": q,
+                "taken_label": "already recorded",
+            },
+        )
+    return render(
+        request,
+        "people/partials/access_form.html",
+        {
+            "person": person,
+            "form": PersonAccessForm(initial={"kind": request.GET.get("kind", "grant")}),
+        },
+    )
+
+
+@require_POST
+@role_required("can_edit_any_defaults")
+def access_end(request, pk, access_id):
+    person = get_object_or_404(Person, pk=pk)
+    row = get_object_or_404(
+        PersonAccess.objects.select_related("access_level__application"),
+        person=person,
+        pk=access_id,
+    )
+    if not perms.can_edit_defaults(request.user, row.access_level.application_id):
+        raise PermissionDenied
+    reason = request.headers.get("HX-Prompt", "") or request.POST.get("reason", "")
+    label = f"{row.access_level.application.name} · {row.access_level.name}"
+    try:
+        services.end_person_access(row, actor=request.user, reason=reason)
+    except ValidationError as exc:
+        return _access_section(request, person, errors=_error_list(exc))
+    return _access_section(
+        request, person, notice=f"Ended {row.get_kind_display().lower()}: {label}."
     )
 
 

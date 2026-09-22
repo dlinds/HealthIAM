@@ -14,6 +14,8 @@ urlpatterns = [
     path("people/<int:pk>/deactivate/", views.deactivate, name="person_deactivate"),
     path("people/<int:pk>/reactivate/", views.reactivate, name="person_reactivate"),
     path("people/<int:pk>/expected/", views.expected_access, name="expected_access"),
+    path("people/<int:pk>/access/add/", views.access_add, name="access_add"),
+    path("people/<int:pk>/access/<int:access_id>/end/", views.access_end, name="access_end"),
     path("people/<int:pk>/name/", views.name_change, name="name_change"),
     path("people/<int:pk>/identifiers/add/", views.identifier_add, name="identifier_add"),
     path(

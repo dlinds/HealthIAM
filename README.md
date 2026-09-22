@@ -105,8 +105,11 @@ All settings are read from the environment (or `.env`); see `.env.example`.
   (Admin → People types sets the rules and the coordinators). On a person: add an alternate
   position, extend or end an assignment, change the name (the old one stays searchable),
   record identifiers, mark inactive on a separation date -- every step with a reason. The
-  Expected access tab is the union of the defaults of every position held today, suspended
-  while on leave or inactive, exportable as CSV/XLSX.
+  Expected access tab is the union of the defaults of every position held today plus the
+  person's grants minus their exclusions, suspended while on leave or inactive, exportable as
+  CSV/XLSX. A **grant** (access beyond the positions) or an **exclusion** (a default withheld)
+  is recorded there with the approver, ticket and justification by an Admin or the
+  application's analyst.
 - **Departments / Job codes / People**: maintained in-app or via CSV import with a dry-run
   preview (`docs/import-format.md`). A scheduled HR feed can call `manage.py import_hr`; the
   `people` kind creates employees with their positions, records name changes and transfers,
@@ -150,8 +153,9 @@ apps/catalog     Vendor, Contact, Application, AccessLevel, SupportTier, analyst
                  services (bulk adoption of AD groups)
 apps/access      PositionDefault, services (reason-audited writes), reports
 apps/people      PersonType (+ coordinators), ExternalOrganization, Person, PersonName,
-                 PersonIdentifier, PositionAssignment, services (reason-audited writes,
-                 expected access), reports, bootstrap_person_types
+                 PersonIdentifier, PositionAssignment, PersonAccess, services (reason-audited
+                 writes, expected access), importers (HR people feed), reports,
+                 bootstrap_person_types
 apps/directory   ADGroup, ADGroupRoute, DirectorySyncRun, LDAPS client, sync engine,
                  routing, sync_ad, AD pages
 apps/core        base layout, dashboard, global search, audit history views,

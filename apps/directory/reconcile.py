@@ -39,6 +39,7 @@ from django.db.models.functions import Lower
 
 from apps.access import services as access_services
 from apps.catalog.models import AccessLevel, Application
+from apps.people import services as people_services
 
 from . import routing
 from .models import ADGroup
@@ -70,6 +71,8 @@ EMPTY_SUMMARY = {
     "converted": 0,
     "defaults_moved": 0,
     "defaults_merged": 0,
+    "grants_moved": 0,
+    "grants_merged": 0,
     "scanned": 0,
 }
 
@@ -122,6 +125,8 @@ class ReconcileResult:
     errors: list[str] = field(default_factory=list)
     defaults_moved: int = 0
     defaults_merged: int = 0
+    grants_moved: int = 0
+    grants_merged: int = 0
     scanned: int = 0
     dry_run: bool = False
     trigger: str = Trigger.COMMAND
@@ -137,6 +142,8 @@ class ReconcileResult:
             or self.renamed
             or self.defaults_moved
             or self.defaults_merged
+            or self.grants_moved
+            or self.grants_merged
         )
 
     @property
@@ -167,6 +174,8 @@ class ReconcileResult:
             "converted": len(self.converted),
             "defaults_moved": self.defaults_moved,
             "defaults_merged": self.defaults_merged,
+            "grants_moved": self.grants_moved,
+            "grants_merged": self.grants_merged,
             "scanned": self.scanned,
         }
 
@@ -332,14 +341,16 @@ def _apply(plan: _Plan, *, actor, trigger: str, result: ReconcileResult) -> None
                 continue
             if level.source != AccessLevel.Source.ROUTE and level.is_active:
                 continue
-            moved, merged = access_services.move_defaults(
-                level,
-                target,
-                actor=actor,
-                reason=_reason(level, target, _cause(plan, level, trigger)),
-            )
+            reason = _reason(level, target, _cause(plan, level, trigger))
+            moved, merged = access_services.move_defaults(level, target, actor=actor, reason=reason)
             result.defaults_moved += moved
             result.defaults_merged += merged
+            # What a person was granted on the old level follows the group the same way.
+            moved, merged = people_services.move_person_access(
+                level, target, actor=actor, reason=reason
+            )
+            result.grants_moved += moved
+            result.grants_merged += merged
 
     for level in routed:
         if home_level is not None and level.pk == home_level.pk:
@@ -419,11 +430,11 @@ def _adapt(level: AccessLevel, plan: _Plan, result: ReconcileResult) -> None:
 def _retire(level: AccessLevel, result: ReconcileResult) -> None:
     """Release a route-managed level that no longer has a claim on its group."""
     label = f"{level.ad_group_name}: released from {level.application.name}"
-    if not level.position_defaults.exists():
+    if not level.position_defaults.exists() and not level.person_grants.exists():
         try:
             level.delete()
         except ProtectedError:
-            # A default arrived between the check and the delete.
+            # A default or a grant arrived between the check and the delete.
             pass
         else:
             result.deleted.append(label)
@@ -433,7 +444,8 @@ def _retire(level: AccessLevel, result: ReconcileResult) -> None:
     # becomes a row nobody can edit, reactivate or delete short of Django admin.
     level.source = AccessLevel.Source.MANUAL
     level.save(update_fields=["is_active", "source", "updated_at"])
-    result.deactivated.append(f"{label}; kept for its position defaults")
+    kept_for = "position defaults" if level.position_defaults.exists() else "person grants"
+    result.deactivated.append(f"{label}; kept for its {kept_for}")
 
 
 # --- Entry points ------------------------------------------------------------------------

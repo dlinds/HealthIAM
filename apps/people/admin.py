@@ -3,6 +3,7 @@ from django.contrib import admin
 from .models import (
     ExternalOrganization,
     Person,
+    PersonAccess,
     PersonIdentifier,
     PersonName,
     PersonType,
@@ -81,3 +82,18 @@ class PositionAssignmentAdmin(admin.ModelAdmin):
     search_fields = ("person__last_name", "person__first_name", "position__code")
     autocomplete_fields = ("person", "position", "sponsor", "organization")
     list_select_related = ("person", "position", "person_type")
+
+
+@admin.register(PersonAccess)
+class PersonAccessAdmin(admin.ModelAdmin):
+    list_display = ("person", "access_level", "kind", "start_date", "end_date", "ticket_ref")
+    list_filter = ("kind",)
+    search_fields = (
+        "person__last_name",
+        "person__first_name",
+        "access_level__name",
+        "access_level__application__name",
+        "ticket_ref",
+    )
+    autocomplete_fields = ("person", "access_level", "approved_by")
+    list_select_related = ("person", "access_level__application")

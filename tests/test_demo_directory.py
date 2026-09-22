@@ -25,7 +25,7 @@ from apps.core.demo import data as demo
 from apps.core.demo import mirror
 from apps.directory import reconcile, references
 from apps.directory.models import ADGroup, ADGroupRoute, DirectorySyncRun
-from apps.people.models import Person, PersonName, PositionAssignment
+from apps.people.models import Person, PersonAccess, PersonName, PositionAssignment
 
 from . import factories
 
@@ -87,6 +87,7 @@ def world_snapshot(stable=False):
         rows(Person.objects.all()),
         rows(PersonName.objects.all()),
         rows(PositionAssignment.objects.all()),
+        rows(PersonAccess.objects.all()),
     )
 
 

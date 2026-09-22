@@ -9,7 +9,7 @@
 <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
   <div>
     <h1 class="h3 mb-1">Who should have <a href="{{ application.get_absolute_url }}">{{ application.name }}</a></h1>
-    <div class="text-body-secondary small">Active people whose current positions receive each access level by default. People on leave are left out. Compare with <a href="{% url 'access:who_gets' application.pk %}">who gets it by position</a>.</div>
+    <div class="text-body-secondary small">Active people whose current positions receive each access level by default or who hold a grant, minus those excluded. People on leave are left out. Compare with <a href="{% url 'access:who_gets' application.pk %}">who gets it by position</a>.</div>
   </div>
   <div>
     <form class="d-inline" method="get" onsubmit="event.preventDefault(); var v=this.app.value; if(v) window.location='/people/reports/who-should-have/'+v+'/';">
@@ -32,10 +32,10 @@
     {% for e in entries %}
       <tr>
         <td style="width:35%"><a href="{{ e.person.get_absolute_url }}">{{ e.person.sort_name }}</a>{% if e.person.employee_id %} <span class="text-mono small text-body-secondary">{{ e.person.employee_id }}</span>{% endif %}</td>
-        <td class="small">{% for a in e.assignments %}<span class="text-mono">{{ a.position.code }}</span> {{ a.display_title }} <span class="badge text-bg-light border">{{ a.person_type.name }}</span>{% if a.end_date %} <span class="badge {{ a|days_badge }}">until {{ a.end_date|date:"Y-m-d" }}</span>{% endif %}{% if not forloop.last %}<br>{% endif %}{% endfor %}</td>
+        <td class="small">{% for a in e.assignments %}<span class="text-mono">{{ a.position.code }}</span> {{ a.display_title }} <span class="badge text-bg-light border">{{ a.person_type.name }}</span>{% if a.end_date %} <span class="badge {{ a|days_badge }}">until {{ a.end_date|date:"Y-m-d" }}</span>{% endif %}{% if not forloop.last %}<br>{% endif %}{% endfor %}{% if e.grant %}{% if e.assignments %}<br>{% endif %}<span class="badge text-bg-primary-subtle border border-primary-subtle text-primary-emphasis">Grant</span>{% if e.grant.ticket_ref %} <span class="text-mono">{{ e.grant.ticket_ref }}</span>{% endif %}{% if e.grant.end_date %} until {{ e.grant.end_date|date:"Y-m-d" }}{% endif %}{% endif %}</td>
       </tr>
     {% empty %}
-      <tr><td class="text-body-secondary">Nobody, through positions.</td></tr>
+      <tr><td class="text-body-secondary">Nobody, through positions or grants.</td></tr>
     {% endfor %}
     </tbody>
   </table>

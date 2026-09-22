@@ -24,6 +24,7 @@ from apps.orgs.models import Position, Source
 
 from .models import (
     Person,
+    PersonAccess,
     PersonIdentifier,
     PersonName,
     PersonType,
@@ -465,6 +466,129 @@ def adopt_assignment(
     return assignment
 
 
+# --- Person-level access --------------------------------------------------------------
+
+
+def _check_can_grant(actor, level: AccessLevel, system: bool):
+    """The same rule as position defaults: an Admin, or an analyst for the application."""
+    _authorize(
+        system or perms.can_edit_defaults(actor, level.application_id),
+        f"You are not an analyst for {level.application.name}.",
+        "access_level",
+    )
+
+
+def add_person_access(
+    person: Person,
+    access_level: AccessLevel,
+    *,
+    kind: str = PersonAccess.Kind.GRANT,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    approved_by: Person | None = None,
+    ticket_ref: str = "",
+    justification: str = "",
+    notes: str = "",
+    actor,
+    reason: str,
+    system: bool = False,
+) -> PersonAccess:
+    reason = require_reason(reason)
+    _check_can_grant(actor, access_level, system)
+    if not person.is_active:
+        raise ValidationError({"person": f"{person.display_name} is inactive."})
+    row = PersonAccess(
+        person=person,
+        access_level=access_level,
+        kind=kind,
+        start_date=start_date or today(),
+        end_date=end_date,
+        approved_by=approved_by,
+        ticket_ref=ticket_ref[:100],
+        justification=justification,
+        notes=notes,
+        created_by=actor if actor and actor.pk else None,
+    )
+    row.clean()
+    clash = PersonAccess.objects.overlapping(
+        person, access_level, kind, row.start_date, row.end_date
+    ).first()
+    if clash is not None:
+        raise ValidationError(
+            {
+                "access_level": (
+                    f"Already has a {row.get_kind_display().lower()} for "
+                    f"{access_level.name} ({_span(clash)})."
+                )
+            }
+        )
+    row._audit_reason = reason
+    try:
+        with set_actor(actor), transaction.atomic():
+            row.save()
+    except IntegrityError:
+        raise ValidationError({"access_level": "This person already has that row for the period."})
+    return row
+
+
+def end_person_access(
+    row: PersonAccess, *, end_date: date | None = None, actor, reason: str, system: bool = False
+) -> PersonAccess:
+    reason = require_reason(reason)
+    _check_can_grant(actor, row.access_level, system)
+    end_date = end_date or today()
+    if end_date < row.start_date:
+        raise ValidationError({"end_date": "The end date cannot be before the start date."})
+    if row.end_date is not None and row.end_date < today():
+        raise ValidationError({"end_date": "This row has already ended."})
+    row.end_date = end_date
+    row._audit_reason = reason
+    with set_actor(actor), transaction.atomic():
+        row.save()
+    return row
+
+
+def move_person_access(
+    source_level: AccessLevel, target_level: AccessLevel, *, actor=None, reason: str
+) -> tuple[int, int]:
+    """Re-point every person grant and exclusion on `source_level` at `target_level`.
+    Returns `(moved, merged)`.
+
+    The system counterpart of `apps.access.services.move_defaults`, called by the route
+    reconciler when an AD group changes hands: the level a person was granted moves house,
+    and the grant has to follow or the person silently loses it. Like `move_defaults` it
+    skips the analyst check, and like it the merge is lossy: a person who already holds the
+    target row for an overlapping period keeps that one and the source row is deleted.
+    """
+    reason = require_reason(reason)
+    if source_level.pk == target_level.pk:
+        return (0, 0)
+    if target_level.application.is_retired:
+        raise ValidationError(
+            {"access_level": f"{target_level.application.name} is retired; it cannot be granted."}
+        )
+    if not target_level.is_active:
+        raise ValidationError({"access_level": f"Access level '{target_level.name}' is inactive."})
+    rows = list(source_level.person_grants.select_related("person", "access_level__application"))
+    if not rows:
+        return (0, 0)
+    moved = merged = 0
+    with set_actor(actor), transaction.atomic():
+        for row in rows:
+            row._audit_reason = reason
+            clash = PersonAccess.objects.overlapping(
+                row.person, target_level, row.kind, row.start_date, row.end_date
+            ).exists()
+            if clash:
+                row.delete()
+                merged += 1
+            else:
+                row.access_level = target_level
+                row.save(update_fields=["access_level", "updated_at"])
+                moved += 1
+    return moved, merged
+
+
 # --- Expected access -------------------------------------------------------------------
 
 
@@ -547,6 +671,17 @@ def expected_access(person: Person, on: date | None = None) -> ExpectedAccess:
         for default in defaults:
             row = rows.setdefault(default.access_level_id, ExpectedRow(default.access_level))
             row.via_positions.append(default.position.code)
+    # Grants add levels the positions do not give; exclusions withhold ones they do.
+    for access in (
+        person.access_grants.current(on)
+        .select_related("access_level__application", "approved_by")
+        .order_by("start_date")
+    ):
+        row = rows.setdefault(access.access_level_id, ExpectedRow(access.access_level))
+        if access.is_grant:
+            row.grant = access
+        else:
+            row.excluded_by = access
     ordered = sorted(
         rows.values(),
         key=lambda r: (

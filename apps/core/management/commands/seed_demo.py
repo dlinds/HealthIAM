@@ -124,7 +124,7 @@ class Command(BaseCommand):
             contacts = self._contacts(vendors, users)
             apps = self._applications(vendors, contacts, users)
             self._defaults(apps, positions, users["admin"])
-            people = self._people(users, positions, vendors)
+            people = self._people(users, positions, vendors, apps)
             counts = self._directory(users, positions)
         self.stdout.write(f"People: {people} on record.")
         self.stdout.write(self.style.SUCCESS("Demo data loaded."))
@@ -655,7 +655,7 @@ class Command(BaseCommand):
 
     # --- People ---------------------------------------------------------------------
 
-    def _people(self, users, positions, vendors):
+    def _people(self, users, positions, vendors, apps):
         """The workforce the people database exists for: employees on the seeded positions
         (one with an alternate position, one on leave, one who left last month, one who
         changed her name), an employed and an affiliated provider, a traveler about to
@@ -819,6 +819,34 @@ class Command(BaseCommand):
         assign(dana, "0500-7400", "vendor", -20, 60, organization=epic, sponsor=grace)
         ruth = person("Ruth", "Adler")
         assign(ruth, "0600-7500", "volunteer", -365, sponsor=nora)
+
+        # Beyond the positions: a grant with its ticket, and an exclusion.
+        def access(who, app_key, level_name, kind, **fields):
+            level = AccessLevel.objects.get(application=apps[app_key], name=level_name)
+            if who.access_grants.filter(access_level=level, kind=kind).exists():
+                return
+            people_services.add_person_access(
+                who, level, kind=kind, actor=actor, reason=reason, system=True, **fields
+            )
+
+        access(
+            ravi,
+            "Epic",
+            "Read-only chart review",
+            "grant",
+            approved_by=grace,
+            ticket_ref="REQ0012345",
+            justification="Validates Epic build against live charts during the upgrade.",
+            end_date=day(120),
+        )
+        access(
+            daniel,
+            "PACS",
+            "Clinical viewer",
+            "exclusion",
+            approved_by=maria,
+            justification="Restricted at the manager's request pending a review.",
+        )
         return Person.objects.count()
 
     # --- Active Directory -----------------------------------------------------------

@@ -130,7 +130,8 @@ def default_add(request, pk):
     q = request.GET.get("q", "").strip()
     results = None
     if "q" in request.GET:
-        results = _level_search(user, position, q)
+        taken = set(position.defaults.values_list("access_level_id", flat=True))
+        results = _level_search(user, q, taken_ids=taken)
         return render(
             request,
             "access/partials/level_picker.html",
@@ -150,7 +151,9 @@ APP_LIMIT = 15
 LEVELS_PER_APP = 12
 
 
-def _level_search(user, position, q, limit=APP_LIMIT):
+def _level_search(user, q, *, taken_ids=(), limit=APP_LIMIT):
+    """Applications the user may grant from, with their active levels; `taken_ids` marks
+    the levels already held (a position's defaults, or a person's current grants)."""
     apps_qs = (
         Application.objects.exclude(lifecycle_status=Application.Lifecycle.RETIRED)
         .prefetch_related("access_levels")
@@ -165,7 +168,7 @@ def _level_search(user, position, q, limit=APP_LIMIT):
         ).distinct()
     if not perms.is_admin(user):
         apps_qs = apps_qs.filter(analyst_assignments__user=user).distinct()
-    existing = set(position.defaults.values_list("access_level_id", flat=True))
+    existing = set(taken_ids)
     results = []
     for app in apps_qs[:limit]:
         levels = [lvl for lvl in app.access_levels.all() if lvl.is_active]

@@ -13,7 +13,7 @@ from apps.catalog.models import Application
 from apps.core import audit
 
 from . import services
-from .models import Person, PersonName, PositionAssignment, today
+from .models import Person, PersonAccess, PersonName, PositionAssignment, today
 
 ASSIGNMENT_COLUMNS = [
     "person",
@@ -189,15 +189,18 @@ WHO_SHOULD_HAVE_COLUMNS = [
     "person",
     "employee_id",
     "type",
+    "source",
     "positions",
+    "ticket",
     "ends",
 ]
 
 
 def who_should_have(application: Application, on: date | None = None) -> dict:
-    """`{level: [{"person", "positions", "assignments"}]}` for every level of the
-    application: the active people whose current positions receive it by default. People
-    on leave are left out, as their expected access is suspended."""
+    """`{level: [{"person", "positions", "assignments", "grant"}]}` for every level of
+    the application: the active people whose current positions receive it by default or who
+    hold a current grant, minus those with a current exclusion. People on leave are left
+    out, as their expected access is suspended."""
     on = on or today()
     levels = list(application.access_levels.order_by("sort_order", "name"))
     levels_by_position: dict[int, list] = {}
@@ -216,13 +219,34 @@ def who_should_have(application: Application, on: date | None = None) -> dict:
         .order_by("person__last_name", "person__first_name", "person_id", "kind")
     )
     grouped: dict = {lvl: {} for lvl in levels}
+
+    def entry_for(level, person):
+        return grouped.setdefault(level, {}).setdefault(
+            person.pk, {"person": person, "positions": [], "assignments": [], "grant": None}
+        )
+
     for a in assignments:
         for level in levels_by_position.get(a.position_id, []):
-            entry = grouped.setdefault(level, {}).setdefault(
-                a.person_id, {"person": a.person, "positions": [], "assignments": []}
-            )
+            entry = entry_for(level, a.person)
             entry["positions"].append(a.position.code)
             entry["assignments"].append(a)
+    access_rows = (
+        PersonAccess.objects.current(on)
+        .filter(
+            access_level__application=application,
+            person__is_active=True,
+            person__on_leave=False,
+        )
+        .select_related("person", "access_level")
+    )
+    excluded = []
+    for row in access_rows:
+        if row.is_grant:
+            entry_for(row.access_level, row.person)["grant"] = row
+        else:
+            excluded.append(row)
+    for row in excluded:
+        grouped.get(row.access_level, {}).pop(row.person_id, None)
     return {
         level: sorted(people.values(), key=lambda e: e["person"].sort_name.lower())
         for level, people in grouped.items()
@@ -233,6 +257,12 @@ def who_should_have_rows(application: Application, on: date | None = None):
     for level, people in who_should_have(application, on).items():
         for entry in people:
             ends = [a.end_date for a in entry["assignments"] if a.end_date]
+            grant = entry["grant"]
+            if grant is not None and grant.end_date:
+                ends.append(grant.end_date)
+            source = "position"
+            if grant is not None:
+                source = "position + grant" if entry["positions"] else "grant"
             yield [
                 application.name,
                 level.name,
@@ -241,6 +271,8 @@ def who_should_have_rows(application: Application, on: date | None = None):
                 entry["person"].sort_name,
                 entry["person"].employee_id,
                 "; ".join(sorted({a.person_type.name for a in entry["assignments"]})),
+                source,
                 "; ".join(entry["positions"]),
+                grant.ticket_ref if grant is not None else "",
                 min(ends).isoformat() if ends else "",
             ]
