@@ -247,11 +247,17 @@ class ApplicationChildAuditMixin:
     changes to aliases, levels, tiers, contacts, and analysts, including deletions."""
 
     def get_additional_data(self):
-        return {
+        data = {
             "application_id": self.application_id,
             "application": self.application.name,
             "kind": self._meta.verbose_name,
         }
+        # Catalog edits take no reason; the rare write that does (converting a level from an
+        # AD group to an Entra group) attaches one transiently, as the access services do.
+        reason = getattr(self, "_audit_reason", "")
+        if reason:
+            data["reason"] = reason
+        return data
 
 
 class ApplicationAlias(ApplicationChildAuditMixin, TimeStampedModel):

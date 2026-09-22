@@ -41,7 +41,7 @@ from apps.access import services as access_services
 from apps.catalog.models import AccessLevel, Application
 from apps.people import services as people_services
 
-from . import routing
+from . import routing, writeback
 from .models import ADGroup
 
 logger = logging.getLogger(__name__)
@@ -491,9 +491,17 @@ def reconcile_names(
         for start in range(0, len(keys), CHUNK):
             chunk = keys[start : start + CHUNK]
             groups, levels = _load(chunk)
+            mastered = writeback.cloud_mastered_keys(chunk)
             for key in chunk:
                 name, group_active, description = groups.get(key, (None, False, ""))
                 rows = levels.get(key, [])
+                if key in mastered:
+                    # A group whose membership lives in the cloud -- the written-back copy of a
+                    # cloud group, or one whose source of authority moved there: the catalog
+                    # holds the cloud group, so no route starts holding it or seals a level on
+                    # it. A level a route already held is left alone rather than retired under
+                    # anyone's position defaults; converting it is a person's decision.
+                    continue
                 if name is None:
                     if not rows:
                         continue

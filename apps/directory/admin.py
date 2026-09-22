@@ -13,6 +13,8 @@ SYNC_OWNED_FIELDS = (
     "category",
     "managed_by_dn",
     "when_changed",
+    "object_sid",
+    "cloud_object_id",
     "first_seen_at",
     "last_seen_at",
     "is_active",

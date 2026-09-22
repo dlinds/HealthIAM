@@ -238,7 +238,15 @@ class AccessLevelForm(ApplicationScopedForm):
         cleaned = super().clean()
         model = cleaned.get("access_model")
         # Imported here: both apps import the catalog.
-        if model == AccessLevel.AccessModel.ENTRA_GROUP:
+        if model == AccessLevel.AccessModel.AD_GROUP:
+            name = (cleaned.get("ad_group_name") or "").strip()
+            if name and self._touched("ad_group_name", "access_model"):
+                from apps.directory import writeback
+
+                refusal = writeback.refusal(name)
+                if refusal:
+                    self.add_error("ad_group_name", refusal)
+        elif model == AccessLevel.AccessModel.ENTRA_GROUP:
             group_id = cleaned.get("entra_group_id")
             if group_id and self._touched("entra_group_id", "access_model"):
                 from django.core.exceptions import ValidationError

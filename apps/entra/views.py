@@ -1,6 +1,6 @@
 """Entra ID pages: the cloud group list, picker and adoption flow, the account worklists, the
-broken-reference list, and Admin > Entra ID (configuration, architecture, connection test,
-Sync now, run history).
+broken-reference and conversion lists, and Admin > Entra ID (configuration, architecture,
+connection test, Sync now, run history).
 
 Every view carries its own permission gate. The connection test and the sync views call
 `sync.build_client()` by module attribute so the test-suite's fake tenant replaces Graph
@@ -29,6 +29,8 @@ from apps.accounts import permissions as perms
 from apps.accounts.mixins import PermissionCheckMixin, role_required
 from apps.accounts.models import User
 from apps.catalog.models import AccessLevel, Application
+from apps.directory import writeback
+from apps.directory.models import ADGroup, DirectoryAccount
 from apps.orgs.models import Position
 from apps.people import services as people_services
 from apps.people.forms import PersonCreateForm
@@ -36,7 +38,7 @@ from apps.people.models import Person
 
 from . import checks, references, services, sync, worklists
 from .config import EntraSettings
-from .forms import AccountKindForm, AccountLinkForm, SyncStartForm
+from .forms import AccountKindForm, AccountLinkForm, ConvertLevelForm, SyncStartForm
 from .graph import ConnectionInfo
 from .models import EntraAccount, EntraGroup, EntraSyncRun
 
@@ -126,6 +128,38 @@ def _levels_by_group(groups) -> dict:
     return result
 
 
+def _ad_groups_by_name(groups) -> dict:
+    """`{lower(name): ADGroup}` for the synced groups whose AD original is in the LDAPS mirror."""
+    if not getattr(settings, "AD_ENABLED", False):
+        return {}
+    names = {
+        g.on_premises_sam_account_name.lower() for g in groups if g.on_premises_sam_account_name
+    }
+    if not names:
+        return {}
+    return {
+        g.lname: g
+        for g in ADGroup.objects.annotate(lname=Lower("name"))
+        .filter(lname__in=names)
+        .order_by("-is_active", "name")
+    }
+
+
+def _ad_copies(groups) -> dict:
+    """`{object_id: ADGroup}` for the cloud groups group writeback copied into the LDAPS mirror."""
+    if not getattr(settings, "AD_ENABLED", False):
+        return {}
+    ids = [g.object_id for g in groups if g.source != EntraGroup.Source.SYNCED]
+    if not ids:
+        return {}
+    copies: dict = {}
+    for group in writeback.written_back(ADGroup.objects.filter(cloud_object_id__in=ids)).order_by(
+        "-is_active", "name"
+    ):
+        copies.setdefault(group.cloud_object_id, group)
+    return copies
+
+
 class EntraGroupListView(PermissionCheckMixin, ListView):
     """Browsable mirror of the tenant's groups with a "who references it" column."""
 
@@ -178,8 +212,13 @@ class EntraGroupListView(PermissionCheckMixin, ListView):
         ctx = super().get_context_data(**kwargs)
         groups = list(ctx["object_list"])
         levels = _levels_by_group(groups)
+        originals = _ad_groups_by_name(groups)
+        copies = _ad_copies(groups)
         for group in groups:
             group.referencing_levels = levels.get(group.pk, [])
+            key = (group.on_premises_sam_account_name or "").lower()
+            group.ad_original = originals.get(key) if key else None
+            group.ad_copy = copies.get(group.object_id)
         ctx.update(
             object_list=groups,
             q=self.q,
@@ -284,8 +323,11 @@ def group_adopt(request):
         url = reverse("entra:group_adopt")
         return redirect(f"{url}?{urlencode({'q': q})}" if q else url)
 
-    groups = assignable(EntraGroup.objects.filter(is_active=True)).filter(
-        ~Exists(_entra_levels_for(OuterRef("object_id")).filter(is_active=True))
+    # A group an AD-group level still names is on the conversion worklist instead.
+    groups = (
+        assignable(EntraGroup.objects.filter(is_active=True))
+        .filter(~Exists(_entra_levels_for(OuterRef("object_id")).filter(is_active=True)))
+        .exclude(object_id__in=list(services.pending_conversions()))
     )
     if q:
         groups = groups.filter(Q(display_name__icontains=q) | Q(description__icontains=q))
@@ -304,7 +346,7 @@ def group_adopt(request):
     )
 
 
-# --- Broken references ------------------------------------------------------------------------
+# --- Broken references and conversions -------------------------------------------------------
 
 
 @role_required("can_export")
@@ -329,10 +371,48 @@ def broken_references(request):
         {
             "rows": [{"level": level, "ref": ref} for level, ref in references.broken_references()],
             "groups_synced": references.groups_synced(),
+            "verifies_ad_groups": references.verifies_ad_groups(),
             "patterns": settings.ENTRA_GROUPS_NAME_PATTERNS,
             "exclude_patterns": settings.ENTRA_GROUPS_EXCLUDE_PATTERNS,
         },
     )
+
+
+@role_required("can_view")
+def conversions(request):
+    """AD-group levels whose group is mastered in the cloud now: the conversion worklist."""
+    rows = [
+        {
+            "level": level,
+            "group": group,
+            "can_convert": perms.can_edit_access_levels(request.user, level.application),
+        }
+        for level, group in references.convertible_levels()
+    ]
+    return render(request, "entra/conversions.html", {"rows": rows})
+
+
+@require_POST
+def level_convert(request, level_id):
+    level = get_object_or_404(AccessLevel.objects.select_related("application"), pk=level_id)
+    if not perms.can_edit_access_levels(request.user, level.application):
+        raise PermissionDenied
+    form = ConvertLevelForm(request.POST)
+    if not form.is_valid():
+        messages.error(request, "Give a reason for converting the level.")
+        return redirect("entra:conversions")
+    group = get_object_or_404(EntraGroup, object_id=form.cleaned_data["group"])
+    try:
+        services.convert_level(level, group, actor=request.user, reason=form.cleaned_data["reason"])
+    except ValidationError as exc:
+        messages.error(request, _errors(exc))
+    else:
+        messages.success(
+            request,
+            f"{level.application.name} · {level.name} now grants the Entra group "
+            f"{group.display_name}; its position defaults are unchanged.",
+        )
+    return redirect("entra:conversions")
 
 
 # --- Admin > Entra ID -------------------------------------------------------------------------
@@ -367,7 +447,7 @@ def architecture(run: EntraSyncRun | None) -> dict:
         label, detail = (
             "Hybrid, seen through Entra ID",
             "The tenant synchronizes from on-premises AD, but HealthIAM has no LDAPS "
-            "configuration: it sees Active Directory only through what Entra Connect "
+            "configuration: AD-group levels are checked against the copies Entra Connect "
             "synchronizes.",
         )
     elif ad:
@@ -438,6 +518,7 @@ def _status_context(runs):
         "managed_inactive": managed_inactive,
         "groups_synced": synced,
         "broken_count": len(references.broken_references()) if synced else None,
+        "conversion_count": len(references.convertible_levels()),
         "login_source": login_source.label(),
     }
 
@@ -476,7 +557,11 @@ def connection_test(request):
     info.server = info.server or getattr(client, "server_label", "") or ""
     info.error = sync.redact(info.error)
     info.warnings = [sync.redact(w) for w in info.warnings]
-    return render(request, "entra/partials/connection_result.html", {"info": info})
+    return render(
+        request,
+        "entra/partials/connection_result.html",
+        {"info": info, "ad_enabled": getattr(settings, "AD_ENABLED", False)},
+    )
 
 
 @require_POST
@@ -647,9 +732,17 @@ class EntraAccountListView(PermissionCheckMixin, ListView):
         ctx = super().get_context_data(**kwargs)
         user = self.request.user
         accounts = list(ctx["object_list"])
+        ad_accounts = {}
+        guids = {a.on_premises_object_guid for a in accounts if a.on_premises_object_guid}
+        # Only where the AD pages exist to link to: mirror rows outlive switching LDAPS off.
+        if guids and getattr(settings, "AD_ENABLED", False):
+            ad_accounts = {
+                d.object_guid: d for d in DirectoryAccount.objects.filter(object_guid__in=guids)
+            }
         can_create = perms.can_manage_people(user)
         linkable = perms.linkable_entra_accounts(user, accounts)
         for account in accounts:
+            account.ad_account = ad_accounts.get(account.on_premises_object_guid)
             account.can_link = account.pk in linkable
             account.can_create_person = (
                 can_create and account.is_external and account.person_id is None

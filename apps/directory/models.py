@@ -47,6 +47,17 @@ class ADGroup(TimeStampedModel):
     category = models.CharField(max_length=20, choices=Category.choices, default=Category.SECURITY)
     managed_by_dn = models.CharField("Managed by", max_length=1024, blank=True)
     when_changed = models.DateTimeField(null=True, blank=True)
+    # Pairing with Entra ID (apps.entra). The SID matches onPremisesSecurityIdentifier of the
+    # group's synchronized copy; cloud_object_id is set on a group that group writeback created
+    # from a cloud group, from the `Group_<objectId>` marker it stamps on it.
+    object_sid = models.CharField("objectSid", max_length=184, blank=True, db_index=True)
+    cloud_object_id = models.UUIDField(
+        "Written back from Entra group",
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="Object ID of the Entra ID group this AD group is the written-back copy of.",
+    )
     first_seen_at = models.DateTimeField()
     last_seen_at = models.DateTimeField()
     is_active = models.BooleanField(default=True)

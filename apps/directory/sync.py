@@ -668,6 +668,8 @@ GROUP_FIELDS = (
     "category",
     "managed_by_dn",
     "when_changed",
+    "object_sid",
+    "cloud_object_id",
 )
 MISSING_GROUP_MESSAGE = (
     "Not returned by the group search (deleted, moved outside the search bases, or renamed "
@@ -686,6 +688,8 @@ def _group_values(group: DirectoryGroup) -> dict:
         "category": category,
         "managed_by_dn": group.managed_by,
         "when_changed": group.when_changed,
+        "object_sid": group.sid,
+        "cloud_object_id": group.cloud_object_id,
     }
 
 

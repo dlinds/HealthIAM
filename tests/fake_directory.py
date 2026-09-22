@@ -73,6 +73,8 @@ class FakeDirectory(DirectoryClient):
         guid: uuid.UUID | None = None,
         managed_by: str = "",
         when_changed: datetime | None = None,
+        sid: str = "",
+        cloud_object_id: uuid.UUID | None = None,
     ) -> DirectoryGroup:
         cn = cn or sam
         group = DirectoryGroup(
@@ -84,6 +86,8 @@ class FakeDirectory(DirectoryClient):
             group_type=group_type,
             managed_by=managed_by,
             when_changed=when_changed,
+            sid=sid,
+            cloud_object_id=cloud_object_id,
         )
         self.groups[group.dn.casefold()] = group
         self.members[group.dn.casefold()] = [self._dn_of(m) for m in members]

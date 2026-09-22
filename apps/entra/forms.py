@@ -41,3 +41,9 @@ class AccountLinkForm(ReasonForm):
 
 class AccountKindForm(ReasonForm):
     kind = forms.ChoiceField(choices=EntraAccount.Kind.choices)
+
+
+class ConvertLevelForm(ReasonForm):
+    """Turn an AD-group level into an Entra-group level for the same, now cloud-mastered group."""
+
+    group = forms.UUIDField(widget=forms.HiddenInput)

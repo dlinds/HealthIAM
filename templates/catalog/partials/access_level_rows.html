@@ -13,7 +13,8 @@
         </td>
         <td><span class="badge text-bg-light border">{{ level.get_access_model_display }}</span></td>
         <td class="small">
-          {% if level.access_model == 'ad_group' %}<span class="text-mono">{{ level.ad_group_name }}</span>{% include "directory/partials/reference_badge.html" with ref=level_reference_status|dict_get:level.pk %}
+          {% if level.access_model == 'ad_group' %}<span class="text-mono">{{ level.ad_group_name }}</span>{% with ref=level_reference_status|dict_get:level.pk %}{% if ref.via_entra %}{% include "entra/partials/reference_badge.html" %}{% else %}{% include "directory/partials/reference_badge.html" %}{% endif %}{% endwith %}
+            {% with cloud=level_conversions|dict_get:level.pk %}{% if cloud %}<div><a class="badge text-bg-info text-decoration-none" href="{% url 'entra:conversions' %}" title="Its membership is managed in Entra ID now: convert this level to the cloud group {{ cloud.display_name }}">Now the cloud group {{ cloud.display_name }} &rarr; convert</a></div>{% endif %}{% endwith %}
           {% elif level.access_model == 'entra_group' %}{{ level.entra_group_name|default:level.entra_group_id }}{% include "entra/partials/reference_badge.html" with ref=level_reference_status|dict_get:level.pk %}
             <div class="text-body-tertiary text-mono" style="font-size: .75em">{{ level.entra_group_id }}</div>
           {% elif level.access_model == 'ticket' %}{{ level.ticket_assignment_team }}

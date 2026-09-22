@@ -79,9 +79,11 @@
       <td class="small">
         {% if g.source == 'synced' %}<span class="badge text-bg-light border">synced from AD</span>
           <div class="text-mono">{{ g.on_premises_sam_account_name }}</div>
+          {% if g.ad_original %}<a href="{{ g.ad_original.get_absolute_url }}">AD group</a>{% if not g.ad_original.is_active %} <span class="badge text-bg-secondary">not in AD mirror</span>{% endif %}{% endif %}
         {% elif g.source == 'converted' %}<span class="badge text-bg-info" title="Synchronized from AD once; its membership is managed in the cloud now">converted to cloud</span>
           {% if g.on_premises_sam_account_name %}<div class="text-mono">was {{ g.on_premises_sam_account_name }}</div>{% endif %}
         {% else %}<span class="text-body-secondary">cloud</span>{% endif %}
+        {% if g.ad_copy %}<div title="Group writeback keeps this AD group's membership in step with the cloud group">written back to AD as <a class="text-mono" href="{{ g.ad_copy.get_absolute_url }}">{{ g.ad_copy.name }}</a></div>{% endif %}
       </td>
       <td class="small">
         {% for level in g.referencing_levels %}

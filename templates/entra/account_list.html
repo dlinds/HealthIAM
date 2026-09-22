@@ -50,6 +50,7 @@
       <td>
         <span class="text-mono small text-break">{{ a.upn }}</span>
         {% if a.mail and a.mail|lower != a.upn|lower %}<div class="small text-body-secondary text-break">{{ a.mail }}</div>{% endif %}
+        {% if a.ad_account %}<div class="small"><a href="{{ a.ad_account.get_absolute_url }}">AD account {{ a.ad_account.sam_account_name }}</a></div>{% endif %}
       </td>
       <td>{{ a.name }}<div class="small text-body-secondary">{{ a.job_title }}{% if a.department %} · {{ a.department }}{% endif %}{% if a.company_name %} · {{ a.company_name }}{% endif %}</div></td>
       <td class="small">

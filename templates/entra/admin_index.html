@@ -7,6 +7,7 @@
     <a class="btn btn-outline-secondary" href="{% url 'entra:group_list' %}"><i class="bi bi-collection me-1"></i>Entra groups</a>
     {% if config.accounts_enabled %}<a class="btn btn-outline-secondary" href="{% url 'entra:account_list' %}"><i class="bi bi-person-badge me-1"></i>Entra accounts</a>{% endif %}
     <a class="btn btn-outline-secondary" href="{% url 'entra:broken_references' %}"><i class="bi bi-exclamation-triangle me-1"></i>Broken references</a>
+    <a class="btn btn-outline-secondary" href="{% url 'entra:conversions' %}"><i class="bi bi-arrow-left-right me-1"></i>Conversions{% if conversion_count %} <span class="badge text-bg-info">{{ conversion_count }}</span>{% endif %}</a>
   </div>
 </div>
 
@@ -104,6 +105,8 @@
             {% if broken_count is None %}<span class="text-body-secondary">not checked yet (no completed group sync)</span>
             {% else %}<a href="{% url 'entra:broken_references' %}">{{ broken_count }} access level{{ broken_count|pluralize }}</a>{% endif %}
           </dd>
+          <dt class="col-sm-4">To convert</dt>
+          <dd class="col-sm-8">{% if conversion_count %}<a href="{% url 'entra:conversions' %}">{{ conversion_count }} AD-group level{{ conversion_count|pluralize }} whose group is mastered in the cloud now</a>{% else %}<span class="text-body-secondary">none</span>{% endif %}</dd>
         </dl>
       </div>
     </div>

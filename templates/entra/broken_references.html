@@ -11,6 +11,7 @@
     <div class="text-body-secondary small">
       Every <em>Entra group</em> access level whose group was not returned by the last sync (missing), was returned before but not any more (gone),
       or can no longer be granted by request (made dynamic or role-assignable, or now synced from AD).
+      {% if verifies_ad_groups %}Without an LDAPS connection, <em>AD group</em> levels are checked here too, against the copies Entra Connect synchronizes: one whose copy stopped being synchronized is listed; one never synchronized cannot be judged and is not.{% endif %}
       Groups outside the sync filter{% if patterns %} (<span class="text-mono">{{ patterns|join:", " }}</span>){% endif %}{% if exclude_patterns %}, or excluded from it (<span class="text-mono">{{ exclude_patterns|join:", " }}</span>){% endif %} cannot be checked and are not listed.
     </div>
   </div>

@@ -30,7 +30,7 @@ from apps.catalog import services as catalog_services
 from apps.catalog.models import AccessLevel, Application
 from apps.people.models import Person
 
-from . import checks, reconcile, references, routing, services, sync
+from . import checks, reconcile, references, routing, services, sync, writeback
 from .config import DirectorySettings
 from .forms import AccountKindForm, AccountLinkForm, ADGroupRouteForm, SyncStartForm
 from .ldap_client import ConnectionInfo
@@ -144,9 +144,17 @@ class ADGroupListView(PermissionCheckMixin, ListView):
         groups = list(ctx["object_list"])
         by_name = _referencing_levels_by_name({group.name.lower() for group in groups})
         matches = routing.routes_for(group.name for group in groups)
+        copies = set(
+            writeback.written_back(
+                ADGroup.objects.filter(pk__in=[g.pk for g in groups])
+            ).values_list("pk", flat=True)
+        )
+        clouds = writeback.cloud_groups_for([g for g in groups if g.pk in copies])
         for group in groups:
             group.referencing_levels = by_name.get(group.name.lower(), [])
             group.route_match = matches.get(group.name)
+            group.is_written_back = group.pk in copies
+            group.cloud_group = clouds.get(group.pk)
         ctx.update(
             object_list=groups,
             q=self.request.GET.get("q", ""),
@@ -257,7 +265,8 @@ def group_adopt(request):
         url = reverse("directory:group_adopt")
         return redirect(f"{url}?{urlencode({'q': q})}" if q else url)
 
-    groups = _adoptable(ADGroup.objects.all())
+    # A written-back group is the AD copy of a cloud group; that group is what gets adopted.
+    groups = writeback.originals(_adoptable(ADGroup.objects.all()))
     if q:
         groups = groups.filter(Q(name__icontains=q) | Q(description__icontains=q))
     groups = list(groups.order_by("name")[:ADOPT_LIMIT])

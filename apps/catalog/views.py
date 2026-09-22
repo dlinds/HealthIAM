@@ -113,7 +113,8 @@ LEVEL_STATUS_CAP = 500
 
 def _reference_status(levels) -> dict:
     """`{level.pk: Reference}` from whichever directory can judge each level: the LDAPS mirror
-    for AD groups, the Entra mirror for cloud groups."""
+    for AD groups when it exists, the Entra mirror for cloud groups (and for AD groups when it
+    is the only line of sight to them)."""
     status = entra_references.status_for_levels(levels)
     status.update(references.status_for_levels(levels))
     return status
@@ -160,7 +161,9 @@ def _detail_context(request, application):
     # count goes quiet rather than wrong, and the broken-reference report has the whole
     # picture either way.
     #
-    # Cloud-group levels are judged by `apps.entra.references` the same way.
+    # Cloud-group levels are judged by `apps.entra.references` the same way, and so are the AD
+    # levels when Entra ID stands in for a missing LDAPS connection; its statuses fill in the
+    # levels `apps.directory.references` has nothing to say about.
     group_levels_qs = levels_qs.filter(
         access_model__in=[AccessLevel.AccessModel.AD_GROUP, AccessLevel.AccessModel.ENTRA_GROUP]
     )
@@ -170,6 +173,7 @@ def _detail_context(request, application):
     else:
         level_reference_status = _reference_status(list(levels_page.object_list))
         broken_level_count = None
+    level_conversions = entra_references.conversions_for_levels(levels_page.object_list)
     route_level_count = levels_qs.filter(source=AccessLevel.Source.ROUTE).count()
     return {
         "application": application,
@@ -196,6 +200,7 @@ def _detail_context(request, application):
         # filtered view pays the extra count.
         "level_count": levels_qs.count() if levels_q else levels_page.paginator.count,
         "level_reference_status": level_reference_status,
+        "level_conversions": level_conversions,
         "broken_level_count": broken_level_count,
         "aliases": application.aliases.all(),
         "analysts": application.analyst_assignments.select_related("user"),

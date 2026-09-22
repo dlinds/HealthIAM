@@ -59,6 +59,7 @@ def test_readers_see_the_lists_and_only_admins_the_admin_page(as_user, help_desk
     client = as_user(help_desk_user)
     assert client.get(reverse("entra:group_list")).status_code == 200
     assert client.get(reverse("entra:account_list")).status_code == 200
+    assert client.get(reverse("entra:conversions")).status_code == 200
     assert client.get(reverse("entra:broken_references")).status_code == 200
     assert client.get(reverse("entra:admin_index")).status_code == 403
     assert client.post(reverse("entra:sync_start"), {"scope": "all"}).status_code == 403
@@ -166,6 +167,14 @@ def test_group_list_filters(as_user, help_desk_user, synced):
     assert names(kind="m365") == ["Teams-Nursing-Education"]
     assert names(q=str(fake_id("group:SG-Epic-Nurse"))) == ["SG-Epic-Nurse"]
     assert names(q="APP_PACS") == ["APP_PACS_VIEW"]  # the on-premises name is searched
+
+
+def test_a_synced_group_links_to_its_ad_original(as_user, help_desk_user, synced):
+    factories.ADGroupFactory(name="APP_PACS_VIEW")
+    resp = as_user(help_desk_user).get(reverse("entra:group_list"), {"source": "synced"})
+    row = resp.context["object_list"][0]
+    assert row.ad_original is not None and row.ad_original.name == "APP_PACS_VIEW"
+    assert b"synced from AD" in resp.content
 
 
 def test_picker_offers_assignable_groups_and_explains_the_rest(as_user, help_desk_user, synced):

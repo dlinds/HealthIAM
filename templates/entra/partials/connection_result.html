@@ -5,7 +5,7 @@
   <ul class="mb-0 mt-1 small">
     {% if info.tenant %}
     <li>Tenant {{ info.tenant.display_name|default:"(unnamed)" }} <span class="text-mono">{{ info.tenant.id }}</span>{% if info.tenant.default_domain %} · {{ info.tenant.default_domain }}{% endif %}.</li>
-    <li>{% if info.tenant.is_hybrid %}Hybrid: the tenant synchronizes from on-premises AD{% if info.tenant.on_premises_last_sync_at %} (last {{ info.tenant.on_premises_last_sync_at|date:"Y-m-d H:i" }}){% endif %}.{% else %}Cloud-only: no directory synchronization.{% endif %}</li>
+    <li>{% if info.tenant.is_hybrid %}Hybrid: the tenant synchronizes from on-premises AD{% if info.tenant.on_premises_last_sync_at %} (last {{ info.tenant.on_premises_last_sync_at|date:"Y-m-d H:i" }}){% endif %}{% if not ad_enabled %}; AD-group levels are checked through the copies it synchronizes{% endif %}.{% else %}Cloud-only: no directory synchronization.{% endif %}</li>
     {% endif %}
     {% if info.granted %}<li>Permissions: <span class="text-mono">{{ info.granted|join:", " }}</span>.</li>{% endif %}
     {% if info.missing %}<li class="text-danger">Missing: <span class="text-mono">{{ info.missing|join:", " }}</span> &mdash; grant {% if info.missing|length == 1 %}it{% else %}them{% endif %} as application permissions, with admin consent.</li>{% endif %}
