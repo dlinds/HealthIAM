@@ -8,8 +8,17 @@ class PeopleConfig(AppConfig):
 
     def ready(self):
         from apps.core.auditing import register_for_audit
+        from apps.orgs import importers as orgs_importers
+        from apps.orgs.models import ImportBatch
 
-        from . import models
+        from . import importers, models
+
+        orgs_importers.register_importer(
+            ImportBatch.Kind.PEOPLE,
+            importers.import_people,
+            aliases=importers.HEADER_ALIASES,
+            required=importers.REQUIRED_COLUMNS,
+        )
 
         register_for_audit(
             models.PersonType,

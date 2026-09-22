@@ -290,11 +290,12 @@ def import_detail(request, pk):
     batch = get_object_or_404(ImportBatch.objects.select_related("created_by"), pk=pk)
     entries = batch.log or []
     problems = [e for e in entries if e["action"] == "error"]
-    changes = [e for e in entries if e["action"] not in ("error", "unchanged")]
+    warnings = [e for e in entries if e["action"] == "warning"]
+    changes = [e for e in entries if e["action"] not in ("error", "warning", "unchanged")]
     return render(
         request,
         "orgs/import_detail.html",
-        {"batch": batch, "problems": problems, "changes": changes},
+        {"batch": batch, "problems": problems, "warnings": warnings, "changes": changes},
     )
 
 

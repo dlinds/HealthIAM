@@ -446,6 +446,25 @@ def change_assignment(
     return assignment
 
 
+def adopt_assignment(
+    assignment: PositionAssignment, *, actor, reason: str, system: bool = False
+) -> PositionAssignment:
+    """Hand an assignment somebody typed in to the HR feed, which then owns it: used when the
+    feed meets a manual person whose primary position matches the file."""
+    reason = require_reason(reason)
+    _authorize(
+        system or perms.can_edit_assignment(actor, assignment),
+        "You do not coordinate this assignment's type.",
+    )
+    if assignment.source == Source.HR:
+        return assignment
+    assignment.source = Source.HR
+    assignment._audit_reason = reason
+    with set_actor(actor), transaction.atomic():
+        assignment.save(update_fields=["source", "updated_at"])
+    return assignment
+
+
 # --- Expected access -------------------------------------------------------------------
 
 

@@ -258,6 +258,15 @@ comes from. It is empty (with a stated reason) while the person is inactive or o
 marks rows whose level is inactive or whose application is retired as stale. The person page
 shows it, exports it, and refreshes it whenever the page's history changes.
 
+### HR feed
+The `people` import kind (`docs/import-format.md`) upserts people by employee ID through the
+same services: it creates people and their primary and alternate assignments, keeps a changed
+name as a `PersonName`, ends the old primary on a transfer, sets and clears leave, and marks
+terminated people inactive. HR-sourced assignments are the feed's; assignments added by hand
+are never touched, and a manual person with the feed's employee ID is adopted rather than
+duplicated. `apps/people/importers.py` registers the kind with `apps.orgs.importers` from
+`AppConfig.ready`, so the upload page, the batch pages and `import_hr` need no change.
+
 ### Coordinators and permissions
 `can_manage_people` (create people and organizations) is any coordinator or an Admin;
 `can_add_assignment(user, type)` and `can_edit_assignment(user, assignment)` need the
@@ -419,9 +428,6 @@ including deletions.
 
 ## Future hooks
 
-- **People from the HR feed**: a `people` kind for `import_hr` and the upload page, keyed on
-  `employee_id`, that creates people and their primary / alternate assignments, records name
-  changes as `PersonName` rows and ends assignments on transfer or termination.
 - **Exceptions / grants**: a model linking a person to an `AccessLevel` with an approval
   trail sits beside `PositionDefault` and is layered into `expected_access`.
 - **AD accounts**: a mirror of user accounts linked to `Person` by `employeeID`, so a person

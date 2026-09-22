@@ -186,7 +186,7 @@ def _run(kind, rows, worker, *, dry_run, actor):
     return result
 
 
-def import_departments(rows, *, dry_run=False, deactivate_missing=False, actor=None):
+def import_departments(rows, *, dry_run=False, deactivate_missing=False, actor=None, **_):
     def worker(rows, result):
         seen = _upsert_coded(Department, rows, name_field="name", result=result, source=Source.HR)
         if deactivate_missing:
@@ -195,7 +195,7 @@ def import_departments(rows, *, dry_run=False, deactivate_missing=False, actor=N
     return _run(ImportBatch.Kind.DEPARTMENTS, rows, worker, dry_run=dry_run, actor=actor)
 
 
-def import_job_codes(rows, *, dry_run=False, deactivate_missing=False, actor=None):
+def import_job_codes(rows, *, dry_run=False, deactivate_missing=False, actor=None, **_):
     def worker(rows, result):
         seen = _upsert_coded(JobCode, rows, name_field="title", result=result, source=Source.HR)
         if deactivate_missing:
@@ -204,7 +204,7 @@ def import_job_codes(rows, *, dry_run=False, deactivate_missing=False, actor=Non
     return _run(ImportBatch.Kind.JOB_CODES, rows, worker, dry_run=dry_run, actor=actor)
 
 
-def import_positions(rows, *, dry_run=False, deactivate_missing=False, actor=None):
+def import_positions(rows, *, dry_run=False, deactivate_missing=False, actor=None, **_):
     def worker(rows, result):
         seen: set[str] = set()
         departments = {d.code: d for d in Department.objects.all()}
@@ -267,6 +267,17 @@ IMPORTERS = {
 }
 
 
+def register_importer(kind: str, func, *, aliases: dict, required: tuple) -> None:
+    """Let another app own an import kind (apps.people registers `people` from its
+    `AppConfig.ready`), so this module never has to import the app that depends on it.
+
+    `func(rows, *, dry_run, deactivate_missing, actor, label)` returns an `ImportResult`;
+    `label` names the batch for audit reasons and is empty from the command line."""
+    IMPORTERS[kind] = func
+    HEADER_ALIASES[kind] = aliases
+    REQUIRED_COLUMNS[kind] = required
+
+
 def run_import(kind: str, data: bytes | str, **kwargs) -> ImportResult:
     rows = read_rows(data, kind)
     return IMPORTERS[kind](rows, **kwargs)
@@ -289,6 +300,7 @@ def run_batch(batch: ImportBatch, *, dry_run: bool) -> ImportResult:
             dry_run=dry_run,
             deactivate_missing=batch.deactivate_missing,
             actor=batch.created_by,
+            label=f"import #{batch.pk}",
         )
     except Exception as exc:  # noqa: BLE001 - surfaced to the user on the batch
         batch.status = ImportBatch.Status.FAILED

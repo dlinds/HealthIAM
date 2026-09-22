@@ -107,8 +107,10 @@ All settings are read from the environment (or `.env`); see `.env.example`.
   record identifiers, mark inactive on a separation date -- every step with a reason. The
   Expected access tab is the union of the defaults of every position held today, suspended
   while on leave or inactive, exportable as CSV/XLSX.
-- **Departments / Job codes**: maintained in-app or via CSV import with a dry-run preview
-  (`docs/import-format.md`). A scheduled HR feed can call `manage.py import_hr`.
+- **Departments / Job codes / People**: maintained in-app or via CSV import with a dry-run
+  preview (`docs/import-format.md`). A scheduled HR feed can call `manage.py import_hr`; the
+  `people` kind creates employees with their positions, records name changes and transfers,
+  and marks leavers inactive.
 - **Reports**: position access matrix (CSV/XLSX, per department or all), "who gets
   application X" (by position) and "who should have application X" (by person), expiring
   assignments (30/60/90 days plus open-ended externals) and name changes in a period.
