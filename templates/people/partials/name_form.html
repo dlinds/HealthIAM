@@ -1,0 +1,25 @@
+<div class="card border-primary mb-3">
+  <form hx-post="{% url 'people:name_change' person.pk %}" hx-target="#name-form-slot" hx-swap="innerHTML">
+    {% csrf_token %}
+    <div class="card-body">
+      <h3 class="h6 mb-3">Change name</h3>
+      <p class="small text-body-secondary">The current legal name is kept as a former name, so the person can still be found under it.</p>
+      {% if form.non_field_errors %}<div class="alert alert-danger py-2">{{ form.non_field_errors|join:" " }}</div>{% endif %}
+      <div class="row">
+        <div class="col-md-4">{% include "people/partials/field.html" with field=form.first_name %}</div>
+        <div class="col-md-3">{% include "people/partials/field.html" with field=form.middle_name %}</div>
+        <div class="col-md-3">{% include "people/partials/field.html" with field=form.last_name %}</div>
+        <div class="col-md-2">{% include "people/partials/field.html" with field=form.suffix %}</div>
+      </div>
+      <div class="row">
+        <div class="col-md-6">{% include "people/partials/field.html" with field=form.preferred_name %}</div>
+        <div class="col-md-6">{% include "people/partials/field.html" with field=form.effective_on %}</div>
+      </div>
+      {% include "people/partials/field.html" with field=form.reason %}
+    </div>
+    <div class="card-footer d-flex gap-2">
+      <button class="btn btn-primary btn-sm" type="submit">Change name</button>
+      <button class="btn btn-link btn-sm" type="button" onclick="document.getElementById('name-form-slot').innerHTML=''">Cancel</button>
+    </div>
+  </form>
+</div>

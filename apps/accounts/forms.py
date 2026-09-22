@@ -9,7 +9,10 @@ class UserRolesForm(forms.Form):
         choices=[(r, r) for r in roles.GROUP_ROLES],
         required=False,
         widget=forms.CheckboxSelectMultiple,
-        help_text="Analyst and Application Owner are assigned on each application, not here.",
+        help_text=(
+            "Analyst and Application Owner are assigned on each application, and "
+            "Coordinator on each person type, not here."
+        ),
     )
     is_active = forms.BooleanField(
         required=False,

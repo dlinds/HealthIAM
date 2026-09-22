@@ -1,0 +1,32 @@
+{% load people_tags %}
+<div class="border rounded p-2 mb-2 {% if a.status == 'ended' %}text-body-tertiary{% endif %}">
+  <div class="d-flex flex-wrap justify-content-between align-items-start gap-2">
+    <div>
+      <a href="{{ a.position.get_absolute_url }}"><span class="text-mono">{{ a.position.code }}</span></a>
+      <strong>{{ a.display_title }}</strong>
+      {% if a.title %}<span class="text-body-secondary small">({{ a.position.display_name }})</span>{% endif %}
+      <span class="badge {% if a.kind == 'primary' %}text-bg-primary{% else %}text-bg-light border{% endif %}">{{ a.get_kind_display }}</span>
+      <span class="badge text-bg-light border">{{ a.person_type.name }}</span>
+      {% if a.status == 'upcoming' %}<span class="badge text-bg-info">Starts {{ a.start_date|date:"Y-m-d" }}</span>
+      {% elif a.status == 'ended' %}<span class="badge text-bg-secondary">Ended {{ a.end_date|date:"Y-m-d" }}{% if a.end_reason %} · {{ a.get_end_reason_display|lower }}{% endif %}</span>
+      {% elif a.end_date %}<span class="badge {{ a|days_badge }}">Ends {{ a.end_date|date:"Y-m-d" }} · {{ a.days_left }} day{{ a.days_left|pluralize }}</span>
+      {% elif a.person_type.is_external %}<span class="badge text-bg-warning-subtle border border-warning-subtle text-warning-emphasis" title="An external assignment with no end date: nothing will end it by itself">Open-ended</span>{% endif %}
+      {% if a.source == 'hr' %}<span class="badge text-bg-light border" title="Maintained by the HR feed">HR</span>{% endif %}
+      <div class="small text-body-secondary">
+        {{ a.position.department.name }} · since {{ a.start_date|date:"Y-m-d" }}
+        {% if a.organization %} · via <a href="{{ a.organization.get_absolute_url }}">{{ a.organization.name }}</a>{% endif %}
+        {% if a.sponsor %} · sponsor <a href="{{ a.sponsor.get_absolute_url }}">{{ a.sponsor.display_name }}</a>{% endif %}
+        {% if a.notes %}<div class="fst-italic">{{ a.notes|truncatechars:160 }}</div>{% endif %}
+      </div>
+    </div>
+    {% if a.can_edit and a.status != 'ended' and a.source != 'hr' %}
+    <div class="text-nowrap">
+      <button class="btn btn-sm btn-link p-0 me-2" type="button" hx-get="{% url 'people:assignment_edit' person.pk a.pk %}" hx-target="#assignment-form-slot" hx-swap="innerHTML">Edit</button>
+      <button class="btn btn-sm btn-link p-0 me-2" type="button" hx-get="{% url 'people:assignment_extend' person.pk a.pk %}" hx-target="#assignment-form-slot" hx-swap="innerHTML">{% if a.end_date %}Extend{% else %}Set end date{% endif %}</button>
+      <button class="btn btn-sm btn-link text-danger p-0" type="button" hx-get="{% url 'people:assignment_end' person.pk a.pk %}" hx-target="#assignment-form-slot" hx-swap="innerHTML">{% if a.status == 'upcoming' %}Cancel{% else %}End{% endif %}</button>
+    </div>
+    {% elif a.can_edit and a.status != 'ended' %}
+    <div class="text-nowrap small text-body-secondary" title="Maintained by the HR feed">from HR</div>
+    {% endif %}
+  </div>
+</div>

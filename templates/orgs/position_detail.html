@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% load access_tags history_tags %}
+{% load access_tags history_tags people_tags %}
 {% block title %}{{ position.code }} · HealthIAM{% endblock %}
 {% block content %}
 <nav aria-label="breadcrumb"><ol class="breadcrumb">
@@ -34,6 +34,7 @@
     {% position_defaults position %}
   </div>
   <div class="col-lg-4">
+    {% position_holders position %}
     {% if position.notes %}
     <div class="card mb-3"><div class="card-header">Notes</div><div class="card-body">{{ position.notes|linebreaksbr }}</div></div>
     {% endif %}

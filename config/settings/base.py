@@ -51,6 +51,7 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "django.contrib.humanize",
+    "django.contrib.postgres",
     "django_htmx",
     "auditlog",
     "mozilla_django_oidc",
@@ -59,6 +60,7 @@ INSTALLED_APPS = [
     "apps.orgs",
     "apps.catalog",
     "apps.access",
+    "apps.people",
     "apps.directory",
 ]
 

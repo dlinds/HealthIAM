@@ -1,0 +1,26 @@
+{# The assignment half of the create and add-assignment forms. Expects `form`; `person` when adding to an existing person. #}
+<div class="row">
+  <div class="col-md-4">{% include "people/partials/field.html" with field=form.person_type %}</div>
+  <div class="col-md-4">{% include "people/partials/field.html" with field=form.kind %}</div>
+  <div class="col-md-4">{% include "people/partials/field.html" with field=form.title %}</div>
+</div>
+<div class="mb-3">
+  <label class="form-label" for="position-search">Position <span class="text-danger">*</span></label>
+  <input class="form-control form-control-sm mb-2" id="position-search" type="search" name="q" value="" placeholder="Search by code, department, or job title…" autocomplete="off"
+    hx-get="{% url 'people:position_picker' %}" hx-trigger="load, input changed delay:250ms" hx-target="#position-picker" hx-swap="innerHTML" hx-include="this">
+  <div id="position-picker" class="border rounded p-2" style="max-height:12rem; overflow-y:auto"></div>
+  {% for e in form.position.errors %}<div class="invalid-feedback d-block">{{ e }}</div>{% endfor %}
+</div>
+<div class="row">
+  <div class="col-md-4">{% include "people/partials/field.html" with field=form.start_date %}</div>
+  <div class="col-md-4">{% include "people/partials/field.html" with field=form.end_date %}</div>
+  <div class="col-md-4">{% include "people/partials/field.html" with field=form.organization %}</div>
+</div>
+<div class="mb-3">
+  <label class="form-label" for="sponsor-search">Sponsor <span class="text-body-secondary small">(required for some types)</span></label>
+  <input class="form-control form-control-sm mb-2" id="sponsor-search" type="search" name="q" placeholder="Search people…" autocomplete="off"
+    hx-get="{% url 'people:person_picker' %}?field=sponsor{% if person %}&exclude={{ person.pk }}{% endif %}" hx-trigger="load, input changed delay:250ms" hx-target="#sponsor-picker" hx-swap="innerHTML" hx-include="this">
+  <div id="sponsor-picker" class="border rounded p-2" style="max-height:10rem; overflow-y:auto"></div>
+  {% for e in form.sponsor.errors %}<div class="invalid-feedback d-block">{{ e }}</div>{% endfor %}
+</div>
+{% include "people/partials/field.html" with field=form.assignment_notes %}

@@ -12,6 +12,7 @@ for _name in (
     "is_auditor",
     "is_analyst",
     "is_owner",
+    "is_coordinator",
     "can_view",
     "can_export",
     "can_manage_roles",
@@ -23,6 +24,9 @@ for _name in (
     "can_edit_any_defaults",
     "can_add_contacts",
     "can_view_history",
+    "can_manage_people",
+    "can_manage_person_types",
+    "can_link_accounts",
 ):
     register.filter(_name, getattr(p, _name))
 
@@ -33,5 +37,9 @@ for _name in (
     "can_edit_access_levels",
     "can_manage_analysts",
     "can_edit_defaults",
+    "is_coordinator_for",
+    "can_edit_person",
+    "can_add_assignment",
+    "can_edit_assignment",
 ):
     register.filter(_name, getattr(p, _name))

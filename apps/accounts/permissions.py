@@ -62,8 +62,25 @@ def _owner_app_ids(user) -> set[int]:
     return cache
 
 
+def _coordinator_type_ids(user) -> set[int]:
+    cache = getattr(user, "_iam_coordinator_type_ids", None)
+    if cache is None:
+        model = _model("people", "PersonTypeCoordinator")
+        cache = (
+            set(model.objects.filter(user=user).values_list("person_type_id", flat=True))
+            if model
+            else set()
+        )
+        user._iam_coordinator_type_ids = cache
+    return cache
+
+
 def _app_id(application) -> int:
     return application if isinstance(application, int) else application.pk
+
+
+def _type_id(person_type) -> int:
+    return person_type if isinstance(person_type, int) else person_type.pk
 
 
 # --- Role predicates ------------------------------------------------------------
@@ -99,6 +116,15 @@ def is_owner_for(user, application) -> bool:
     return _authenticated(user) and _app_id(application) in _owner_app_ids(user)
 
 
+def is_coordinator(user) -> bool:
+    """True if the user coordinates at least one person type (see apps.people)."""
+    return _authenticated(user) and bool(_coordinator_type_ids(user))
+
+
+def is_coordinator_for(user, person_type) -> bool:
+    return _authenticated(user) and _type_id(person_type) in _coordinator_type_ids(user)
+
+
 def has_any_role(user) -> bool:
     """Anyone who may enter the app at all."""
     return (
@@ -110,6 +136,8 @@ def has_any_role(user) -> bool:
             or is_auditor(user)
             or is_analyst(user)
             or is_owner(user)
+            # Last: it is the only one that costs a query for users with no other role.
+            or is_coordinator(user)
         )
     )
 
@@ -122,6 +150,8 @@ def role_labels(user) -> list[str]:
         labels.append("Analyst")
     if is_owner(user):
         labels.append("Application Owner")
+    if is_coordinator(user):
+        labels.append(roles.COORDINATOR)
     if is_help_desk(user):
         labels.append(roles.HELP_DESK)
     if is_auditor(user):
@@ -200,3 +230,41 @@ def can_add_contacts(user) -> bool:
 
 def can_view_history(user) -> bool:
     return is_admin(user) or is_auditor(user)
+
+
+# --- People (apps.people) -------------------------------------------------------------
+
+
+def can_manage_people(user) -> bool:
+    """Create people and organizations. Which *types* of assignment is decided per row by
+    `can_add_assignment`; an Admin may do everything."""
+    return is_admin(user) or is_coordinator(user)
+
+
+def can_manage_person_types(user) -> bool:
+    """Person types, their rules and their coordinators."""
+    return is_admin(user)
+
+
+def can_add_assignment(user, person_type) -> bool:
+    return is_admin(user) or is_coordinator_for(user, person_type)
+
+
+def can_edit_assignment(user, assignment) -> bool:
+    return is_admin(user) or is_coordinator_for(user, assignment.person_type_id)
+
+
+def can_edit_person(user, person) -> bool:
+    """Admin, or a coordinator for any type the person has ever been assigned under -- a
+    coordinator re-onboarding a returning traveler has to reach the old record."""
+    if is_admin(user):
+        return True
+    if not is_coordinator(user):
+        return False
+    types = set(person.assignments.values_list("person_type_id", flat=True))
+    return bool(types & _coordinator_type_ids(user))
+
+
+def can_link_accounts(user) -> bool:
+    """Link a directory account to a person, or unlink one."""
+    return is_admin(user)

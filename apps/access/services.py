@@ -13,16 +13,10 @@ from django.db import IntegrityError, transaction
 
 from apps.accounts import permissions as perms
 from apps.catalog.models import AccessLevel
+from apps.core.audit import require_reason
 from apps.orgs.models import Position
 
 from .models import PositionDefault
-
-
-def _require_reason(reason: str) -> str:
-    reason = (reason or "").strip()
-    if len(reason) < 3:
-        raise ValidationError({"reason": "Give a short reason for this change."})
-    return reason
 
 
 def _check_can_edit(actor, level: AccessLevel):
@@ -35,7 +29,7 @@ def _check_can_edit(actor, level: AccessLevel):
 def add_default(
     position: Position, access_level: AccessLevel, *, actor, reason: str, notes: str = ""
 ) -> PositionDefault:
-    reason = _require_reason(reason)
+    reason = require_reason(reason)
     _check_can_edit(actor, access_level)
     if not position.is_active:
         raise ValidationError({"position": f"Position {position.code} is inactive."})
@@ -70,7 +64,7 @@ def move_defaults(
     is deleted (`merged`), rather than violating `unique_default_per_position_level`. That is
     lossy: a position that held both levels ends up holding one.
     """
-    reason = _require_reason(reason)
+    reason = require_reason(reason)
     if source_level.pk == target_level.pk:
         return (0, 0)
     # A system move is still not allowed to leave behind a row `PositionDefault.clean()`
@@ -113,7 +107,7 @@ def move_defaults(
 
 
 def remove_default(default: PositionDefault, *, actor, reason: str) -> None:
-    reason = _require_reason(reason)
+    reason = require_reason(reason)
     _check_can_edit(actor, default.access_level)
     default._audit_reason = reason
     with set_actor(actor), transaction.atomic():
@@ -127,7 +121,7 @@ def copy_defaults(
 
     Returns (added, skipped_messages). Levels already on the target, inactive levels,
     retired applications, and applications the actor cannot edit are skipped."""
-    reason = _require_reason(reason)
+    reason = require_reason(reason)
     if source.pk == target.pk:
         raise ValidationError({"source": "Choose a different position to copy from."})
     if not target.is_active:

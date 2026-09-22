@@ -79,6 +79,8 @@ def user_roles(request, pk):
             "form": form,
             "subject": user,
             "labels": permissions.role_labels(user),
+            # Reverse accessor from apps.people, so this app never imports it.
+            "coordinated_types": user.coordinator_assignments.select_related("person_type"),
             # For the note on sync-managed logins: what AD controls and which role it guarantees.
             "ad_user_group": settings.AD_USER_GROUP,
             "ad_baseline_role": settings.AD_BASELINE_ROLE,

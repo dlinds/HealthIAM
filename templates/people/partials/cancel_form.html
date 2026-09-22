@@ -1,0 +1,15 @@
+<div class="card border-danger mb-3">
+  <form hx-post="{% url 'people:assignment_end' person.pk assignment.pk %}" hx-target="#assignments" hx-swap="outerHTML">
+    {% csrf_token %}
+    <div class="card-body">
+      <h3 class="h6 mb-3">Cancel the planned assignment to <span class="text-mono">{{ assignment.position.code }}</span> {{ assignment.position.display_name }}</h3>
+      <p class="small text-body-secondary">It was to start {{ assignment.start_date|date:"Y-m-d" }} and has not begun, so the row is removed; the audit log keeps what was planned and why it was cancelled.</p>
+      {% if form.non_field_errors %}<div class="alert alert-danger py-2">{{ form.non_field_errors|join:" " }}</div>{% endif %}
+      {% include "people/partials/field.html" with field=form.reason %}
+    </div>
+    <div class="card-footer d-flex gap-2">
+      <button class="btn btn-danger btn-sm" type="submit">Cancel assignment</button>
+      <button class="btn btn-link btn-sm" type="button" onclick="document.getElementById('assignment-form-slot').innerHTML=''">Keep it</button>
+    </div>
+  </form>
+</div>

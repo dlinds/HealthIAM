@@ -16,8 +16,17 @@ from apps.accounts.models import User
 from apps.catalog.models import Application, Vendor
 from apps.directory import references
 from apps.orgs.models import Department, JobCode, Position
+from apps.people.models import Person, PositionAssignment
 
 from . import audit
+
+PRE_ORDERED_BUCKETS = ("assignments_expiring_30", "people_without_current_assignment")
+
+
+def _sample(key, qs):
+    if key in PRE_ORDERED_BUCKETS:
+        return qs[:8]
+    return qs.order_by("code" if key.startswith("positions") else "name")[:8]
 
 
 @role_required("can_view")
@@ -29,11 +38,13 @@ def dashboard(request):
     # have no vendor or owner contact, so counting them here reports gaps nobody can close.
     active_apps = active.filter(kind=Application.Kind.APPLICATION)
     active_positions = Position.objects.filter(is_active=True)
+    active_people = Person.objects.filter(is_active=True)
     stats = {
         "applications": active_apps.count(),
         "phi_applications": active_apps.filter(holds_phi=True).count(),
         "positions": active_positions.count(),
         "defaults": PositionDefault.objects.filter(position__is_active=True).count(),
+        "people": active_people.count(),
     }
     quality = {
         "apps_without_levels": active_apps.annotate(
@@ -44,6 +55,15 @@ def dashboard(request):
         ),
         "apps_without_analyst": active_apps.annotate(n=Count("analyst_assignments")).filter(n=0),
         "positions_without_defaults": active_positions.annotate(n=Count("defaults")).filter(n=0),
+        # Pre-ordered: these two have no `name` for the comprehension below to sort on.
+        "assignments_expiring_30": PositionAssignment.objects.expiring_within(30)
+        .filter(person__is_active=True)
+        .select_related("person", "position")
+        .order_by("end_date", "person__last_name"),
+        # An active person nothing says should have anything: the deprovisioning worklist.
+        "people_without_current_assignment": active_people.exclude(
+            pk__in=PositionAssignment.objects.current().values("person_id")
+        ).order_by("last_name", "first_name"),
     }
     mine = (
         active.filter(
@@ -59,10 +79,7 @@ def dashboard(request):
     recent = audit.base_queryset()[:12]
     for entry in recent:
         entry.reason = audit.reason_of(entry)
-    quality_items = {
-        k: (v.count(), v.order_by("code" if k.startswith("positions") else "name")[:8])
-        for k, v in quality.items()
-    }
+    quality_items = {k: (v.count(), _sample(k, v)) for k, v in quality.items()}
     if settings.AD_ENABLED:
         # Already ordered by application and level; the items are AccessLevel objects.
         broken = [level for level, _status, _group in references.broken_references()]
@@ -91,6 +108,7 @@ def search(request):
             )
             .distinct()
             .order_by("name")[:6],
+            "people": Person.objects.search(q).order_by("last_name", "first_name")[:6],
             "positions": Position.objects.filter(
                 Q(code__icontains=q)
                 | Q(title_override__icontains=q)
@@ -128,6 +146,7 @@ def history_list(request):
             | Q(additional_data__reason__icontains=q)
             | Q(additional_data__application__icontains=q)
             | Q(additional_data__position__icontains=q)
+            | Q(additional_data__person__icontains=q)
         )
     date_from = parse_date(g.get("from", "") or "")
     date_to = parse_date(g.get("to", "") or "")

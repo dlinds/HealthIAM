@@ -1,0 +1,15 @@
+<form class="border rounded p-2 mb-2" hx-post="{% url 'people:identifier_add' person.pk %}" hx-target="#identifiers" hx-swap="outerHTML">
+  {% csrf_token %}
+  {% if form.non_field_errors %}<div class="alert alert-danger py-1 small">{{ form.non_field_errors|join:" " }}</div>{% endif %}
+  <div class="row g-2">
+    <div class="col-5">{% include "people/partials/field.html" with field=form.kind %}</div>
+    <div class="col-7">{% include "people/partials/field.html" with field=form.value %}</div>
+    <div class="col-12">{% include "people/partials/field.html" with field=form.issued_by %}</div>
+    <div class="col-6">{% include "people/partials/field.html" with field=form.valid_from %}</div>
+    <div class="col-6">{% include "people/partials/field.html" with field=form.valid_to %}</div>
+    <div class="col-12">{% include "people/partials/field.html" with field=form.notes %}</div>
+    <div class="col-12">{% include "people/partials/field.html" with field=form.reason %}</div>
+  </div>
+  <button class="btn btn-primary btn-sm" type="submit">Add</button>
+  <button class="btn btn-link btn-sm" type="button" onclick="document.getElementById('identifier-form-slot').innerHTML=''">Cancel</button>
+</form>

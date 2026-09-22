@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Organizations · HealthIAM{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb">
+  <li class="breadcrumb-item"><a href="{% url 'people:person_list' %}">People</a></li>
+  <li class="breadcrumb-item active">Organizations</li>
+</ol></nav>
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+  <h1 class="h3 mb-0">External organizations</h1>
+  {% if iam.can_manage_people %}<a class="btn btn-primary" href="{% url 'people:organization_create' %}"><i class="bi bi-plus-lg me-1"></i>New organization</a>{% endif %}
+</div>
+<p class="text-body-secondary">Staffing agencies, schools and companies that external people come from.</p>
+<form class="row g-2 mb-3 js-autosubmit" method="get">
+  <div class="col-md-4"><input class="form-control" type="search" name="q" value="{{ q }}" placeholder="Search by name"></div>
+  <div class="col-md-2">
+    <select class="form-select" name="active">
+      <option value="1" {% if active == '1' %}selected{% endif %}>Active</option>
+      <option value="0" {% if active == '0' %}selected{% endif %}>Inactive</option>
+      <option value="all" {% if active == 'all' %}selected{% endif %}>All</option>
+    </select>
+  </div>
+  <div class="col-auto"><button class="btn btn-outline-secondary" type="submit">Filter</button></div>
+</form>
+<div class="table-responsive">
+<table class="table table-hover table-sm align-middle">
+  <thead><tr><th>Name</th><th>Kind</th><th>Vendor</th><th>Contact</th><th>Current people</th><th>Status</th></tr></thead>
+  <tbody>
+  {% for o in object_list %}
+    <tr>
+      <td>{% if iam.can_manage_people %}<a href="{{ o.get_absolute_url }}">{{ o.name }}</a>{% else %}{{ o.name }}{% endif %}</td>
+      <td>{{ o.get_kind_display }}</td>
+      <td>{% if o.vendor %}<a href="{{ o.vendor.get_absolute_url }}">{{ o.vendor.name }}</a>{% endif %}</td>
+      <td class="small">{{ o.contact_email }}{% if o.contact_phone %} · {{ o.contact_phone }}{% endif %}</td>
+      <td><a href="{% url 'people:person_list' %}?organization={{ o.pk }}">{{ o.current_count }}</a></td>
+      <td>{% if o.is_active %}<span class="badge text-bg-success">Active</span>{% else %}<span class="badge text-bg-secondary">Inactive</span>{% endif %}</td>
+    </tr>
+  {% empty %}
+    <tr><td colspan="6" class="text-body-secondary">No organizations found.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% include "partials/pagination.html" %}
+{% endblock %}

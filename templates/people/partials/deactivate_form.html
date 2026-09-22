@@ -1,0 +1,16 @@
+<div class="card border-danger mb-3">
+  <form hx-post="{% url 'people:person_deactivate' person.pk %}" hx-target="#person-action-slot" hx-swap="innerHTML">
+    {% csrf_token %}
+    <div class="card-body">
+      <h3 class="h6 mb-2">Mark {{ person.display_name }} inactive</h3>
+      <p class="small text-body-secondary mb-2">Every open position assignment ends on the separation date and expected access becomes empty. The record and its history stay.</p>
+      {% if form.non_field_errors %}<div class="alert alert-danger py-2">{{ form.non_field_errors|join:" " }}</div>{% endif %}
+      {% include "people/partials/field.html" with field=form.separation_date %}
+      {% include "people/partials/field.html" with field=form.reason %}
+    </div>
+    <div class="card-footer d-flex gap-2">
+      <button class="btn btn-danger btn-sm" type="submit">Mark inactive</button>
+      <button class="btn btn-link btn-sm" type="button" onclick="document.getElementById('person-action-slot').innerHTML=''">Cancel</button>
+    </div>
+  </form>
+</div>

@@ -3,11 +3,12 @@
 {% block title %}Dashboard · HealthIAM{% endblock %}
 {% block content %}
 <h1 class="h3 mb-3">Dashboard</h1>
-<div class="row g-3 mb-3">
-  <div class="col-6 col-lg-3"><a class="card text-decoration-none h-100" href="{% url 'catalog:application_list' %}"><div class="card-body"><div class="fs-2 fw-semibold">{{ stats.applications }}</div><div class="text-body-secondary">Applications</div></div></a></div>
-  <div class="col-6 col-lg-3"><a class="card text-decoration-none h-100" href="{% url 'catalog:application_list' %}?holds_phi=1"><div class="card-body"><div class="fs-2 fw-semibold">{{ stats.phi_applications }}</div><div class="text-body-secondary">Applications holding PHI</div></div></a></div>
-  <div class="col-6 col-lg-3"><a class="card text-decoration-none h-100" href="{% url 'orgs:position_list' %}"><div class="card-body"><div class="fs-2 fw-semibold">{{ stats.positions }}</div><div class="text-body-secondary">Active positions</div></div></a></div>
-  <div class="col-6 col-lg-3"><a class="card text-decoration-none h-100" href="{% url 'access:reports_index' %}"><div class="card-body"><div class="fs-2 fw-semibold">{{ stats.defaults }}</div><div class="text-body-secondary">Position defaults</div></div></a></div>
+<div class="row g-3 mb-3 row-cols-2 row-cols-lg-5">
+  <div class="col"><a class="card text-decoration-none h-100" href="{% url 'catalog:application_list' %}"><div class="card-body"><div class="fs-2 fw-semibold">{{ stats.applications }}</div><div class="text-body-secondary">Applications</div></div></a></div>
+  <div class="col"><a class="card text-decoration-none h-100" href="{% url 'catalog:application_list' %}?holds_phi=1"><div class="card-body"><div class="fs-2 fw-semibold">{{ stats.phi_applications }}</div><div class="text-body-secondary">Applications holding PHI</div></div></a></div>
+  <div class="col"><a class="card text-decoration-none h-100" href="{% url 'orgs:position_list' %}"><div class="card-body"><div class="fs-2 fw-semibold">{{ stats.positions }}</div><div class="text-body-secondary">Active positions</div></div></a></div>
+  <div class="col"><a class="card text-decoration-none h-100" href="{% url 'access:reports_index' %}"><div class="card-body"><div class="fs-2 fw-semibold">{{ stats.defaults }}</div><div class="text-body-secondary">Position defaults</div></div></a></div>
+  <div class="col"><a class="card text-decoration-none h-100" href="{% url 'people:person_list' %}"><div class="card-body"><div class="fs-2 fw-semibold">{{ stats.people }}</div><div class="text-body-secondary">Active people</div></div></a></div>
 </div>
 <div class="row g-3">
   <div class="col-lg-7">
@@ -47,12 +48,14 @@
               {% elif key == 'apps_without_owner' %}Applications without an owner
               {% elif key == 'apps_without_analyst' %}Applications without an analyst
               {% elif key == 'broken_ad_references' %}Access levels pointing at AD groups not found
+              {% elif key == 'assignments_expiring_30' %}Position assignments ending within 30 days
+              {% elif key == 'people_without_current_assignment' %}Active people with no current position
               {% else %}Active positions with no defaults{% endif %}
             </button>
           </h2>
           <div id="q-{{ key }}" class="accordion-collapse collapse" data-bs-parent="#quality">
             <ul class="list-group list-group-flush small">
-              {% for obj in sample %}<li class="list-group-item"><a href="{{ obj.get_absolute_url }}">{% if key == 'positions_without_defaults' %}<span class="text-mono">{{ obj.code }}</span> {{ obj.display_name }}{% elif key == 'broken_ad_references' %}{{ obj.application.name }} · {{ obj.name }}{% else %}{{ obj.name }}{% endif %}</a></li>{% endfor %}
+              {% for obj in sample %}<li class="list-group-item"><a href="{{ obj.get_absolute_url }}">{% if key == 'positions_without_defaults' %}<span class="text-mono">{{ obj.code }}</span> {{ obj.display_name }}{% elif key == 'broken_ad_references' %}{{ obj.application.name }} · {{ obj.name }}{% elif key == 'assignments_expiring_30' %}{{ obj.person.display_name }} · <span class="text-mono">{{ obj.position.code }}</span> ends {{ obj.end_date|date:"Y-m-d" }}{% elif key == 'people_without_current_assignment' %}{{ obj.sort_name }}{% else %}{{ obj.name }}{% endif %}</a></li>{% endfor %}
               {% if count > sample|length %}<li class="list-group-item text-body-tertiary">… and {{ count|add:"-8" }} more</li>{% endif %}
               {% if not count %}<li class="list-group-item text-body-secondary">Nothing to fix.</li>{% endif %}
             </ul>

@@ -7,8 +7,12 @@ Position-based access defaults and application catalog for a healthcare organiza
 - The **application catalog** is the source of truth for every system: aliases, vendor,
   tier, lifecycle, PHI/PII/clinical/PCI flags, hosting, authentication, owners, escalation
   tiers, vendor contacts, and how each access level is granted (AD group, in-app, ticket).
-- **Analysts** assigned to an application manage its levels and its defaults; the
-  security/IAM team administers everything. Every change is audited with a reason.
+- **People** are the workforce: employees, providers, students, travelers, contractors and
+  vendor staff, each holding one or more positions for a period. What a person should have is
+  the defaults of the positions they hold today.
+- **Analysts** assigned to an application manage its levels and its defaults; **coordinators**
+  assigned to a person type maintain the people of that type; the security/IAM team
+  administers everything. Every change is audited with a reason.
 
 ## Stack
 
@@ -50,6 +54,7 @@ docker compose exec web python manage.py seed_demo
 | **Admin** | `Admin` group (Entra group map or in-app) | Everything |
 | **Analyst** | Assignment on an application | Edit that application, its access levels, and add/remove its levels on any position |
 | **Application Owner** | Contact linked to a login, named as business or technical owner | Edit that application's descriptive, contact and support fields |
+| **Coordinator** | Assignment on a person type (Admin → People types) | Create people and organizations; add, extend and end position assignments of that type |
 | **Help Desk** | `Help Desk` group; also the baseline every login created by the AD sync is guaranteed (`AD_BASELINE_ROLE`) | Read-only: look up positions and applications, run reports |
 | **Auditor** | `Auditor` group | Read-only plus full change history and exports |
 
@@ -91,11 +96,22 @@ All settings are read from the environment (or `.env`); see `.env.example`.
   rather than one bucket means analyst rights stay scoped per team.
 - **Positions**: create/inactivate (Admin). On a position: add a default (search your
   applications → pick a level → reason), copy defaults from another position, remove with a
-  reason. Help desk uses this page to see expected access.
+  reason. Help desk uses this page to see expected access, and its People card shows who
+  holds the position today.
+- **People**: search by current or former name, employee ID, e-mail or NPI; filter by type,
+  status (ending within 30 days, open-ended external, on leave, no current position, inactive),
+  department or organization. A person is created together with their first position
+  assignment; the type decides whether an end date, a sponsor or an agency/school is required
+  (Admin → People types sets the rules and the coordinators). On a person: add an alternate
+  position, extend or end an assignment, change the name (the old one stays searchable),
+  record identifiers, mark inactive on a separation date -- every step with a reason. The
+  Expected access tab is the union of the defaults of every position held today, suspended
+  while on leave or inactive, exportable as CSV/XLSX.
 - **Departments / Job codes**: maintained in-app or via CSV import with a dry-run preview
   (`docs/import-format.md`). A scheduled HR feed can call `manage.py import_hr`.
-- **Reports**: position access matrix (CSV/XLSX, per department or all) and "who gets
-  application X".
+- **Reports**: position access matrix (CSV/XLSX, per department or all), "who gets
+  application X" (by position) and "who should have application X" (by person), expiring
+  assignments (30/60/90 days plus open-ended externals) and name changes in a period.
 - **Active Directory** (on by default in development against the seeded demo directory;
   configured with `AD_SERVER_URIS` elsewhere): the **AD groups** page lists the
   imported groups with search, an unreferenced filter, the route each name matches and the
@@ -131,6 +147,9 @@ apps/orgs        Department, JobCode, Position, CSV importers, ImportBatch
 apps/catalog     Vendor, Contact, Application, AccessLevel, SupportTier, analysts,
                  services (bulk adoption of AD groups)
 apps/access      PositionDefault, services (reason-audited writes), reports
+apps/people      PersonType (+ coordinators), ExternalOrganization, Person, PersonName,
+                 PersonIdentifier, PositionAssignment, services (reason-audited writes,
+                 expected access), reports, bootstrap_person_types
 apps/directory   ADGroup, ADGroupRoute, DirectorySyncRun, LDAPS client, sync engine,
                  routing, sync_ad, AD pages
 apps/core        base layout, dashboard, global search, audit history views,
@@ -153,7 +172,10 @@ tests/           pytest suite with factories
   and a Windows service running waitress, and `Setup-IIS.ps1` puts IIS in front for TLS.
   The usual choice when HealthIAM sits beside the domain controllers it syncs from.
 - `Dockerfile` runs `collectstatic` (whitenoise) and starts gunicorn; the entrypoint
-  applies migrations and creates the role groups.
+  applies migrations and creates the role groups and the default person types.
+- The people tables use PostgreSQL exclusion constraints, so the first migration installs the
+  `btree_gist` extension. It is a *trusted* extension (PostgreSQL 13+): the database owner the
+  deployments create installs it during `migrate` without superuser rights.
 - `config/settings/prod.py` enforces secure cookies, HSTS and requires `SECRET_KEY` and at
   least one auth method. Put a TLS-terminating proxy in front and set
   `CSRF_TRUSTED_ORIGINS`.

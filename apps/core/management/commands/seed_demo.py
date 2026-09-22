@@ -36,6 +36,9 @@ from apps.directory import reconcile
 from apps.directory.models import ADGroup, ADGroupRoute, DirectorySyncRun
 from apps.directory.sync import MISSING_GROUP_MESSAGE, SyncResult
 from apps.orgs.models import Department, JobCode, Position, Source
+from apps.people import services as people_services
+from apps.people.bootstrap import ensure_person_types
+from apps.people.models import ExternalOrganization, Person
 
 PASSWORD = "healthiam"
 
@@ -48,6 +51,7 @@ DEPARTMENTS = [
     ("0600", "Patient Access"),
     ("0700", "Laboratory"),
     ("0800", "Finance"),
+    ("0900", "Medical Staff"),
 ]
 
 JOB_CODES = [
@@ -63,6 +67,8 @@ JOB_CODES = [
     ("7600", "Medical Technologist"),
     ("7700", "Financial Analyst"),
     ("9000", "Department Director"),
+    ("7003", "Student Nurse"),
+    ("8000", "Physician"),
 ]
 
 POSITIONS = [
@@ -84,6 +90,8 @@ POSITIONS = [
     ("0700", "7600"),
     ("0800", "7700"),
     ("0800", "9000"),
+    ("0100", "7003"),
+    ("0900", "8000"),
 ]
 
 VENDORS = {
@@ -116,7 +124,9 @@ class Command(BaseCommand):
             contacts = self._contacts(vendors, users)
             apps = self._applications(vendors, contacts, users)
             self._defaults(apps, positions, users["admin"])
+            people = self._people(users, positions, vendors)
             counts = self._directory(users, positions)
+        self.stdout.write(f"People: {people} on record.")
         self.stdout.write(self.style.SUCCESS("Demo data loaded."))
         self.stdout.write(
             "Sign in with one of: admin / analyst.epic / analyst.imaging / owner.epic / "
@@ -642,6 +652,174 @@ class Command(BaseCommand):
                 lvl = level(app_key, level_name)
                 if not PositionDefault.objects.filter(position=pos, access_level=lvl).exists():
                     services.add_default(pos, lvl, actor=actor, reason="Baseline for all staff")
+
+    # --- People ---------------------------------------------------------------------
+
+    def _people(self, users, positions, vendors):
+        """The workforce the people database exists for: employees on the seeded positions
+        (one with an alternate position, one on leave, one who left last month, one who
+        changed her name), an employed and an affiliated provider, a traveler about to
+        expire and one open-ended, a student starting next week, an internal contractor
+        with no end date, a vendor representative and a volunteer.
+
+        Every row goes through `apps.people.services`, so it carries a reason like a real
+        one would, and every step is keyed so a re-seed changes nothing.
+        """
+        types = {t.code: t for t, _ in ensure_person_types()}
+        actor = users["admin"]
+        today = timezone.localdate()
+        reason = "Demo seed"
+
+        def day(offset):
+            return today + dt.timedelta(days=offset)
+
+        def org(name, kind, vendor=None):
+            return ExternalOrganization.objects.get_or_create(
+                name=name, defaults={"kind": kind, "vendor": vendor}
+            )[0]
+
+        aya = org("Aya Healthcare", ExternalOrganization.Kind.AGENCY)
+        college = org("State University College of Nursing", ExternalOrganization.Kind.SCHOOL)
+        epic = org("Epic Systems", ExternalOrganization.Kind.VENDOR, vendors["Epic Systems"])
+
+        def person(first, last, employee_id="", **fields):
+            lookup = (
+                {"employee_id": employee_id}
+                if employee_id
+                else {
+                    "first_name": first,
+                    "last_name": last,
+                }
+            )
+            existing = Person.objects.filter(**lookup).first()
+            if existing is not None:
+                return existing
+            return people_services.create_person(
+                actor=actor,
+                reason=reason,
+                source=Source.HR if employee_id else Source.MANUAL,
+                first_name=first,
+                last_name=last,
+                employee_id=employee_id,
+                email=f"{first}.{last}@example.org".lower().replace(" ", ""),
+                **fields,
+            )
+
+        def assign(who, code, type_code, start, end=None, **fields):
+            pos = positions[code]
+            if who.assignments.filter(position=pos, start_date=day(start)).exists():
+                return
+            people_services.add_assignment(
+                who,
+                pos,
+                types[type_code],
+                start_date=day(start),
+                end_date=day(end) if end is not None else None,
+                source=Source.HR if who.employee_id else Source.MANUAL,
+                actor=actor,
+                reason=reason,
+                **fields,
+            )
+
+        # Managers first, so the reports can point at them.
+        maria = person("Maria", "Alvarez", "E1001", hire_date=day(-3000))
+        assign(maria, "0100-7002", "employee", -3000)
+        grace = person("Grace", "Ito", "E1010", hire_date=day(-2500))
+        assign(grace, "0500-9000", "employee", -2500)
+        victor = person("Victor", "Salas", "E1015", hire_date=day(-1800))
+        assign(victor, "0800-9000", "employee", -1800)
+        nora = person("Nora", "Feld", "E1012", hire_date=day(-900))
+        assign(nora, "0600-7500", "employee", -900)
+
+        # Employees. Daniel also covers radiology: the alternate-position demo.
+        daniel = person("Daniel", "Okoro", "E1002", hire_date=day(-1200), manager=maria)
+        assign(daniel, "0100-7000", "employee", -1200)
+        assign(daniel, "0300-7000", "employee", -100, kind="alternate")
+        hannah = person("Hannah", "Weiss", "E1003", hire_date=day(-700), manager=maria)
+        assign(hannah, "0100-7000", "employee", -700)
+        if not hannah.on_leave:
+            people_services.update_person(
+                hannah, actor=actor, reason="Leave of absence per HR", on_leave=True
+            )
+        emily = person("Emily", "Brooks", "E1004", hire_date=day(-400), manager=maria)
+        assign(emily, "0100-7000", "employee", -400)
+        if not emily.former_names.exists():
+            people_services.change_name(
+                emily,
+                first_name="Emily",
+                last_name="Carter",
+                effective_on=day(-14),
+                actor=actor,
+                reason="Marriage; HR record updated",
+                source=Source.HR,
+            )
+        for first, last, eid, code, mgr, hired in (
+            ("Robert", "Chen", "E1005", "0200-7100", None, -1500),
+            ("Aisha", "Karim", "E1006", "0200-7101", None, -300),
+            ("Tom", "Becker", "E1007", "0300-7200", None, -2000),
+            ("Linda", "Park", "E1008", "0400-7300", None, -1100),
+            ("Jamal", "Wright", "E1013", "0700-7600", None, -600),
+            ("Helen", "Voss", "E1014", "0800-7700", victor, -800),
+        ):
+            who = person(first, last, eid, hire_date=day(hired), manager=mgr)
+            assign(who, code, "employee", hired)
+
+        # The logins that exist as people too, so a person page can show its HealthIAM login.
+        for first, last, eid, code, login in (
+            ("Sam", "Rivera", "E1011", "0500-7400", "admin"),
+            ("Jordan", "Lee", "E1018", "0500-7400", "iam"),
+            ("Priya", "Natarajan", "E1019", "0500-7400", "analyst_epic"),
+            ("Marcus", "Okafor", "E1020", "0500-7400", "analyst_imaging"),
+            ("Dana", "Whitfield", "E1021", "0100-9000", "owner_epic"),
+            ("Casey", "Nguyen", "E1022", "0500-7400", "helpdesk"),
+            ("Robin", "Alvarez", "E1023", "0800-7700", "auditor"),
+        ):
+            who = person(
+                first,
+                last,
+                eid,
+                hire_date=day(-1000),
+                manager=grace if code.startswith("0500") else None,
+                user=users[login],
+            )
+            assign(who, code, "employee", -1000)
+
+        # Left last month. The Phase 4 demo directory keeps his account enabled.
+        paul = person("Paul", "Grant", "E1016", hire_date=day(-1300), manager=grace)
+        assign(paul, "0400-7300", "employee", -1300)
+        if paul.is_active:
+            people_services.deactivate_person(
+                paul, actor=actor, reason="Terminated per HR feed", separation_date=day(-30)
+            )
+
+        # Providers: one employed, one affiliated.
+        anita = person("Anita", "Rao", "E1017", hire_date=day(-2200), suffix="MD")
+        assign(anita, "0900-8000", "provider", -2200)
+        if not anita.identifiers.filter(kind="npi").exists():
+            people_services.add_identifier(
+                anita, kind="npi", value="1234567893", actor=actor, reason="Credentialing file"
+            )
+        marcus = person("Marcus", "Bell", suffix="MD")
+        assign(marcus, "0900-8000", "provider", -900, title="Affiliated physician")
+        if not marcus.identifiers.filter(kind="npi").exists():
+            people_services.add_identifier(
+                marcus, kind="npi", value="1987654321", actor=actor, reason="Credentialing file"
+            )
+
+        # Externals.
+        chloe = person("Chloe", "Martin")
+        assign(chloe, "0100-7000", "traveler", -78, 12, organization=aya, sponsor=maria)
+        ben = person("Ben", "Osei")
+        assign(ben, "0300-7000", "traveler", -40, organization=aya, sponsor=maria)
+        lily = person("Lily", "Zhang")
+        assign(lily, "0100-7003", "student", 7, 90, organization=college, sponsor=maria)
+        ravi = person("Ravi", "Menon")
+        assign(ravi, "0500-7400", "contractor", -200, sponsor=grace, title="Epic analyst")
+        dana = person("Dana", "Fox")
+        assign(dana, "0500-7400", "vendor", -20, 60, organization=epic, sponsor=grace)
+        ruth = person("Ruth", "Adler")
+        assign(ruth, "0600-7500", "volunteer", -365, sponsor=nora)
+        return Person.objects.count()
 
     # --- Active Directory -----------------------------------------------------------
 

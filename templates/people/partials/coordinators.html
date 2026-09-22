@@ -1,0 +1,23 @@
+<div class="card" id="coordinators">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <span>Coordinators</span>
+    <span class="small text-body-secondary">create and maintain people of this type</span>
+  </div>
+  <ul class="list-group list-group-flush small">
+    {% for c in coordinators %}
+    <li class="list-group-item d-flex justify-content-between align-items-center">
+      <span>{{ c.user.display_name }}<br><a href="mailto:{{ c.user.email }}" class="text-body-secondary">{{ c.user.email }}</a></span>
+      <button class="btn btn-sm btn-link text-danger p-0" type="button" hx-post="{% url 'people:coordinator_remove' person_type.pk c.pk %}" hx-target="#coordinators" hx-swap="outerHTML" hx-confirm="Remove {{ c.user.display_name }} as a coordinator?">Remove</button>
+    </li>
+    {% empty %}
+    <li class="list-group-item text-body-secondary">Only Admins maintain {{ person_type.name|lower }} records.</li>
+    {% endfor %}
+  </ul>
+  <div class="card-footer">
+    <form class="row g-2 align-items-center" hx-post="{% url 'people:coordinator_add' person_type.pk %}" hx-target="#coordinators" hx-swap="outerHTML">
+      {% csrf_token %}
+      <div class="col">{{ coordinator_form.user }}{% for e in coordinator_form.user.errors %}<div class="invalid-feedback d-block">{{ e }}</div>{% endfor %}{% for e in coordinator_form.non_field_errors %}<div class="invalid-feedback d-block">{{ e }}</div>{% endfor %}</div>
+      <div class="col-auto"><button class="btn btn-sm btn-outline-primary" type="submit">Add</button></div>
+    </form>
+  </div>
+</div>

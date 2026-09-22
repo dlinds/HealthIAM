@@ -50,3 +50,19 @@ def fake_directory(monkeypatch):
     fake = build_default_world()
     monkeypatch.setattr("apps.directory.sync.build_client", lambda: fake)
     return fake
+
+
+@pytest.fixture
+def person_types(db):
+    """The default person types, as `bootstrap_person_types` creates them, keyed by code."""
+    from apps.people.bootstrap import ensure_person_types
+
+    return {ptype.code: ptype for ptype, _created in ensure_person_types()}
+
+
+@pytest.fixture
+def coordinator_user(db, person_types):
+    """A login whose only role is coordinating students."""
+    user = factories.UserFactory(username="coordinator")
+    factories.make_coordinator(person_types["student"], user)
+    return user

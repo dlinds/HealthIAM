@@ -1,0 +1,28 @@
+<div class="card border-primary mb-3">
+  <form hx-post="{% url 'people:assignment_edit' person.pk assignment.pk %}" hx-target="#assignments" hx-swap="outerHTML">
+    {% csrf_token %}
+    <div class="card-body">
+      <h3 class="h6 mb-3">Edit <span class="text-mono">{{ assignment.position.code }}</span> {{ assignment.position.display_name }}</h3>
+      <p class="small text-body-secondary">Dates change through <em>Extend</em> and <em>End</em>; the type is fixed once created.</p>
+      {% if form.non_field_errors %}<div class="alert alert-danger py-2">{{ form.non_field_errors|join:" " }}</div>{% endif %}
+      <div class="row">
+        <div class="col-md-4">{% include "people/partials/field.html" with field=form.kind %}</div>
+        <div class="col-md-4">{% include "people/partials/field.html" with field=form.title %}</div>
+        <div class="col-md-4">{% include "people/partials/field.html" with field=form.organization %}</div>
+      </div>
+      <div class="mb-3">
+        <label class="form-label" for="sponsor-search">Sponsor</label>
+        <input class="form-control form-control-sm mb-2" id="sponsor-search" type="search" name="q" placeholder="Search people…" autocomplete="off"
+          hx-get="{% url 'people:person_picker' %}?field=sponsor&exclude={{ person.pk }}&selected={{ assignment.sponsor_id|default:'' }}" hx-trigger="load, input changed delay:250ms" hx-target="#sponsor-picker" hx-swap="innerHTML" hx-include="this">
+        <div id="sponsor-picker" class="border rounded p-2" style="max-height:10rem; overflow-y:auto"></div>
+        {% for e in form.sponsor.errors %}<div class="invalid-feedback d-block">{{ e }}</div>{% endfor %}
+      </div>
+      {% include "people/partials/field.html" with field=form.notes %}
+      {% include "people/partials/field.html" with field=form.reason %}
+    </div>
+    <div class="card-footer d-flex gap-2">
+      <button class="btn btn-primary btn-sm" type="submit">Save</button>
+      <button class="btn btn-link btn-sm" type="button" onclick="document.getElementById('assignment-form-slot').innerHTML=''">Cancel</button>
+    </div>
+  </form>
+</div>

@@ -1,12 +1,18 @@
 # Data model
 
-HealthIAM stores two things: the **application catalog** (source of truth for what each
-system is, who owns it, and how access is granted) and the **position access defaults**
-(which access levels each department–job-code position receives by default).
+HealthIAM stores three things: the **application catalog** (source of truth for what each
+system is, who owns it, and how access is granted), the **position access defaults** (which
+access levels each department–job-code position receives by default) and the **people**
+(who holds which position, since when and until when, under which names -- so the first two
+can say what a *person* should have).
 
 Nothing is hard-deleted. Departments, job codes, positions, applications, access levels,
-vendors and contacts carry an `is_active` flag; foreign keys use `PROTECT`; every change is
-written to the audit log (django-auditlog) with actor, timestamp and before/after values.
+vendors, contacts, people and organizations carry an `is_active` flag; foreign keys use
+`PROTECT`, except nullable *links* (`Person.manager`, `Person.user`) which are `SET_NULL`;
+every change is written to the audit log (django-auditlog) with actor, timestamp and
+before/after values. The exceptions are child rows that are removed rather than kept
+(application aliases, analysts, person identifiers, coordinators, and a position assignment
+that is cancelled before it began): each leaves an audit entry stamped with its parent.
 
 ## Organization (`apps/orgs`)
 
@@ -156,6 +162,109 @@ that level to a position is the access-granting decision, and still requires one
 Adoption is idempotent through the catalog itself — an adopted group is referenced, so it
 leaves the candidate list.
 
+## People (`apps/people`)
+
+A `Person` is a human in the workforce in any capacity -- never a login. `accounts.User` stays
+the login identity; `Person.user` is an optional link for the few staff who also use HealthIAM.
+A person's *type* (employee, provider, student, traveler...) lives on each **position
+assignment**, not on the person: one person can be a nursing student and an aide at once, and
+a traveler who is later hired is the same person with a new dated row.
+
+Time is modelled with dates and nothing else: an assignment is *upcoming*, *active* or *ended*
+by comparing its dates with today, so expected access stops the day after an end date without
+a nightly job. Every write goes through `apps/people/services.py`, which requires a reason and
+checks the actor's rights; `system=True` is for the HR import and the directory sync, which
+run with no login and whose authority is the feed itself.
+
+### PersonType
+Employee, provider, student, traveler, contractor, volunteer, vendor representative... A table
+rather than a choices list: coordinators are assigned per type, and each organization adds its
+own (residents, locums). `manage.py bootstrap_person_types` creates the defaults and never
+overwrites a flag an Admin changed.
+
+| Field | Notes |
+|---|---|
+| `code`, `name`, `description`, `sort_order`, `is_active` | |
+| `is_external` | Not employed by the organization. Open-ended assignments of an external type are listed for review, since nothing else will end them. |
+| `requires_end_date` | Every assignment of the type must carry an end date. Defaults: student and vendor only; travelers and contractors are often open-ended. |
+| `requires_sponsor`, `requires_organization` | Every assignment must name an internal sponsor / the agency, school or company. |
+| `max_duration_days` | Longest assignment allowed; implies an end date. |
+| `coordinators` | Logins that may create and maintain people and assignments of this type (through **PersonTypeCoordinator**, unique per type and user) -- the same idea as analysts per application. Admins may do everything. |
+
+### ExternalOrganization
+An agency, school or company external people come from: `name` (unique case-insensitively),
+`kind` (agency / school / vendor / other), optional `vendor` link to the catalog, contact
+e-mail and phone, `is_active`.
+
+### Person
+| Field | Notes |
+|---|---|
+| `first_name`, `middle_name`, `last_name`, `suffix`, `preferred_name` | The current legal name and a preferred first name. `display_name` is preferred-or-first + last; `sort_name` is "Last, First". Names change only through `services.change_name`, which keeps the old one (below). |
+| `employee_id` | The HR key; empty for people HR does not employ; unique when set. |
+| `email`, `phone`, `work_location` | |
+| `hire_date`, `separation_date` | From HR; empty for externals. |
+| `on_leave` | Leave of absence: expected access is suspended while set. |
+| `manager` | Self link, `SET_NULL`. |
+| `user` | The HealthIAM login of this person, if any (`SET_NULL`). |
+| `is_active`, `inactivated_at`, `source`, `notes`, `created_by` | Inactive = left: every assignment ended. `source` is `hr` for people the feed maintains (their HR-owned fields are read-only in the UI) or `manual`. |
+
+No date of birth and no SSN, on purpose: neither is needed to track access and both are a
+liability to hold. Search matches current names, former names, employee ID, e-mail and
+identifiers.
+
+### PersonName
+A name the person was known by before: the five name parts, `used_from` (empty when unknown),
+`used_until`, `source`, `notes`. Written by `change_name` as a snapshot of the old legal name,
+so an old ticket or log entry still leads to the right person. A change to the preferred name
+alone snapshots nothing.
+
+### PersonIdentifier
+`kind` (NPI, state license, student ID, badge, vendor/agency ID, former employee ID, other),
+`value`, `issued_by`, `valid_from`, `valid_to`, `notes`. Unique per kind and value except for
+`other`; a duplicate is refused naming the person who already has it, which is the signal that
+two records are one person.
+
+### PositionAssignment
+A person holds a position from a start date to an optional end date, as their **primary**
+position or an **alternate** one, under one person type. "Alternate positions" and "external
+positions with an expiration" are both rows here.
+
+| Field | Notes |
+|---|---|
+| `person`, `position` | `position` is `PROTECT`. |
+| `person_type` | The type of this engagement. |
+| `kind` | `primary` / `alternate`. |
+| `start_date`, `end_date` | Empty end = open-ended. Required when the type says so. |
+| `organization`, `sponsor` | Required when the type says so. A sponsor must be active and not the person. |
+| `title` | Working title, when the position's is not it. |
+| `end_reason` | transfer / separation / contract_end / expired / other; set when ended. |
+| `source`, `notes`, `created_by` | HR-sourced rows are read-only in the UI: the feed owns them. |
+
+Two exclusion constraints (PostgreSQL, `btree_gist`) make the database refuse what the service
+refuses first with a friendlier message: a person cannot hold two **primary** positions at
+once, and cannot hold the **same position** twice at once; a check constraint keeps the end
+date after the start. The status (`upcoming` / `active` / `ended`) is derived from the dates.
+
+Every assignment entry is stamped with both the person and the position, so the person's
+History collects it and so does the position's -- "who held this position when" is an audit
+question. Ending an assignment keeps the row; deactivating a person ends every open row on
+the separation date and removes rows that had not started yet (audited, with the reason).
+Adding an assignment to an inactive person reactivates them under the same reason.
+
+### Expected access
+`services.expected_access(person, on)` is the defaults of every position the person holds on
+that day, primary and alternates alike, one row per access level with the position codes it
+comes from. It is empty (with a stated reason) while the person is inactive or on leave, and
+marks rows whose level is inactive or whose application is retired as stale. The person page
+shows it, exports it, and refreshes it whenever the page's history changes.
+
+### Coordinators and permissions
+`can_manage_people` (create people and organizations) is any coordinator or an Admin;
+`can_add_assignment(user, type)` and `can_edit_assignment(user, assignment)` need the
+coordinator of *that* type; `can_edit_person(user, person)` needs the coordinator of any type
+the person has ever been assigned under, so a returning traveler's old record is reachable.
+Person types themselves and their coordinators are Admin-only. HR imports stay Admin-only.
+
 ## Accounts and roles (`apps/accounts`)
 
 `User` extends Django's user with `entra_object_id`, `job_title`, `department_name` and
@@ -179,6 +288,7 @@ admin or the sync made them.
 | Admin | Group `Admin` (security / IAM team) or superuser | Everything: positions, departments, job codes, imports, applications, levels, analysts, defaults, vendors, contacts, user roles, Django admin |
 | Analyst | Assigned on an application | Edit that application, its access levels, and add/remove its levels on any position |
 | Application Owner | Contact linked to the user is business or technical owner | Edit that application's descriptive, contact and support fields |
+| Coordinator | Assigned on a person type | Create people and organizations; add, edit, extend and end position assignments of that type; edit people who hold one |
 | Help Desk | Group `Help Desk` | Read everything, use search and reports |
 | Auditor | Group `Auditor` | Read everything plus the global change history and exports |
 
@@ -301,22 +411,25 @@ lockout in Django admin.
 ## Audit log
 
 django-auditlog records create / update / delete for every model above. Entries carry
-`additional_data` with `reason` (for defaults), `application_id` (for application children)
-and `position_id` (for defaults) so the History tab on an application or position shows
-related changes, including deletions.
+`additional_data` with `reason` (for defaults and every people write), `application_id` (for
+application children), `position_id` (for defaults and position assignments), `person_id`
+(for a person's names, identifiers and assignments) and `person_type_id` (for coordinators)
+so the History tab on an application, position, person or person type shows related changes,
+including deletions.
 
 ## Future hooks
 
-- **Employees**: an `Employee` model with a foreign key to `Position` lets the help desk
-  answer "what should this person have?" without touching defaults.
-- **Exceptions / requests**: a model linking a person to an `AccessLevel` with an approval
-  trail sits beside `PositionDefault`.
-- **HR feed**: the `import_hr` management command already performs the same import as the
-  upload page; schedule it once the feed exists.
+- **People from the HR feed**: a `people` kind for `import_hr` and the upload page, keyed on
+  `employee_id`, that creates people and their primary / alternate assignments, records name
+  changes as `PersonName` rows and ends assignments on transfer or termination.
+- **Exceptions / grants**: a model linking a person to an `AccessLevel` with an approval
+  trail sits beside `PositionDefault` and is layered into `expected_access`.
+- **AD accounts**: a mirror of user accounts linked to `Person` by `employeeID`, so a person
+  page shows their accounts and the dashboard shows enabled accounts of people who left.
 - **AD group membership**: `ADGroup` is keyed by objectGUID and carries the DN, so a
   membership import (a `member` list per group, or per-user `memberOf`) can attach to it
   without changing the group rows.
-- **Actual vs expected access**: with membership imported and `Employee` linked to
-  `Position`, comparing a person's AD groups against the `ad_group` levels of their
-  position defaults gives the "who has access they should not" report; the
-  broken-reference report already uses the same `ad_group_name` ↔ `ADGroup.name` match.
+- **Actual vs expected access**: with membership imported and accounts linked to people,
+  comparing a person's AD groups against the `ad_group` levels of their expected access gives
+  the "who has access they should not" report; the broken-reference report already uses the
+  same `ad_group_name` ↔ `ADGroup.name` match.

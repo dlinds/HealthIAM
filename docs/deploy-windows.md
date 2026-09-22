@@ -27,6 +27,10 @@ powershell -ExecutionPolicy Bypass -File .\deploy\windows\Setup-IIS.ps1 `
     -InstallRoot C:\HealthIAM -Hostname iam.corp.example.org
 ```
 
+> The people tables rely on the `btree_gist` PostgreSQL extension, which `migrate` installs
+> by itself. It is a trusted extension on PostgreSQL 13 and later, so the application's
+> database owner needs no superuser rights for it.
+
 ## Prerequisites
 
 - **Windows Server 2019 or newer.** Server Core is fine; every step here is PowerShell

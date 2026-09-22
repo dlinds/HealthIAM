@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}{% if person %}Edit {{ person.display_name }}{% else %}New person{% endif %} · HealthIAM{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb">
+  <li class="breadcrumb-item"><a href="{% url 'people:person_list' %}">People</a></li>
+  {% if person %}<li class="breadcrumb-item"><a href="{{ person.get_absolute_url }}">{{ person.display_name }}</a></li>{% endif %}
+  <li class="breadcrumb-item active">{% if person %}Edit{% else %}New{% endif %}</li>
+</ol></nav>
+<div class="row">
+  <div class="col-lg-8">
+    <div class="card">
+      <div class="card-body">
+        <h1 class="h4">{% if person %}Edit {{ person.legal_name }}{% else %}New person{% endif %}</h1>
+        {% if person %}
+          <p class="text-body-secondary small">
+            Names change through <strong>Change name</strong> on the person page, so the old name stays searchable.
+            {% if form.hr_owned %}This person comes from the <strong>HR feed</strong>: the fields it owns are shown but cannot be edited here; the next import would put them back.{% endif %}
+          </p>
+        {% else %}
+          <p class="text-body-secondary small">A person is created together with their first position assignment. Pick the type first: it decides whether an end date, a sponsor or an organization is required.</p>
+        {% endif %}
+        <form method="post">
+          {% csrf_token %}
+          {% if form.non_field_errors %}<div class="alert alert-danger">{{ form.non_field_errors }}</div>{% endif %}
+          {% if not person %}
+          <h2 class="h6 text-uppercase text-body-secondary mt-2">Person</h2>
+          <div class="row">
+            <div class="col-md-4">{% include "people/partials/field.html" with field=form.first_name %}</div>
+            <div class="col-md-3">{% include "people/partials/field.html" with field=form.middle_name %}</div>
+            <div class="col-md-3">{% include "people/partials/field.html" with field=form.last_name %}</div>
+            <div class="col-md-2">{% include "people/partials/field.html" with field=form.suffix %}</div>
+          </div>
+          {% endif %}
+          <div class="row">
+            <div class="col-md-4">{% include "people/partials/field.html" with field=form.preferred_name %}</div>
+            <div class="col-md-4">{% include "people/partials/field.html" with field=form.employee_id %}</div>
+            <div class="col-md-4">{% include "people/partials/field.html" with field=form.hire_date %}</div>
+          </div>
+          <div class="row">
+            <div class="col-md-4">{% include "people/partials/field.html" with field=form.email %}</div>
+            <div class="col-md-4">{% include "people/partials/field.html" with field=form.phone %}</div>
+            <div class="col-md-4">{% include "people/partials/field.html" with field=form.work_location %}</div>
+          </div>
+          {% if 'manager' not in form.hr_owned %}
+          <div class="mb-3">
+            <label class="form-label" for="manager-search">Manager</label>
+            <input class="form-control form-control-sm mb-2" id="manager-search" type="search" name="q" placeholder="Search people…" autocomplete="off"
+              hx-get="{% url 'people:person_picker' %}?field=manager{% if person %}&exclude={{ person.pk }}&selected={{ person.manager_id|default:'' }}{% endif %}" hx-trigger="load, input changed delay:250ms" hx-target="#manager-picker" hx-swap="innerHTML" hx-include="this">
+            <div id="manager-picker" class="border rounded p-2" style="max-height:10rem; overflow-y:auto"></div>
+            {% for e in form.manager.errors %}<div class="invalid-feedback d-block">{{ e }}</div>{% endfor %}
+          </div>
+          {% elif person.manager %}
+          <div class="mb-3"><label class="form-label">Manager</label><div class="form-control-plaintext">{{ person.manager.display_name }} <span class="text-body-secondary small">(from HR)</span></div></div>
+          {% endif %}
+          {% if person %}
+            {% include "people/partials/field.html" with field=form.on_leave %}
+            {% if form.user %}{% include "people/partials/field.html" with field=form.user %}{% endif %}
+            {% include "people/partials/field.html" with field=form.notes %}
+          {% else %}
+            <h2 class="h6 text-uppercase text-body-secondary mt-4">First assignment</h2>
+            {% include "people/partials/assignment_fields.html" with form=form %}
+          {% endif %}
+          <h2 class="h6 text-uppercase text-body-secondary mt-4">Reason</h2>
+          {% include "people/partials/field.html" with field=form.reason %}
+          <button class="btn btn-primary" type="submit">Save</button>
+          <a class="btn btn-link" href="{% if person %}{{ person.get_absolute_url }}{% else %}{% url 'people:person_list' %}{% endif %}">Cancel</a>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

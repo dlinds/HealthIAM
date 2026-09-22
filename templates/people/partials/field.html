@@ -1,0 +1,14 @@
+{# One bound field with Bootstrap markup. Usage: {% include "people/partials/field.html" with field=form.x %} #}
+{% if field %}
+<div class="mb-3 {% if field.field.widget.input_type == 'checkbox' %}form-check{% endif %}">
+  {% if field.field.widget.input_type == 'checkbox' %}
+    {{ field }}
+    <label class="form-check-label" for="{{ field.id_for_label }}">{{ field.label }}</label>
+  {% else %}
+    <label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}{% if field.field.required %} <span class="text-danger">*</span>{% endif %}</label>
+    {{ field }}
+  {% endif %}
+  {% if field.help_text %}<div class="form-text">{{ field.help_text|safe }}</div>{% endif %}
+  {% for error in field.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}
+</div>
+{% endif %}

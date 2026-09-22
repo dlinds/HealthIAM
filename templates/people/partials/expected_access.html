@@ -1,0 +1,50 @@
+<div id="expected-access" hx-get="{% url 'people:expected_access' person.pk %}" hx-trigger="historyChanged from:body" hx-swap="outerHTML">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+    <div class="small text-body-secondary">
+      As of {{ expected.on|date:"Y-m-d" }}: the defaults of every position held today{% if expected.assignments %} ({% for a in expected.assignments %}<span class="text-mono">{{ a.position.code }}</span>{% if not forloop.last %}, {% endif %}{% endfor %}){% endif %}.
+    </div>
+    {% if iam.can_export %}
+    <div>
+      <a class="btn btn-sm btn-outline-primary" href="{% url 'people:expected_access' person.pk %}?format=xlsx"><i class="bi bi-file-earmark-excel me-1"></i>Excel</a>
+      <a class="btn btn-sm btn-outline-primary" href="{% url 'people:expected_access' person.pk %}?format=csv"><i class="bi bi-filetype-csv me-1"></i>CSV</a>
+    </div>
+    {% endif %}
+  </div>
+  {% if expected.is_suspended %}
+  <div class="alert alert-warning py-2">
+    <i class="bi bi-pause-circle me-1"></i>{{ person.display_name }} is <strong>{{ expected.suspended_reason }}</strong>: expected access is suspended. What is listed is what they would have.
+  </div>
+  {% endif %}
+  {% for g in expected.groups %}
+  <div class="mb-3">
+    <div class="d-flex align-items-center gap-2 mb-1">
+      <a class="fw-semibold" href="{{ g.application.get_absolute_url }}">{{ g.application.name }}</a>
+      {% if g.application.is_service %}<span class="badge text-bg-light border">Service</span>{% else %}<span class="badge badge-tier-{{ g.application.tier }}">Tier {{ g.application.tier }}</span>{% endif %}
+      {% for f in g.application.data_flags %}<span class="badge text-bg-warning-subtle border border-warning-subtle text-warning-emphasis">{{ f }}</span>{% endfor %}
+      {% if g.application.lifecycle_status != 'active' %}{% include "catalog/partials/lifecycle_badge.html" with app=g.application %}{% endif %}
+    </div>
+    <table class="table table-sm mb-0">
+      <tbody>
+      {% for r in g.rows %}
+      <tr class="{% if r.is_stale or r.excluded_by or expected.is_suspended %}text-body-tertiary{% endif %}">
+        <td style="width:30%">{% if r.excluded_by %}<s>{{ r.access_level.name }}</s>{% else %}{{ r.access_level.name }}{% endif %}{% if not r.access_level.is_active %} <span class="badge text-bg-secondary">level inactive</span>{% endif %}</td>
+        <td class="small">
+          <span class="badge text-bg-light border">{{ r.access_level.get_access_model_display }}</span>
+          {% if r.access_level.access_model == 'ad_group' %}<span class="text-mono">{{ r.access_level.ad_group_name }}</span>
+          {% elif r.access_level.access_model == 'ticket' %}{{ r.access_level.ticket_assignment_team }}
+          {% elif r.access_level.access_model == 'in_app' %}{{ r.access_level.in_app_instructions|truncatechars:100 }}{% endif %}
+        </td>
+        <td class="small text-body-secondary">
+          {% if r.excluded_by %}<span class="badge text-bg-danger-subtle border border-danger-subtle text-danger-emphasis">Excluded</span>{% endif %}
+          {% if r.grant %}<span class="badge text-bg-primary-subtle border border-primary-subtle text-primary-emphasis">Grant</span>{% endif %}
+          {% for code in r.via_positions %}<span class="text-mono">{{ code }}</span>{% if not forloop.last %}, {% endif %}{% endfor %}
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% empty %}
+  <p class="text-body-secondary mb-0">{% if expected.assignments %}The positions held today have no default access recorded.{% else %}No current position, so nothing is expected.{% endif %}</p>
+  {% endfor %}
+</div>

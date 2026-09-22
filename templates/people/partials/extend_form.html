@@ -1,0 +1,16 @@
+<div class="card border-primary mb-3">
+  <form hx-post="{% url 'people:assignment_extend' person.pk assignment.pk %}" hx-target="#assignments" hx-swap="outerHTML">
+    {% csrf_token %}
+    <div class="card-body">
+      <h3 class="h6 mb-3">{% if assignment.end_date %}Extend{% else %}Set an end date for{% endif %} <span class="text-mono">{{ assignment.position.code }}</span> {{ assignment.position.display_name }}</h3>
+      {% if assignment.end_date %}<p class="small text-body-secondary">Currently ends {{ assignment.end_date|date:"Y-m-d" }}.{% if assignment.person_type.max_duration_days %} {{ assignment.person_type.name }} assignments may last at most {{ assignment.person_type.max_duration_days }} days.{% endif %}</p>{% endif %}
+      {% if form.non_field_errors %}<div class="alert alert-danger py-2">{{ form.non_field_errors|join:" " }}</div>{% endif %}
+      {% include "people/partials/field.html" with field=form.end_date %}
+      {% include "people/partials/field.html" with field=form.reason %}
+    </div>
+    <div class="card-footer d-flex gap-2">
+      <button class="btn btn-primary btn-sm" type="submit">Save end date</button>
+      <button class="btn btn-link btn-sm" type="button" onclick="document.getElementById('assignment-form-slot').innerHTML=''">Cancel</button>
+    </div>
+  </form>
+</div>
