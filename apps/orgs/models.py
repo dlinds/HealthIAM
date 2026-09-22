@@ -132,6 +132,8 @@ class ImportBatch(TimeStampedModel):
         DEPARTMENTS = "departments", "Departments"
         JOB_CODES = "job_codes", "Job codes"
         POSITIONS = "positions", "Positions"
+        # Registered by apps.people (see `importers.register_importer`).
+        PEOPLE = "people", "People"
 
     class Status(models.TextChoices):
         PENDING = "pending", "Pending"

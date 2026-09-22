@@ -8,7 +8,7 @@
 <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
   <div>
     <h1 class="h3 mb-1">Who gets <a href="{{ application.get_absolute_url }}">{{ application.name }}</a></h1>
-    <div class="text-body-secondary small">{{ total }} position default{{ total|pluralize }} across {{ grouped|length }} access level{{ grouped|length|pluralize }}</div>
+    <div class="text-body-secondary small">{{ total }} position default{{ total|pluralize }} across {{ grouped|length }} access level{{ grouped|length|pluralize }} · <a href="{% url 'people:who_should_have' application.pk %}">who should have it, by person</a></div>
   </div>
   <div class="d-flex gap-2 align-items-center">
     <form method="get" onsubmit="event.preventDefault(); window.location='/reports/who-gets/'+this.app.value+'/';">

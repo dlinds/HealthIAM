@@ -1,0 +1,23 @@
+{% load people_tags %}
+<div class="card mb-3" id="position-holders">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <span>People <span class="badge text-bg-secondary">{{ rows|length }}</span></span>
+    <a class="small" href="{% url 'people:person_list' %}?position={{ position.pk }}">All holders</a>
+  </div>
+  <ul class="list-group list-group-flush small">
+    {% for a in rows %}
+    <li class="list-group-item d-flex justify-content-between align-items-center">
+      <span>
+        <a href="{{ a.person.get_absolute_url }}">{{ a.person.display_name }}</a>
+        {% if a.kind == 'alternate' %}<span class="badge text-bg-light border">Alternate</span>{% endif %}
+        <span class="badge text-bg-light border">{{ a.person_type.name }}</span>
+        {% if a.organization %}<span class="text-body-secondary">via {{ a.organization.name }}</span>{% endif %}
+      </span>
+      {% if a.end_date %}<span class="badge {{ a|days_badge }}">{{ a.end_date|date:"Y-m-d" }}</span>{% endif %}
+    </li>
+    {% empty %}
+    <li class="list-group-item text-body-secondary">Nobody holds this position today.</li>
+    {% endfor %}
+    {% if upcoming %}<li class="list-group-item text-body-tertiary">{{ upcoming }} starting later</li>{% endif %}
+  </ul>
+</div>

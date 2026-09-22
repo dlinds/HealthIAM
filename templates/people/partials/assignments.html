@@ -1,0 +1,27 @@
+{% load people_tags %}
+<div id="assignments" class="card">
+  <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
+    <span>Positions <span class="badge text-bg-secondary">{{ current|length }}</span>{% if upcoming %} <span class="badge text-bg-info">{{ upcoming|length }} upcoming</span>{% endif %}</span>
+    {% if can_add %}
+    <button class="btn btn-sm btn-primary" type="button" hx-get="{% url 'people:assignment_add' person.pk %}" hx-target="#assignment-form-slot" hx-swap="innerHTML"><i class="bi bi-plus-lg me-1"></i>Add position</button>
+    {% endif %}
+  </div>
+  <div class="card-body">
+    {% if notice %}<div class="alert alert-success py-2">{{ notice }}</div>{% endif %}
+    {% for e in errors %}<div class="alert alert-danger py-2">{{ e }}</div>{% endfor %}
+    <div id="assignment-form-slot"></div>
+    {% if not current and not upcoming %}
+      <p class="text-body-secondary mb-2">No current position. {% if person.is_active %}Expected access is empty until one is added.{% endif %}</p>
+    {% endif %}
+    {% for a in current %}{% include "people/partials/assignment_row.html" with a=a %}{% endfor %}
+    {% for a in upcoming %}{% include "people/partials/assignment_row.html" with a=a %}{% endfor %}
+    {% if ended %}
+    <details class="mt-2">
+      <summary class="small text-body-secondary">{{ ended|length }} past position{{ ended|length|pluralize }}</summary>
+      <div class="mt-2">
+        {% for a in ended %}{% include "people/partials/assignment_row.html" with a=a %}{% endfor %}
+      </div>
+    </details>
+    {% endif %}
+  </div>
+</div>

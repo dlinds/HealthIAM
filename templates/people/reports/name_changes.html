@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Name changes · HealthIAM{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb">
+  <li class="breadcrumb-item"><a href="{% url 'access:reports_index' %}">Reports</a></li>
+  <li class="breadcrumb-item active">Name changes</li>
+</ol></nav>
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+  <h1 class="h3 mb-0">Name changes</h1>
+  <div>
+    <a class="btn btn-outline-primary" href="?from={{ since|date:'Y-m-d' }}{% if until %}&to={{ until|date:'Y-m-d' }}{% endif %}&format=xlsx"><i class="bi bi-file-earmark-excel me-1"></i>Excel</a>
+    <a class="btn btn-outline-primary" href="?from={{ since|date:'Y-m-d' }}{% if until %}&to={{ until|date:'Y-m-d' }}{% endif %}&format=csv"><i class="bi bi-filetype-csv me-1"></i>CSV</a>
+  </div>
+</div>
+<form class="row g-2 mb-3" method="get">
+  <div class="col-auto"><label class="form-label small" for="from">Recorded from</label><input class="form-control" type="date" id="from" name="from" value="{{ since|date:'Y-m-d' }}"></div>
+  <div class="col-auto"><label class="form-label small" for="to">to</label><input class="form-control" type="date" id="to" name="to" value="{{ until|date:'Y-m-d' }}"></div>
+  <div class="col-auto align-self-end"><button class="btn btn-outline-secondary" type="submit">Filter</button></div>
+</form>
+<div class="table-responsive">
+<table class="table table-sm table-hover align-middle">
+  <thead><tr>{% for c in columns %}<th>{{ c|cut:"_"|capfirst }}</th>{% endfor %}</tr></thead>
+  <tbody>
+  {% for r in rows %}<tr>{% for v in r %}<td>{{ v }}</td>{% endfor %}</tr>
+  {% empty %}<tr><td colspan="{{ columns|length }}" class="text-body-secondary">No name changes recorded in this period.</td></tr>{% endfor %}
+  </tbody>
+</table>
+</div>
+{% endblock %}

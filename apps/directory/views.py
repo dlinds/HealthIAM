@@ -10,6 +10,7 @@ from `DirectorySettings.public_dict()` and error text passes through `sync.redac
 from django.conf import settings
 from django.contrib import messages
 from django.core.checks import run_checks
+from django.core.exceptions import ValidationError
 from django.db.models import Case, Count, Exists, IntegerField, OuterRef, Q, Value, When
 from django.db.models.functions import Lower
 from django.shortcuts import get_object_or_404, redirect, render
@@ -26,12 +27,13 @@ from apps.accounts.mixins import PermissionCheckMixin, role_required
 from apps.accounts.models import User
 from apps.catalog import services as catalog_services
 from apps.catalog.models import AccessLevel, Application
+from apps.people.models import Person
 
-from . import checks, reconcile, references, routing, sync
+from . import checks, reconcile, references, routing, services, sync
 from .config import DirectorySettings
-from .forms import ADGroupRouteForm, SyncStartForm
+from .forms import AccountKindForm, AccountLinkForm, ADGroupRouteForm, SyncStartForm
 from .ldap_client import ConnectionInfo
-from .models import ADGroup, ADGroupRoute, DirectorySyncRun
+from .models import ADGroup, ADGroupRoute, DirectoryAccount, DirectorySyncRun
 
 PICKER_LIMIT = 15
 RECENT_RUNS = 10
@@ -369,6 +371,8 @@ def _status_context(runs):
     groups_active, groups_inactive = _active_counts(ADGroup.objects.all())
     managed_active, managed_inactive = _active_counts(User.objects.filter(ad_managed=True))
     synced = references.groups_synced()
+    accounts = DirectoryAccount.objects.all()
+    accounts_active, accounts_inactive = _active_counts(accounts)
     return {
         "last_run": last_run,
         "groups_active": groups_active,
@@ -377,7 +381,24 @@ def _status_context(runs):
         "managed_inactive": managed_inactive,
         "groups_synced": synced,
         "broken_count": len(references.broken_references()) if synced else None,
+        "accounts_enabled": DirectorySettings.from_settings().accounts_enabled,
+        "accounts_active": accounts_active,
+        "accounts_inactive": accounts_inactive,
+        "accounts_unlinked": _unlinked(accounts).count(),
+        "accounts_orphaned": _orphaned(accounts).count(),
     }
+
+
+def _unlinked(qs):
+    """Live user accounts nobody has been identified for."""
+    return qs.filter(
+        is_active=True, enabled=True, person__isnull=True, kind=DirectoryAccount.Kind.USER
+    )
+
+
+def _orphaned(qs):
+    """Enabled accounts of people who have left: the deprovisioning worklist."""
+    return qs.filter(is_active=True, enabled=True, person__is_active=False)
 
 
 @role_required("can_manage_directory")
@@ -574,3 +595,205 @@ def run_apply(request, pk):
         )
     messages.success(request, "Sync applied — " + "; ".join(counts) + ".")
     return redirect(run)
+
+
+# --- AD accounts --------------------------------------------------------------------------
+
+ACCOUNT_COLUMNS = [
+    "account",
+    "upn",
+    "display_name",
+    "employee_id",
+    "enabled",
+    "expires",
+    "last_logon",
+    "in_ad",
+    "kind",
+    "person",
+    "person_employee_id",
+    "person_active",
+    "link",
+]
+
+SHOW_CHOICES = [
+    ("", "All accounts"),
+    ("unlinked", "Unlinked user accounts"),
+    ("unmatched", "Employee ID matches nobody"),
+    ("orphaned", "Enabled, person inactive"),
+    ("disabled", "Disabled in AD"),
+    ("expired", "Expired"),
+]
+
+
+def account_rows(accounts):
+    for a in accounts:
+        yield [
+            a.sam_account_name,
+            a.upn,
+            a.display_name,
+            a.employee_id,
+            "yes" if a.enabled else "no",
+            a.account_expires.date().isoformat() if a.account_expires else "",
+            a.last_logon_at.date().isoformat() if a.last_logon_at else "",
+            "yes" if a.is_active else "no",
+            a.get_kind_display(),
+            a.person.sort_name if a.person_id else "",
+            a.person.employee_id if a.person_id else "",
+            ("yes" if a.person.is_active else "no") if a.person_id else "",
+            a.get_link_method_display() if a.link_method else "",
+        ]
+
+
+class DirectoryAccountListView(PermissionCheckMixin, ListView):
+    """The account mirror, with the worklists an IAM team runs from it."""
+
+    permission_check = "can_view"
+    model = DirectoryAccount
+    paginate_by = 50
+    template_name = "directory/account_list.html"
+
+    def get_queryset(self):
+        g = self.request.GET
+        qs = DirectoryAccount.objects.select_related("person")
+        self.q = g.get("q", "").strip()
+        if self.q:
+            qs = qs.filter(
+                Q(sam_account_name__icontains=self.q)
+                | Q(upn__icontains=self.q)
+                | Q(display_name__icontains=self.q)
+                | Q(given_name__icontains=self.q)
+                | Q(surname__icontains=self.q)
+                | Q(mail__icontains=self.q)
+                | Q(employee_id__iexact=self.q)
+            )
+        self.active = g.get("active", "1")
+        if self.active == "1":
+            qs = qs.filter(is_active=True)
+        elif self.active == "0":
+            qs = qs.filter(is_active=False)
+        self.show = g.get("show", "")
+        if self.show == "unlinked":
+            qs = _unlinked(qs)
+        elif self.show == "unmatched":
+            qs = qs.filter(person__isnull=True).exclude(employee_id="")
+        elif self.show == "orphaned":
+            qs = _orphaned(qs)
+        elif self.show == "disabled":
+            qs = qs.filter(enabled=False)
+        elif self.show == "expired":
+            from django.utils import timezone
+
+            qs = qs.filter(account_expires__lt=timezone.now())
+        else:
+            self.show = ""
+        self.person_id = g.get("person", "")
+        if self.person_id:
+            qs = qs.filter(person_id=self.person_id)
+        return qs.order_by("sam_account_name", "pk")
+
+    def get(self, request, *args, **kwargs):
+        fmt = request.GET.get("format")
+        if fmt in ("csv", "xlsx"):
+            rows = account_rows(self.get_queryset())
+            if fmt == "xlsx":
+                return reports.xlsx_response(
+                    ACCOUNT_COLUMNS, rows, "ad-accounts.xlsx", "AD accounts"
+                )
+            return reports.csv_response(ACCOUNT_COLUMNS, rows, "ad-accounts.csv")
+        return super().get(request, *args, **kwargs)
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        ctx.update(
+            q=self.q,
+            active=self.active,
+            show=self.show,
+            show_choices=SHOW_CHOICES,
+            person_id=self.person_id,
+            kinds=DirectoryAccount.Kind.choices,
+            accounts_enabled=DirectorySettings.from_settings().accounts_enabled,
+            can_link=perms.can_link_accounts(self.request.user),
+        )
+        return ctx
+
+
+account_list = DirectoryAccountListView.as_view()
+
+
+def _back(request, account):
+    target = request.POST.get("next") or request.GET.get("next") or ""
+    if not target.startswith("/"):
+        target = (
+            reverse("directory:account_list") + "?" + urlencode({"q": account.sam_account_name})
+        )
+    return target
+
+
+@role_required("can_link_accounts")
+def account_link(request, pk):
+    """Say by hand whose account this is."""
+    account = get_object_or_404(DirectoryAccount.objects.select_related("person"), pk=pk)
+    form = AccountLinkForm(request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        person = Person.objects.filter(pk=form.cleaned_data["person"]).first()
+        if person is None:
+            form.add_error("person", "Pick a person from the list.")
+        else:
+            try:
+                services.link_account(
+                    account, person, actor=request.user, reason=form.cleaned_data["reason"]
+                )
+            except ValidationError as exc:
+                for field_name, msgs in exc.message_dict.items():
+                    for msg in msgs:
+                        form.add_error(field_name if field_name in form.fields else None, msg)
+            else:
+                messages.success(
+                    request, f"Linked {account.sam_account_name} to {person.display_name}."
+                )
+                return redirect(_back(request, account))
+    return render(
+        request,
+        "directory/account_link.html",
+        {"account": account, "form": form, "next": request.GET.get("next", "")},
+    )
+
+
+@require_POST
+@role_required("can_link_accounts")
+def account_unlink(request, pk):
+    account = get_object_or_404(DirectoryAccount.objects.select_related("person"), pk=pk)
+    reason = request.headers.get("HX-Prompt", "") or request.POST.get("reason", "")
+    who = account.person.display_name if account.person_id else "nobody"
+    try:
+        services.unlink_account(account, actor=request.user, reason=reason)
+    except ValidationError as exc:
+        messages.error(request, " ".join(m for msgs in exc.message_dict.values() for m in msgs))
+    else:
+        messages.success(request, f"Unlinked {account.sam_account_name} from {who}.")
+    return _redirect_to(request, _back(request, account))
+
+
+@require_POST
+@role_required("can_link_accounts")
+def account_kind(request, pk):
+    account = get_object_or_404(DirectoryAccount, pk=pk)
+    form = AccountKindForm(request.POST)
+    if form.is_valid():
+        try:
+            services.set_account_kind(
+                account,
+                form.cleaned_data["kind"],
+                actor=request.user,
+                reason=form.cleaned_data["reason"],
+            )
+        except ValidationError as exc:
+            messages.error(request, " ".join(m for msgs in exc.message_dict.values() for m in msgs))
+        else:
+            messages.success(
+                request,
+                f"{account.sam_account_name} is now a {account.get_kind_display().lower()}.",
+            )
+    else:
+        messages.error(request, "Choose a kind and give a reason.")
+    return _redirect_to(request, _back(request, account))

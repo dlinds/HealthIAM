@@ -263,6 +263,11 @@ class StaffSpec:
     department_name: str
     enabled: bool = True
     demonstrates: str = ""
+    #: The HR employee ID on the account, which is what links it to a `Person`. The seed
+    #: creates the matching person too.
+    employee_id: str = ""
+    #: The position that person holds, by code.
+    position_code: str = ""
 
     @property
     def upn(self) -> str:
@@ -284,7 +289,15 @@ class StaffSpec:
 
 
 STAFF: tuple[StaffSpec, ...] = (
-    StaffSpec("rnorton", "Rachel", "Norton", "Registered Nurse", "Nursing"),
+    StaffSpec(
+        "rnorton",
+        "Rachel",
+        "Norton",
+        "Registered Nurse",
+        "Nursing",
+        employee_id="E2001",
+        position_code="0100-7000",
+    ),
     StaffSpec(
         "dpatel",
         "Dev",
@@ -292,11 +305,45 @@ STAFF: tuple[StaffSpec, ...] = (
         "Pharmacy Technician",
         "Pharmacy",
         demonstrates="the login `demo_ad drift` disables",
+        employee_id="E2002",
+        position_code="0200-7101",
     ),
-    StaffSpec("mchen", "Mei", "Chen", "Radiologic Technologist", "Radiology"),
-    StaffSpec("tokafor", "Tunde", "Okafor", "Coding Specialist", "Health Information Management"),
-    StaffSpec("sgrant", "Sam", "Grant", "Patient Access Representative", "Patient Access"),
-    StaffSpec("lbeaumont", "Luc", "Beaumont", "Systems Analyst", "Information Services"),
+    StaffSpec(
+        "mchen",
+        "Mei",
+        "Chen",
+        "Radiologic Technologist",
+        "Radiology",
+        employee_id="E2003",
+        position_code="0300-7200",
+    ),
+    StaffSpec(
+        "tokafor",
+        "Tunde",
+        "Okafor",
+        "Coding Specialist",
+        "Health Information Management",
+        employee_id="E2004",
+        position_code="0400-7300",
+    ),
+    StaffSpec(
+        "sgrant",
+        "Sam",
+        "Grant",
+        "Patient Access Representative",
+        "Patient Access",
+        employee_id="E2005",
+        position_code="0600-7500",
+    ),
+    StaffSpec(
+        "lbeaumont",
+        "Luc",
+        "Beaumont",
+        "Systems Analyst",
+        "Information Services",
+        employee_id="E2006",
+        position_code="0500-7400",
+    ),
     StaffSpec(
         "jhaddad",
         "Jana",
@@ -305,6 +352,78 @@ STAFF: tuple[StaffSpec, ...] = (
         "Laboratory",
         enabled=False,
         demonstrates="disabled in AD, so the managed-login counter shows an inactive one",
+        employee_id="E2007",
+        position_code="0700-7600",
+    ),
+)
+
+
+# --- Accounts ---------------------------------------------------------------------------
+
+#: Nothing keeps a service account out of the demo mirror: `svc-scanner` below is there to
+#: show the *kind* an administrator sets by hand.
+ACCOUNT_EXCLUDE_PATTERNS: list[str] = []
+
+#: Fixed, not relative to today: the seed is idempotent, and a timestamp that moved on every
+#: run would read as a change.
+ACCOUNT_LAST_LOGON = dt.datetime(2026, 9, 15, 7, 42, tzinfo=dt.UTC)
+ACCOUNT_CREATED = dt.datetime(2019, 3, 4, 9, 0, tzinfo=dt.UTC)
+
+
+@dataclass(frozen=True)
+class AccountSpec:
+    """A user account in the mirror that has no HealthIAM login: what the account pass of a
+    sync would have written for it."""
+
+    sam: str
+    first_name: str
+    last_name: str
+    employee_id: str = ""
+    enabled: bool = True
+    kind: str = "user"
+    title: str = ""
+    department: str = ""
+    demonstrates: str = ""
+
+    @property
+    def upn(self) -> str:
+        return f"{self.sam}@{DOMAIN}"
+
+    @property
+    def cn(self) -> str:
+        return f"{self.first_name} {self.last_name}".strip() or self.sam
+
+    @property
+    def dn(self) -> str:
+        return f"CN={self.cn},{STAFF_OU}"
+
+
+ACCOUNTS: tuple[AccountSpec, ...] = (
+    AccountSpec(
+        "pgrant",
+        "Paul",
+        "Grant",
+        employee_id="E1016",
+        title="Coding Specialist",
+        department="Health Information Management",
+        demonstrates="still enabled although the person left last month: the orphan worklist",
+    ),
+    AccountSpec(
+        "nvale",
+        "Nina",
+        "Vale",
+        employee_id="E9999",
+        title="Consultant",
+        department="Information Services",
+        demonstrates="an employee ID that matches nobody on record",
+    ),
+    AccountSpec(
+        "svc-scanner",
+        "",
+        "",
+        kind="service",
+        title="Document scanning",
+        demonstrates="a service account, marked as such by hand",
     ),
 )
 

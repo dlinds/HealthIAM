@@ -1,0 +1,27 @@
+<div id="identifiers" class="card mb-3">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <span>Identifiers</span>
+    {% if can_edit %}<button class="btn btn-sm btn-outline-primary" type="button" hx-get="{% url 'people:identifier_add' person.pk %}" hx-target="#identifier-form-slot" hx-swap="innerHTML"><i class="bi bi-plus-lg"></i></button>{% endif %}
+  </div>
+  <div class="card-body py-2">
+    {% if notice %}<div class="alert alert-success py-1 small">{{ notice }}</div>{% endif %}
+    {% for e in errors %}<div class="alert alert-danger py-1 small">{{ e }}</div>{% endfor %}
+    <div id="identifier-form-slot"></div>
+  </div>
+  <ul class="list-group list-group-flush small">
+    {% if person.employee_id %}<li class="list-group-item d-flex justify-content-between"><span><span class="text-body-secondary">Employee ID</span> <span class="text-mono">{{ person.employee_id }}</span></span></li>{% endif %}
+    {% for i in identifiers %}
+    <li class="list-group-item d-flex justify-content-between align-items-center">
+      <span>
+        <span class="text-body-secondary">{{ i.get_kind_display }}</span> <span class="text-mono">{{ i.value }}</span>
+        {% if i.issued_by %}<span class="text-body-secondary">· {{ i.issued_by }}</span>{% endif %}
+        {% if i.valid_to %}<span class="text-body-secondary">· until {{ i.valid_to|date:"Y-m-d" }}</span>{% endif %}
+        {% if i.notes %}<div class="text-body-tertiary">{{ i.notes }}</div>{% endif %}
+      </span>
+      {% if can_edit %}<button class="btn btn-sm btn-link text-danger p-0" type="button" hx-post="{% url 'people:identifier_remove' person.pk i.pk %}" hx-target="#identifiers" hx-swap="outerHTML" hx-prompt="Reason for removing {{ i }}:">Remove</button>{% endif %}
+    </li>
+    {% empty %}
+    {% if not person.employee_id %}<li class="list-group-item text-body-secondary">None recorded.</li>{% endif %}
+    {% endfor %}
+  </ul>
+</div>

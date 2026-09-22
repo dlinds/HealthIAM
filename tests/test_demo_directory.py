@@ -24,7 +24,8 @@ from apps.catalog.models import AccessLevel, Application
 from apps.core.demo import data as demo
 from apps.core.demo import mirror
 from apps.directory import reconcile, references
-from apps.directory.models import ADGroup, ADGroupRoute, DirectorySyncRun
+from apps.directory.models import ADGroup, ADGroupRoute, DirectoryAccount, DirectorySyncRun
+from apps.people.models import Person, PersonAccess, PersonName, PositionAssignment
 
 from . import factories
 
@@ -53,6 +54,7 @@ VOLATILE = frozenset(
         "inactivated_at",
         "ad_synced_at",
         "last_login",
+        "linked_at",
     }
 )
 
@@ -83,6 +85,11 @@ def world_snapshot(stable=False):
             "source",
             "is_active",
         ),
+        rows(Person.objects.all()),
+        rows(PersonName.objects.all()),
+        rows(PositionAssignment.objects.all()),
+        rows(PersonAccess.objects.all()),
+        rows(DirectoryAccount.objects.all()),
     )
 
 

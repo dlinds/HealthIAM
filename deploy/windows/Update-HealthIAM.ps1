@@ -88,6 +88,8 @@ try {
 
     & $venvPython manage.py bootstrap_roles
     if ($LASTEXITCODE -ne 0) { throw 'bootstrap_roles failed.' }
+    & $venvPython manage.py bootstrap_person_types
+    if ($LASTEXITCODE -ne 0) { throw 'bootstrap_person_types failed.' }
 
     Write-Step 'Collecting static files'
     # Skipping this is the classic broken upgrade: production hashes static file names

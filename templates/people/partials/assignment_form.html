@@ -1,0 +1,15 @@
+<div class="card border-primary mb-3">
+  <form hx-post="{% url 'people:assignment_add' person.pk %}" hx-target="#assignments" hx-swap="outerHTML">
+    {% csrf_token %}
+    <div class="card-body">
+      <h3 class="h6 mb-3">Add a position for {{ person.display_name }}</h3>
+      {% if form.non_field_errors %}<div class="alert alert-danger py-2">{{ form.non_field_errors|join:" " }}</div>{% endif %}
+      {% include "people/partials/assignment_fields.html" with form=form person=person %}
+      {% include "people/partials/field.html" with field=form.reason %}
+    </div>
+    <div class="card-footer d-flex gap-2">
+      <button class="btn btn-primary btn-sm" type="submit">Add position</button>
+      <button class="btn btn-link btn-sm" type="button" onclick="document.getElementById('assignment-form-slot').innerHTML=''">Cancel</button>
+    </div>
+  </form>
+</div>

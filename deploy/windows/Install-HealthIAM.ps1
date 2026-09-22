@@ -283,6 +283,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'migrate failed. Check DATABASE_URL in .env and that PostgreSQL is reachable.' }
     & $venvPython manage.py bootstrap_roles
     if ($LASTEXITCODE -ne 0) { throw 'bootstrap_roles failed.' }
+    & $venvPython manage.py bootstrap_person_types
+    if ($LASTEXITCODE -ne 0) { throw 'bootstrap_person_types failed.' }
     # The container does this at image build time. Not optional: production uses
     # CompressedManifestStaticFilesStorage, and without the manifest every page raises
     # "Missing staticfiles manifest entry".

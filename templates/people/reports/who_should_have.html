@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% load people_tags %}
+{% block title %}Who should have {{ application.name }} · HealthIAM{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb">
+  <li class="breadcrumb-item"><a href="{% url 'access:reports_index' %}">Reports</a></li>
+  <li class="breadcrumb-item active">Who should have {{ application.name }}</li>
+</ol></nav>
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+  <div>
+    <h1 class="h3 mb-1">Who should have <a href="{{ application.get_absolute_url }}">{{ application.name }}</a></h1>
+    <div class="text-body-secondary small">Active people whose current positions receive each access level by default or who hold a grant, minus those excluded. People on leave are left out. Compare with <a href="{% url 'access:who_gets' application.pk %}">who gets it by position</a>.</div>
+  </div>
+  <div>
+    <form class="d-inline" method="get" onsubmit="event.preventDefault(); var v=this.app.value; if(v) window.location='/people/reports/who-should-have/'+v+'/';">
+      <select class="form-select d-inline w-auto" name="app" onchange="this.form.requestSubmit()">
+        {% for a in applications %}<option value="{{ a.pk }}" {% if a.pk == application.pk %}selected{% endif %}>{{ a.name }}</option>{% endfor %}
+      </select>
+    </form>
+    <a class="btn btn-outline-primary" href="?format=xlsx"><i class="bi bi-file-earmark-excel me-1"></i>Excel</a>
+    <a class="btn btn-outline-primary" href="?format=csv"><i class="bi bi-filetype-csv me-1"></i>CSV</a>
+  </div>
+</div>
+{% for level, entries in people.items %}
+<div class="card mb-3">
+  <div class="card-header d-flex justify-content-between">
+    <span>{{ level.name }} <span class="badge text-bg-light border">{{ level.get_access_model_display }}</span>{% if level.access_target %} <span class="text-mono small text-body-secondary">{{ level.access_target }}</span>{% endif %}{% if not level.is_active %} <span class="badge text-bg-secondary">inactive</span>{% endif %}</span>
+    <span class="badge text-bg-secondary">{{ entries|length }}</span>
+  </div>
+  <table class="table table-sm mb-0">
+    <tbody>
+    {% for e in entries %}
+      <tr>
+        <td style="width:35%"><a href="{{ e.person.get_absolute_url }}">{{ e.person.sort_name }}</a>{% if e.person.employee_id %} <span class="text-mono small text-body-secondary">{{ e.person.employee_id }}</span>{% endif %}</td>
+        <td class="small">{% for a in e.assignments %}<span class="text-mono">{{ a.position.code }}</span> {{ a.display_title }} <span class="badge text-bg-light border">{{ a.person_type.name }}</span>{% if a.end_date %} <span class="badge {{ a|days_badge }}">until {{ a.end_date|date:"Y-m-d" }}</span>{% endif %}{% if not forloop.last %}<br>{% endif %}{% endfor %}{% if e.grant %}{% if e.assignments %}<br>{% endif %}<span class="badge text-bg-primary-subtle border border-primary-subtle text-primary-emphasis">Grant</span>{% if e.grant.ticket_ref %} <span class="text-mono">{{ e.grant.ticket_ref }}</span>{% endif %}{% if e.grant.end_date %} until {{ e.grant.end_date|date:"Y-m-d" }}{% endif %}{% endif %}</td>
+      </tr>
+    {% empty %}
+      <tr><td class="text-body-secondary">Nobody, through positions or grants.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% empty %}
+<p class="text-body-secondary">{{ application.name }} has no access levels.</p>
+{% endfor %}
+{% endblock %}

@@ -1,0 +1,17 @@
+{% if not selected and not q %}
+  <div class="form-check">
+    <input class="form-check-input" type="radio" name="{{ field }}" id="pick-{{ field }}-none" value="" checked>
+    <label class="form-check-label small text-body-secondary" for="pick-{{ field }}-none">None</label>
+  </div>
+{% endif %}
+{% for p in results %}
+  <div class="form-check">
+    <input class="form-check-input" type="radio" name="{{ field }}" id="pick-{{ field }}-{{ p.pk }}" value="{{ p.pk }}" {% if selected == p.pk|stringformat:'s' %}checked{% endif %}>
+    <label class="form-check-label small" for="pick-{{ field }}-{{ p.pk }}">
+      {{ p.sort_name }}{% if p.employee_id %} <span class="text-mono text-body-secondary">{{ p.employee_id }}</span>{% endif %}
+      {% if p.primary %}<span class="text-body-secondary">· {{ p.primary.display_title }}</span>{% endif %}
+    </label>
+  </div>
+{% empty %}
+  {% if q %}<div class="small text-body-secondary">No matching active people.</div>{% endif %}
+{% endfor %}

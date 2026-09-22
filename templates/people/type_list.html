@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% load ui %}
+{% block title %}People types · HealthIAM{% endblock %}
+{% block content %}
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+  <h1 class="h3 mb-0">People types &amp; coordinators</h1>
+  <a class="btn btn-primary" href="{% url 'people:type_create' %}"><i class="bi bi-plus-lg me-1"></i>New type</a>
+</div>
+<p class="text-body-secondary">Each type carries its own rules (end date, sponsor, organization, maximum duration) and its own coordinators: the logins that may create and maintain people and assignments of that type. Admins may do everything regardless.</p>
+<div class="table-responsive">
+<table class="table table-hover table-sm align-middle">
+  <thead><tr><th>Type</th><th>External</th><th>End date</th><th>Sponsor</th><th>Organization</th><th>Max days</th><th>Current people</th><th>Coordinators</th><th>Status</th></tr></thead>
+  <tbody>
+  {% for t in object_list %}
+    <tr class="{% if not t.is_active %}text-body-tertiary{% endif %}">
+      <td><a href="{{ t.get_absolute_url }}">{{ t.name }}</a> <span class="text-mono text-body-secondary small">{{ t.code }}</span></td>
+      <td><i class="bi {{ t.is_external|yesno_icon }}"></i></td>
+      <td><i class="bi {{ t.requires_end_date|yesno_icon }}"></i></td>
+      <td><i class="bi {{ t.requires_sponsor|yesno_icon }}"></i></td>
+      <td><i class="bi {{ t.requires_organization|yesno_icon }}"></i></td>
+      <td>{{ t.max_duration_days|default:"—" }}</td>
+      <td>{{ t.current_count }}</td>
+      <td>{{ t.coordinator_count }}</td>
+      <td>{% if t.is_active %}<span class="badge text-bg-success">Active</span>{% else %}<span class="badge text-bg-secondary">Inactive</span>{% endif %}</td>
+    </tr>
+  {% empty %}
+    <tr><td colspan="9" class="text-body-secondary">No types yet. Run <code>manage.py bootstrap_person_types</code> for the defaults.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endblock %}

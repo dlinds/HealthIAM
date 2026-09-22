@@ -1,0 +1,19 @@
+<div class="card border-danger mb-3">
+  <form hx-post="{% url 'people:assignment_end' person.pk assignment.pk %}" hx-target="#assignments" hx-swap="outerHTML">
+    {% csrf_token %}
+    <div class="card-body">
+      <h3 class="h6 mb-3">End <span class="text-mono">{{ assignment.position.code }}</span> {{ assignment.position.display_name }}</h3>
+      <p class="small text-body-secondary">Expected access through this position stops the day after the end date. The row is kept for history.</p>
+      {% if form.non_field_errors %}<div class="alert alert-danger py-2">{{ form.non_field_errors|join:" " }}</div>{% endif %}
+      <div class="row">
+        <div class="col-md-5">{% include "people/partials/field.html" with field=form.end_date %}</div>
+        <div class="col-md-7">{% include "people/partials/field.html" with field=form.end_reason %}</div>
+      </div>
+      {% include "people/partials/field.html" with field=form.reason %}
+    </div>
+    <div class="card-footer d-flex gap-2">
+      <button class="btn btn-danger btn-sm" type="submit">End assignment</button>
+      <button class="btn btn-link btn-sm" type="button" onclick="document.getElementById('assignment-form-slot').innerHTML=''">Cancel</button>
+    </div>
+  </form>
+</div>

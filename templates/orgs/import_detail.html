@@ -33,6 +33,7 @@
   <div class="col-6 col-md-2"><div class="card text-center"><div class="card-body py-2"><div class="fs-4">{{ batch.summary.deactivated }}</div><div class="small text-body-secondary">Deactivated</div></div></div></div>
   <div class="col-6 col-md-2"><div class="card text-center"><div class="card-body py-2"><div class="fs-4">{{ batch.summary.unchanged }}</div><div class="small text-body-secondary">Unchanged</div></div></div></div>
   <div class="col-6 col-md-2"><div class="card text-center {% if batch.summary.errors %}border-danger{% endif %}"><div class="card-body py-2"><div class="fs-4">{{ batch.summary.errors }}</div><div class="small text-body-secondary">Errors</div></div></div></div>
+  {% if batch.summary.warnings %}<div class="col-6 col-md-2"><div class="card text-center border-warning"><div class="card-body py-2"><div class="fs-4">{{ batch.summary.warnings }}</div><div class="small text-body-secondary">Warnings</div></div></div></div>{% endif %}
 </div>
 {% if batch.status == 'previewed' %}<p class="text-body-secondary small">This is a dry run: nothing has been written yet. Rows with errors are skipped when applied.</p>{% endif %}
 {% endif %}
@@ -43,6 +44,16 @@
   <div class="table-responsive"><table class="table table-sm mb-0">
     <thead><tr><th>Row</th><th>Code</th><th>Problem</th></tr></thead>
     <tbody>{% for e in problems %}<tr><td>{{ e.row }}</td><td class="text-mono">{{ e.code }}</td><td>{{ e.message }}</td></tr>{% endfor %}</tbody>
+  </table></div>
+</div>
+{% endif %}
+
+{% if warnings %}
+<div class="card mb-3 border-warning">
+  <div class="card-header text-warning-emphasis">Warnings ({{ warnings|length }})</div>
+  <div class="table-responsive"><table class="table table-sm mb-0">
+    <thead><tr><th>Row</th><th>Code</th><th>Note</th></tr></thead>
+    <tbody>{% for e in warnings %}<tr><td>{{ e.row }}</td><td class="text-mono">{{ e.code }}</td><td>{{ e.message }}</td></tr>{% endfor %}</tbody>
   </table></div>
 </div>
 {% endif %}

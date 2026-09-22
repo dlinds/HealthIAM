@@ -1,0 +1,36 @@
+<div class="card border-primary mb-3">
+  <form hx-post="{% url 'people:access_add' person.pk %}" hx-target="#expected-access" hx-swap="outerHTML">
+    {% csrf_token %}
+    <div class="card-body">
+      <h3 class="h6 mb-1">Record a grant or an exclusion for {{ person.display_name }}</h3>
+      <p class="small text-body-secondary">A <strong>grant</strong> is access beyond what the positions give; an <strong>exclusion</strong> withholds a level a position would give. Only applications you are an analyst for are listed.</p>
+      {% if form.non_field_errors %}<div class="alert alert-danger py-2">{{ form.non_field_errors|join:" " }}</div>{% endif %}
+      <div class="row g-2">
+        <div class="col-md-4">{% include "people/partials/field.html" with field=form.kind %}</div>
+        <div class="col-md-4">{% include "people/partials/field.html" with field=form.start_date %}</div>
+        <div class="col-md-4">{% include "people/partials/field.html" with field=form.end_date %}</div>
+      </div>
+      <label class="form-label small" for="level-search">Application / access level <span class="text-danger">*</span></label>
+      <input class="form-control form-control-sm mb-2" id="level-search" type="search" name="q" value="" placeholder="Type to search applications you manage…" autocomplete="off"
+        hx-get="{% url 'people:access_add' person.pk %}" hx-trigger="load, input changed delay:250ms" hx-target="#level-picker" hx-swap="innerHTML" hx-include="this, [name=kind]">
+      <div id="level-picker" class="border rounded p-2 mb-3" style="max-height:16rem; overflow-y:auto"></div>
+      {% for e in form.access_level.errors %}<div class="invalid-feedback d-block mb-2">{{ e }}</div>{% endfor %}
+      <div class="row g-2">
+        <div class="col-md-6">{% include "people/partials/field.html" with field=form.ticket_ref %}</div>
+        <div class="col-md-6">
+          <label class="form-label" for="approver-search">Approved by</label>
+          <input class="form-control form-control-sm mb-2" id="approver-search" type="search" name="q" placeholder="Search people…" autocomplete="off"
+            hx-get="{% url 'people:person_picker' %}?field=approved_by&exclude={{ person.pk }}" hx-trigger="load, input changed delay:250ms" hx-target="#approver-picker" hx-swap="innerHTML" hx-include="this">
+          <div id="approver-picker" class="border rounded p-2" style="max-height:8rem; overflow-y:auto"></div>
+          {% for e in form.approved_by.errors %}<div class="invalid-feedback d-block">{{ e }}</div>{% endfor %}
+        </div>
+      </div>
+      {% include "people/partials/field.html" with field=form.justification %}
+      {% include "people/partials/field.html" with field=form.reason %}
+    </div>
+    <div class="card-footer d-flex gap-2">
+      <button class="btn btn-primary btn-sm" type="submit">Record</button>
+      <button class="btn btn-link btn-sm" type="button" onclick="document.getElementById('access-form-slot').innerHTML=''">Cancel</button>
+    </div>
+  </form>
+</div>

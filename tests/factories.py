@@ -146,3 +146,77 @@ class ADGroupFactory(factory.django.DjangoModelFactory):
     category = "security"
     first_seen_at = factory.LazyFunction(timezone.now)
     last_seen_at = factory.LazyAttribute(lambda o: o.first_seen_at)
+
+
+class DirectoryAccountFactory(factory.django.DjangoModelFactory):
+    """An enabled, unlinked user account as the sync would mirror it."""
+
+    class Meta:
+        model = "directory.DirectoryAccount"
+
+    object_guid = factory.LazyFunction(uuid.uuid4)
+    sam_account_name = factory.Sequence(lambda n: f"account{n}")
+    upn = factory.LazyAttribute(lambda o: f"{o.sam_account_name}@test.invalid")
+    distinguished_name = factory.LazyAttribute(
+        lambda o: f"CN={o.sam_account_name},OU=People,DC=test,DC=invalid"
+    )
+    given_name = factory.Faker("first_name")
+    surname = factory.Faker("last_name")
+    display_name = factory.LazyAttribute(lambda o: f"{o.given_name} {o.surname}")
+    mail = factory.LazyAttribute(lambda o: o.upn)
+    enabled = True
+    first_seen_at = factory.LazyFunction(timezone.now)
+    last_seen_at = factory.LazyAttribute(lambda o: o.first_seen_at)
+
+
+# --- People ---------------------------------------------------------------------------
+
+
+class PersonTypeFactory(factory.django.DjangoModelFactory):
+    class Meta:
+        model = "people.PersonType"
+        django_get_or_create = ("code",)
+
+    code = factory.Sequence(lambda n: f"type{n}")
+    name = factory.LazyAttribute(lambda o: o.code.title())
+    is_external = True
+
+
+class ExternalOrganizationFactory(factory.django.DjangoModelFactory):
+    class Meta:
+        model = "people.ExternalOrganization"
+        django_get_or_create = ("name",)
+
+    name = factory.Sequence(lambda n: f"Agency {n}")
+    kind = "agency"
+
+
+class PersonFactory(factory.django.DjangoModelFactory):
+    class Meta:
+        model = "people.Person"
+
+    first_name = factory.Faker("first_name")
+    last_name = factory.Faker("last_name")
+    employee_id = factory.Sequence(lambda n: f"E{10000 + n}")
+    email = factory.LazyAttribute(
+        lambda o: f"{o.first_name}.{o.last_name}{o.employee_id}@example.org".lower()
+    )
+
+
+class PositionAssignmentFactory(factory.django.DjangoModelFactory):
+    """A current, open-ended primary assignment unless told otherwise."""
+
+    class Meta:
+        model = "people.PositionAssignment"
+
+    person = factory.SubFactory(PersonFactory)
+    position = factory.SubFactory(PositionFactory)
+    person_type = factory.SubFactory(PersonTypeFactory, code="employee", is_external=False)
+    kind = "primary"
+    start_date = factory.LazyFunction(lambda: timezone.localdate() - timezone.timedelta(days=30))
+
+
+def make_coordinator(person_type, user):
+    from apps.people.models import PersonTypeCoordinator
+
+    return PersonTypeCoordinator.objects.create(person_type=person_type, user=user)

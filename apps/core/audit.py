@@ -7,6 +7,7 @@ import csv
 from auditlog.models import LogEntry
 from auditlog.registry import auditlog
 from django.contrib.contenttypes.models import ContentType
+from django.core.exceptions import ValidationError
 from django.db.models import Q
 from django.http import StreamingHttpResponse
 
@@ -16,6 +17,15 @@ ACTION_LABELS = {
     LogEntry.Action.DELETE: "Deleted",
     LogEntry.Action.ACCESS: "Accessed",
 }
+
+
+def require_reason(reason: str) -> str:
+    """The reason every access-affecting write must carry. Shared by the service modules
+    (`apps.access.services`, `apps.people.services`) so they all draw the same line."""
+    reason = (reason or "").strip()
+    if len(reason) < 3:
+        raise ValidationError({"reason": "Give a short reason for this change."})
+    return reason
 
 
 def audited_models():
@@ -45,6 +55,10 @@ def entries_for_object(obj):
         cond |= Q(additional_data__application_id=obj.pk)
     elif label == "orgs.position":
         cond |= Q(additional_data__position_id=obj.pk)
+    elif label == "people.person":
+        cond |= Q(additional_data__person_id=obj.pk)
+    elif label == "people.persontype":
+        cond |= Q(additional_data__person_type_id=obj.pk)
     return base_queryset().filter(cond)
 
 

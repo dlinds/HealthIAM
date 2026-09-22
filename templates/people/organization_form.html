@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% load history_tags %}
+{% block title %}{% if object %}{{ object.name }}{% else %}New organization{% endif %} · HealthIAM{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb">
+  <li class="breadcrumb-item"><a href="{% url 'people:person_list' %}">People</a></li>
+  <li class="breadcrumb-item"><a href="{% url 'people:organization_list' %}">Organizations</a></li>
+  <li class="breadcrumb-item active">{% if object %}{{ object.name }}{% else %}New{% endif %}</li>
+</ol></nav>
+<div class="row g-3">
+  <div class="col-lg-6">
+    <div class="card">
+      <div class="card-body">
+        <h1 class="h4">{% if object %}{{ object.name }}{% else %}New organization{% endif %}</h1>
+        <form method="post">
+          {% csrf_token %}
+          {% include "partials/form_fields.html" with form=form %}
+          <button class="btn btn-primary" type="submit">Save</button>
+          <a class="btn btn-link" href="{% url 'people:organization_list' %}">Cancel</a>
+        </form>
+      </div>
+    </div>
+  </div>
+  {% if object %}<div class="col-lg-6">{% object_history object 15 %}</div>{% endif %}
+</div>
+{% endblock %}

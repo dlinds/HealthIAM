@@ -49,6 +49,7 @@ class FakeDirectory(DirectoryClient):
         self.fail_connect: bool | str = False
         self.fail_members_after: int | None = None
         self.fail_groups_after: int | None = None
+        self.fail_accounts_after: int | None = None
         # Observability
         self.closed = False
         self.calls: list[tuple] = []
@@ -102,6 +103,12 @@ class FakeDirectory(DirectoryClient):
         guid: uuid.UUID | None = None,
         ou: str = "OU=People",
         cn: str | None = None,
+        employee_id: str = "",
+        display_name: str = "",
+        manager_dn: str = "",
+        account_expires: datetime | None = None,
+        last_logon_at: datetime | None = None,
+        when_created: datetime | None = None,
     ) -> DirectoryUser:
         domain = ".".join(
             part.split("=", 1)[1]
@@ -122,6 +129,12 @@ class FakeDirectory(DirectoryClient):
             title=title,
             department=department,
             uac=0x0202 if disabled else 0x0200,
+            employee_id=employee_id,
+            display_name=display_name or f"{given} {sn}".strip(),
+            manager_dn=manager_dn,
+            account_expires=account_expires,
+            last_logon_at=last_logon_at,
+            when_created=when_created,
         )
         self.users[user.dn.casefold()] = user
         return user
@@ -294,6 +307,18 @@ class FakeDirectory(DirectoryClient):
                 yielded += 1
                 yield group
 
+    def iter_accounts(self, base_dn: str) -> Iterator[DirectoryUser]:
+        self.calls.append(("iter_accounts", base_dn))
+        self._check_connect()
+        suffix = base_dn.casefold()
+        yielded = 0
+        for key, user in list(self.users.items()):
+            if key == suffix or key.endswith("," + suffix):
+                if self.fail_accounts_after is not None and yielded >= self.fail_accounts_after:
+                    raise DirectoryError("connection lost while listing accounts")
+                yielded += 1
+                yield user
+
     def check_password(self, upn: str, password: str, *, expect_sam: str) -> bool:
         self.calls.append(("check_password", upn))
         if not upn or not password or not password.strip():
@@ -334,9 +359,15 @@ def build_default_world(base_dn: str = "DC=test,DC=invalid") -> FakeDirectory:
         sn="Anders",
         title="IAM Analyst",
         department="Information Security",
+        employee_id="E100",
     )
     bob = fake.add_user(
-        "bob", given="Bob", sn="Baker", title="Service Desk Technician", department="Service Desk"
+        "bob",
+        given="Bob",
+        sn="Baker",
+        title="Service Desk Technician",
+        department="Service Desk",
+        employee_id="E200",
     )
     carol = fake.add_user(
         "carol",
@@ -345,6 +376,7 @@ def build_default_world(base_dn: str = "DC=test,DC=invalid") -> FakeDirectory:
         title="Access Coordinator",
         department="Information Security",
         disabled=True,
+        employee_id="E300",
     )
     analysts = fake.add_group(
         "IAM-Analysts", ou="OU=IAM", description="IAM analysts", members=[bob]

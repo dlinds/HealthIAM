@@ -5,6 +5,7 @@
   <h1 class="h3 mb-0">Active Directory</h1>
   <div>
     <a class="btn btn-outline-secondary" href="{% url 'directory:group_list' %}"><i class="bi bi-collection me-1"></i>AD groups</a>
+    <a class="btn btn-outline-secondary" href="{% url 'directory:account_list' %}"><i class="bi bi-person-badge me-1"></i>AD accounts</a>
     <a class="btn btn-outline-secondary" href="{% url 'directory:route_list' %}"><i class="bi bi-signpost-split me-1"></i>Routes</a>
     <a class="btn btn-outline-secondary" href="{% url 'directory:broken_references' %}"><i class="bi bi-exclamation-triangle me-1"></i>Broken references</a>
   </div>
@@ -47,6 +48,13 @@
           <dt class="col-sm-4">Group name patterns</dt><dd class="col-sm-8">{% if config.group_name_patterns %}<span class="text-mono">{{ config.group_name_patterns|join:", " }}</span>{% else %}<span class="text-body-secondary">all groups under the search bases</span>{% endif %}</dd>
           <dt class="col-sm-4">Excluded patterns</dt><dd class="col-sm-8">{% if config.group_exclude_patterns %}<span class="text-mono">{{ config.group_exclude_patterns|join:", " }}</span>{% else %}<span class="text-body-secondary">none</span>{% endif %}</dd>
           <dt class="col-sm-4">Page size</dt><dd class="col-sm-8">{{ config.page_size }}</dd>
+          <dt class="col-sm-4">Account mirror</dt>
+          <dd class="col-sm-8">
+            {% if config.accounts_enabled %}<span class="badge text-bg-success">on</span> under {% for base in config.account_search_bases %}<div class="text-mono">{{ base }}</div>{% endfor %}
+            {% if config.account_exclude_patterns %}<div>excluding <span class="text-mono">{{ config.account_exclude_patterns|join:", " }}</span></div>{% endif %}
+            <div>linked to people by <span class="text-mono">{{ config.employee_id_attribute }}</span></div>
+            {% else %}<span class="badge text-bg-secondary">off</span> &mdash; set <span class="text-mono">AD_ACCOUNTS_SEARCH_BASES</span> to mirror user accounts and link them to people{% endif %}
+          </dd>
           <dt class="col-sm-4">Sign-in</dt>
           <dd class="col-sm-8">
             {% if sign_in.enabled %}<span class="badge text-bg-success">on</span> &mdash; a synced person signs in with their Active Directory password
@@ -75,6 +83,14 @@
           </dd>
           <dt class="col-sm-4">AD groups</dt><dd class="col-sm-8">{{ groups_active }} active · {{ groups_inactive }} inactive</dd>
           <dt class="col-sm-4">Managed logins</dt><dd class="col-sm-8">{{ managed_active }} active · {{ managed_inactive }} inactive</dd>
+          {% if accounts_enabled or accounts_active or accounts_inactive %}
+          <dt class="col-sm-4">AD accounts</dt>
+          <dd class="col-sm-8">
+            <a href="{% url 'directory:account_list' %}">{{ accounts_active }} in AD</a> · {{ accounts_inactive }} gone
+            {% if accounts_unlinked %} · <a href="{% url 'directory:account_list' %}?show=unlinked">{{ accounts_unlinked }} unlinked</a>{% endif %}
+            {% if accounts_orphaned %} · <a class="text-danger" href="{% url 'directory:account_list' %}?show=orphaned">{{ accounts_orphaned }} enabled for inactive people</a>{% endif %}
+          </dd>
+          {% endif %}
           <dt class="col-sm-4">Broken references</dt>
           <dd class="col-sm-8">
             {% if broken_count is None %}<span class="text-body-secondary">not checked yet (no completed group sync)</span>
@@ -123,7 +139,7 @@
       <div class="card-body small">
         <p>Run the sync nightly from the host, with this deployment's scheduler:</p>
         <pre class="bg-body-tertiary border rounded p-2 mb-2"><code>{{ schedule_command }}</code></pre>
-        <p class="mb-0 text-body-secondary">Add <span class="text-mono">--dry-run</span> to preview only, <span class="text-mono">--users-only</span> or <span class="text-mono">--groups-only</span> to limit the scope. The exit code is non-zero when the run fails or any entry has an error, so the scheduler reports only problems. Every run is listed below.</p>
+        <p class="mb-0 text-body-secondary">Add <span class="text-mono">--dry-run</span> to preview only, <span class="text-mono">--users-only</span>, <span class="text-mono">--groups-only</span> or <span class="text-mono">--accounts-only</span> to limit the scope. The exit code is non-zero when the run fails or any entry has an error, so the scheduler reports only problems. Every run is listed below.</p>
       </div>
     </div>
   </div>

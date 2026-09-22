@@ -27,6 +27,7 @@
         <p class="mb-1"><strong>Departments</strong>: <code>code,name</code> (aliases: department_code, dept_code, department_name)</p>
         <p class="mb-1"><strong>Job codes</strong>: <code>code,title</code> (aliases: job_code, job_title, description)</p>
         <p class="mb-1"><strong>Positions</strong>: <code>department_code,job_code[,title]</code> or <code>position_code[,title]</code> where position_code is <code>DDDD-JJJJ</code></p>
+        <p class="mb-1"><strong>People</strong>: <code>employee_id,first_name,last_name,position_code</code> plus optional <code>middle_name, preferred_name, suffix, email, phone, location, alternate_positions</code> (<code>DDDD-JJJJ;DDDD-JJJJ</code>), <code>person_type</code> (default employee), <code>status</code> (active / leave / terminated), <code>hire_date, separation_date, position_start_date, manager_employee_id</code>. Rows are upserted by employee ID; a changed name is kept as a former name, a changed position ends the old assignment and starts the new one.</p>
         <ul class="mb-0 mt-2">
           <li>Header row required; comma, tab, semicolon, or pipe delimited; UTF-8.</li>
           <li>Codes must be exactly four digits (keep leading zeros).</li>

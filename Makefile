@@ -19,6 +19,7 @@ makemigrations:
 
 roles:
 	$(PY) manage.py bootstrap_roles
+	$(PY) manage.py bootstrap_person_types
 
 seed: migrate roles
 	$(PY) manage.py seed_demo

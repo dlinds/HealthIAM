@@ -9,7 +9,7 @@ class Command(BaseCommand):
     help = (
         "Sync HealthIAM logins from the IAM-Users AD group and import the AD group list over "
         "LDAPS. Intended for a scheduled job (cron, or a Windows Scheduled Task): "
-        "manage.py sync_ad [--dry-run] [--users-only | --groups-only]. "
+        "manage.py sync_ad [--dry-run] [--users-only | --groups-only | --accounts-only]. "
         "Every run is recorded under Admin > Active Directory; the exit code is non-zero when "
         "the run failed or any row had an error."
     )
@@ -26,18 +26,28 @@ class Command(BaseCommand):
         parser.add_argument(
             "--groups-only", action="store_true", help="Only import the AD group list."
         )
+        parser.add_argument(
+            "--accounts-only",
+            action="store_true",
+            help="Only mirror the user accounts and link them to people.",
+        )
 
     def handle(self, *args, **options):
         if not settings.AD_ENABLED:
             raise CommandError(
                 "Active Directory is not configured: set AD_SERVER_URIS and AD_BASE_DN."
             )
-        if options["users_only"] and options["groups_only"]:
-            raise CommandError("--users-only and --groups-only cannot be combined.")
+        only = [k for k in ("users_only", "groups_only", "accounts_only") if options[k]]
+        if len(only) > 1:
+            raise CommandError(
+                "--users-only, --groups-only and --accounts-only cannot be combined."
+            )
         if options["users_only"]:
             scope = DirectorySyncRun.Scope.USERS
         elif options["groups_only"]:
             scope = DirectorySyncRun.Scope.GROUPS
+        elif options["accounts_only"]:
+            scope = DirectorySyncRun.Scope.ACCOUNTS
         else:
             scope = DirectorySyncRun.Scope.ALL
 

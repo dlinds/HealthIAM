@@ -1,4 +1,5 @@
-"""Sync engine for Active Directory: IAM-Users membership -> logins, group listing -> `ADGroup`.
+"""Sync engine for Active Directory: IAM-Users membership -> logins, group listing -> `ADGroup`,
+account listing -> `DirectoryAccount` linked to people by employee ID.
 
 `run_sync()` drives one `DirectorySyncRun`: it reads everything from the directory first
 (outside any transaction), applies guards, then writes inside a single transaction that a dry
@@ -27,12 +28,13 @@ from django.views.decorators.debug import sensitive_variables
 from apps.accounts import roles
 from apps.accounts.models import User
 from apps.orgs.importers import ImportResult
+from apps.people.models import Person
 
 from .config import DirectorySettings
 from .ldap_client import DirectoryClient, DirectoryError, DirectoryGroup, DirectoryUser
 from .ldap_client import build_client as build_client  # re-export: the seam tests patch
 from .matching import decode_group_type, excluded_by, matches_patterns
-from .models import ADGroup, DirectorySyncRun
+from .models import ADGroup, DirectoryAccount, DirectorySyncRun
 
 logger = logging.getLogger("apps.directory.sync")
 
@@ -94,6 +96,24 @@ class SyncResult(ImportResult):
         return [entry for entry in self.entries if entry["action"] != "unchanged"]
 
 
+@dataclass
+class AccountSyncResult(SyncResult):
+    """`SyncResult` plus the link pass: accounts linked to and unlinked from people this
+    run, and how many active accounts carry an employee ID that matches nobody."""
+
+    linked: list[str] = field(default_factory=list)
+    unlinked: list[str] = field(default_factory=list)
+    unmatched: int = 0
+
+    @property
+    def summary(self) -> dict:
+        data = super().summary
+        data["linked"] = len(self.linked)
+        data["unlinked"] = len(self.unlinked)
+        data["unmatched"] = self.unmatched
+        return data
+
+
 # --- Run driver ------------------------------------------------------------------
 
 
@@ -123,6 +143,23 @@ def _collect_groups(client: DirectoryClient, cfg: DirectorySettings) -> list[Dir
     return found
 
 
+def _collect_accounts(client: DirectoryClient, cfg: DirectorySettings) -> list[DirectoryUser]:
+    """User accounts under every account search base, minus the excluded names, deduped
+    by objectGUID."""
+    found: list[DirectoryUser] = []
+    seen: set = set()
+    for base in cfg.account_search_bases:
+        for account in client.iter_accounts(base):
+            if excluded_by(account.sam, cfg.account_exclude_patterns):
+                continue
+            if account.guid is not None:
+                if account.guid in seen:
+                    continue
+                seen.add(account.guid)
+            found.append(account)
+    return found
+
+
 @sensitive_variables()
 def run_sync(
     run: DirectorySyncRun, *, dry_run: bool, client: DirectoryClient | None = None
@@ -135,14 +172,24 @@ def run_sync(
 
     users_scope = run.scope in (DirectorySyncRun.Scope.ALL, DirectorySyncRun.Scope.USERS)
     groups_scope = run.scope in (DirectorySyncRun.Scope.ALL, DirectorySyncRun.Scope.GROUPS)
+    accounts_scope = run.scope in (DirectorySyncRun.Scope.ALL, DirectorySyncRun.Scope.ACCOUNTS)
     members: list[DirectoryUser] = []
     found: list[DirectoryGroup] = []
+    accounts: list[DirectoryUser] = []
     group_dn = ""
     users_result: SyncResult | None = None
     groups_result: SyncResult | None = None
+    accounts_result: AccountSyncResult | None = None
 
     try:
         cfg = DirectorySettings.from_settings()
+        if accounts_scope and not cfg.accounts_enabled:
+            if run.scope == DirectorySyncRun.Scope.ACCOUNTS:
+                raise DirectoryError(
+                    "AD_ACCOUNTS_SEARCH_BASES is empty: no OU holds the accounts to mirror"
+                )
+            # A full sync on a deployment without the mirror simply has no account pass.
+            accounts_scope = False
         client = client or build_client()
 
         # Read phase: every directory call happens here, before any database write.
@@ -152,6 +199,8 @@ def run_sync(
                 members = list(client.iter_user_members(group_dn))
             if groups_scope:
                 found = _collect_groups(client, cfg)
+            if accounts_scope:
+                accounts = _collect_accounts(client, cfg)
         finally:
             run.server = (client.server_label or "")[:255]
             client.close()
@@ -185,6 +234,25 @@ def run_sync(
                         f"AD_GROUPS_EXCLUDE_PATTERNS and AD_GROUPS_SEARCH_BASES."
                     )
 
+        if accounts_scope:
+            active = DirectoryAccount.objects.filter(is_active=True).count()
+            if not accounts and active:
+                raise DirectoryError(
+                    "The account search returned no accounts; refusing to deactivate "
+                    f"{active} mirrored account(s)"
+                )
+            if active >= DEACTIVATION_FLOOR:
+                returned = {a.guid for a in accounts if a.guid is not None}
+                surviving = DirectoryAccount.objects.filter(
+                    is_active=True, object_guid__in=returned
+                ).count()
+                if surviving < active * (1 - MAX_DEACTIVATION_SHARE):
+                    raise DirectoryError(
+                        f"This run would deactivate {active - surviving} of {active} "
+                        "mirrored account(s). Check AD_ACCOUNTS_SEARCH_BASES and "
+                        "AD_ACCOUNTS_EXCLUDE_PATTERNS."
+                    )
+
         # Apply phase: one transaction, rolled back for a preview.
         now = timezone.now()
         with set_actor(run.created_by), transaction.atomic():
@@ -194,6 +262,9 @@ def run_sync(
             if groups_scope:
                 groups_result = SyncResult(kind="groups", dry_run=dry_run)
                 sync_groups(found, groups_result, cfg=cfg, now=now)
+            if accounts_scope:
+                accounts_result = AccountSyncResult(kind="accounts", dry_run=dry_run)
+                sync_accounts(accounts, accounts_result, cfg=cfg, now=now)
             if dry_run:
                 transaction.set_rollback(True)
     except Exception as exc:  # noqa: BLE001 - recorded on the run, surfaced to the user
@@ -215,9 +286,13 @@ def run_sync(
         "users": users_result.summary if users_result else None,
         "groups": groups_result.summary if groups_result else None,
     }
+    if accounts_result is not None:
+        # Only when the pass ran: a deployment without the mirror keeps the two-part shape.
+        run.summary["accounts"] = accounts_result.summary
     run.log = [
         *(users_result.log if users_result else []),
         *(groups_result.log if groups_result else []),
+        *(accounts_result.log if accounts_result else []),
     ]
     run.group_dn = group_dn[:1024]
     run.error = ""
@@ -677,3 +752,196 @@ def sync_groups(
     for obj in stale:
         obj.deactivate()
         result.record(0, obj.name, "deactivated", MISSING_GROUP_MESSAGE, dn=obj.distinguished_name)
+
+
+# --- Accounts --------------------------------------------------------------------------
+
+ACCOUNT_FIELDS = (
+    "sam_account_name",
+    "upn",
+    "distinguished_name",
+    "given_name",
+    "surname",
+    "display_name",
+    "mail",
+    "title",
+    "department",
+    "manager_dn",
+    "employee_id",
+    "enabled",
+    "account_expires",
+    "when_created",
+)
+MISSING_ACCOUNT_MESSAGE = (
+    "Not returned by the account search (deleted, or moved outside the search bases)"
+)
+
+
+def _account_values(account: DirectoryUser) -> dict:
+    return {
+        "sam_account_name": account.sam,
+        "upn": account.upn,
+        "distinguished_name": account.dn,
+        "given_name": account.given_name,
+        "surname": account.sn,
+        "display_name": account.display_name,
+        "mail": account.mail,
+        "title": account.title,
+        "department": account.department,
+        "manager_dn": account.manager_dn,
+        "employee_id": account.employee_id,
+        "enabled": account.enabled,
+        "account_expires": account.account_expires,
+        "when_created": account.when_created,
+    }
+
+
+def _sync_account(account: DirectoryUser, existing: dict, now) -> tuple[str, str]:
+    values = _account_values(account)
+    obj = existing.get(account.guid)
+    if obj is None:
+        obj = DirectoryAccount.objects.create(
+            object_guid=account.guid,
+            first_seen_at=now,
+            last_seen_at=now,
+            last_logon_at=account.last_logon_at,
+            when_changed=account.when_changed,
+            **values,
+        )
+        existing[account.guid] = obj
+        return "created", "enabled" if account.enabled else "disabled in AD"
+
+    changed: list[str] = []
+    notes: list[str] = []
+    for name in ACCOUNT_FIELDS:
+        if getattr(obj, name) != values[name]:
+            if name == "enabled":
+                notes.append("enabled in AD" if values[name] else "disabled in AD")
+            elif name == "employee_id":
+                notes.append(f"employee ID: {obj.employee_id or '-'} -> {values[name] or '-'}")
+            setattr(obj, name, values[name])
+            changed.append(name)
+    reactivated = False
+    if not obj.is_active:
+        obj.activate(save=False)
+        reactivated = True
+        notes.append("returned by the account search")
+    if changed or reactivated:
+        obj.last_seen_at = now
+        obj.last_logon_at = account.last_logon_at
+        obj.when_changed = account.when_changed
+        obj.save()
+        if not notes:
+            notes.append(", ".join(changed))
+        return ("reactivated" if reactivated else "updated"), "; ".join(notes)
+    # The churny attributes move without a model save, so a quiet run writes no history.
+    DirectoryAccount.objects.filter(pk=obj.pk).update(
+        last_seen_at=now, last_logon_at=account.last_logon_at, when_changed=account.when_changed
+    )
+    obj.last_seen_at = now
+    return "unchanged", ""
+
+
+def link_accounts(result: AccountSyncResult | None = None, *, now=None) -> tuple[int, int, int]:
+    """Link every active, unlinked account to the person whose employee ID it carries, and
+    unlink an employee-ID link whose ID no longer matches. Returns `(linked, unlinked,
+    unmatched)`.
+
+    A link made or removed by hand is never touched: `link_method=manual` with a person
+    means "this is theirs, whatever the attribute says", and with no person "leave it
+    unlinked". Also used by the demo seed, so the demo world links the way a sync would.
+    """
+    now = now or timezone.now()
+    people = {p.employee_id: p for p in Person.objects.exclude(employee_id="")}
+    linked = unlinked = unmatched = 0
+    accounts = DirectoryAccount.objects.filter(is_active=True).exclude(
+        link_method=DirectoryAccount.LinkMethod.MANUAL
+    )
+    for account in accounts.select_related("person"):
+        person = people.get(account.employee_id) if account.employee_id else None
+        if person is not None and account.person_id != person.pk:
+            previous = account.person
+            account.person = person
+            account.link_method = DirectoryAccount.LinkMethod.EMPLOYEE_ID
+            account.linked_at = now
+            account._audit_reason = f"Employee ID {account.employee_id} matches"
+            account.save(update_fields=["person", "link_method", "linked_at", "updated_at"])
+            linked += 1
+            if result is not None:
+                message = f"linked to {person.display_name} by employee ID"
+                if previous is not None:
+                    message = f"re-{message} (was {previous.display_name})"
+                result.record(
+                    0, account.sam_account_name, "linked", message, dn=account.distinguished_name
+                )
+        elif person is None and account.person_id is not None:
+            previous = account.person
+            account.person = None
+            account.link_method = ""
+            account.linked_at = None
+            account._audit_reason = "Employee ID no longer matches a person"
+            account.save(update_fields=["person", "link_method", "linked_at", "updated_at"])
+            unlinked += 1
+            if result is not None:
+                result.record(
+                    0,
+                    account.sam_account_name,
+                    "unlinked",
+                    f"unlinked from {previous.display_name}: employee ID "
+                    f"{account.employee_id or '-'} matches nobody",
+                    dn=account.distinguished_name,
+                )
+        elif person is None and account.employee_id:
+            unmatched += 1
+    if result is not None:
+        result.unmatched = unmatched
+    return linked, unlinked, unmatched
+
+
+def sync_accounts(
+    found: Iterable[DirectoryUser], result: AccountSyncResult, *, cfg: DirectorySettings, now
+) -> None:
+    """Upsert `DirectoryAccount` rows keyed by objectGUID, deactivate the ones no longer
+    returned, then link them to people by employee ID."""
+    existing = {a.object_guid: a for a in DirectoryAccount.objects.select_related("person")}
+    seen: set = set()
+    for row, account in enumerate(found, start=1):
+        code = account.sam or account.upn or account.dn
+        if account.guid is None:
+            result.record(
+                row, code, "error", "No objectGUID on the directory entry.", dn=account.dn
+            )
+            continue
+        if account.guid in seen:
+            result.record(
+                row,
+                code,
+                "error",
+                "Duplicate objectGUID in the listing; later entry ignored.",
+                dn=account.dn,
+            )
+            continue
+        seen.add(account.guid)
+        try:
+            with transaction.atomic():
+                action, message = _sync_account(account, existing, now)
+        except Exception as exc:  # noqa: BLE001 - one bad entry must not fail the run
+            result.record(row, code, "error", f"{type(exc).__name__}: {exc}", dn=account.dn)
+        else:
+            result.record(row, code, action, message, dn=account.dn)
+
+    stale = (
+        DirectoryAccount.objects.filter(is_active=True)
+        .exclude(object_guid__in=seen)
+        .order_by("sam_account_name")
+    )
+    for obj in stale:
+        obj.deactivate()
+        result.record(
+            0,
+            obj.sam_account_name,
+            "deactivated",
+            MISSING_ACCOUNT_MESSAGE,
+            dn=obj.distinguished_name,
+        )
+    link_accounts(result, now=now)

@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% load people_tags %}
+{% block title %}People · HealthIAM{% endblock %}
+{% block content %}
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+  <h1 class="h3 mb-0">People{% if position %} <small class="text-body-secondary fs-6">holding <span class="text-mono">{{ position.code }}</span> {{ position.display_name }}</small>{% endif %}</h1>
+  <div>
+    <a class="btn btn-outline-secondary" href="{% url 'people:organization_list' %}"><i class="bi bi-building me-1"></i>Organizations</a>
+    {% if iam.can_manage_orgs %}<a class="btn btn-outline-secondary" href="{% url 'orgs:import_upload' %}?kind=people"><i class="bi bi-upload me-1"></i>Import CSV</a>{% endif %}
+    {% if iam.can_manage_people %}<a class="btn btn-primary" href="{% url 'people:person_create' %}"><i class="bi bi-person-plus me-1"></i>New person</a>{% endif %}
+  </div>
+</div>
+<form class="row g-2 mb-3 js-autosubmit" method="get">
+  {% if position_id %}<input type="hidden" name="position" value="{{ position_id }}">{% endif %}
+  <div class="col-md-3">
+    <input class="form-control" type="search" name="q" value="{{ q }}" placeholder="Name, former name, employee ID, e-mail, NPI…">
+  </div>
+  <div class="col-md-2">
+    <select class="form-select" name="status">
+      {% for value, label in status_choices %}<option value="{{ value }}" {% if status == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="col-md-2">
+    <select class="form-select" name="type">
+      <option value="">All types</option>
+      {% for t in types %}<option value="{{ t.pk }}" {% if type_id == t.pk|stringformat:'s' %}selected{% endif %}>{{ t.name }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="col-md-2">
+    <select class="form-select" name="department">
+      <option value="">All departments</option>
+      {% for d in departments %}<option value="{{ d.pk }}" {% if department_id == d.pk|stringformat:'s' %}selected{% endif %}>{{ d.code }} {{ d.name }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="col-md-2">
+    <select class="form-select" name="organization">
+      <option value="">All organizations</option>
+      {% for o in organizations %}<option value="{{ o.pk }}" {% if organization_id == o.pk|stringformat:'s' %}selected{% endif %}>{{ o.name }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="col-auto"><button class="btn btn-outline-secondary" type="submit">Filter</button></div>
+</form>
+<div class="table-responsive">
+<table class="table table-hover table-sm align-middle">
+  <thead><tr><th>Name</th><th>Employee ID</th><th>Type</th><th>Primary position</th><th>Also</th><th>Ends</th><th>Status</th></tr></thead>
+  <tbody>
+  {% for p in object_list %}
+    <tr class="{% if not p.is_active %}text-body-tertiary{% endif %}">
+      <td>
+        <a href="{{ p.get_absolute_url }}">{{ p.sort_name }}</a>
+        {% if p.preferred_name %}<span class="text-body-secondary small">“{{ p.preferred_name }}”</span>{% endif %}
+        {% if p.source == 'hr' %}<span class="badge text-bg-light border" title="Maintained by the HR feed">HR</span>{% endif %}
+      </td>
+      <td class="text-mono">{{ p.employee_id }}</td>
+      <td>{{ p.types|join:", " }}</td>
+      <td>{% if p.primary %}<a href="{{ p.primary.position.get_absolute_url }}"><span class="text-mono">{{ p.primary.position.code }}</span></a> {{ p.primary.display_title }}{% if p.primary.organization %} <span class="text-body-secondary small">via {{ p.primary.organization.name }}</span>{% endif %}{% else %}<span class="text-body-tertiary">—</span>{% endif %}</td>
+      <td>{% if p.other_count %}<span class="badge text-bg-light border">+{{ p.other_count }}</span>{% endif %}</td>
+      <td class="text-nowrap">{% if p.next_end %}{{ p.next_end|date:"Y-m-d" }}{% endif %}</td>
+      <td>
+        {% if not p.is_active %}<span class="badge text-bg-secondary">Inactive</span>
+        {% elif p.on_leave %}<span class="badge text-bg-warning">On leave</span>
+        {% elif not p.current_rows %}<span class="badge text-bg-warning">No current assignment</span>
+        {% else %}<span class="badge text-bg-success">Active</span>{% endif %}
+      </td>
+    </tr>
+  {% empty %}
+    <tr><td colspan="7" class="text-body-secondary">No people found.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% include "partials/pagination.html" %}
+{% endblock %}
