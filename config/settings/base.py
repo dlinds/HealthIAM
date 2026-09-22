@@ -48,8 +48,12 @@ env = environ.Env(
     ENTRA_TIMEOUT=(int, 30),
     ENTRA_GROUPS_NAME_PATTERNS=(list, []),
     ENTRA_GROUPS_EXCLUDE_PATTERNS=(list, []),
+    ENTRA_ACCOUNTS_ENABLED=(bool, True),
+    ENTRA_ACCOUNTS_EXCLUDE_PATTERNS=(list, []),
     ENTRA_EMPLOYEE_ID_ATTRIBUTE=(str, "employeeId"),
     ENTRA_SIGN_IN_ACTIVITY=(bool, True),
+    ENTRA_GUEST_STALE_DAYS=(int, 90),
+    ENTRA_GUEST_PENDING_DAYS=(int, 30),
     ENTRA_SYNC_SCHEDULE_COMMAND=(str, ""),
 )
 environ.Env.read_env(BASE_DIR / ".env")
@@ -228,7 +232,8 @@ if AD_AUTH_ENABLED:
 
 # --- Microsoft Entra ID (Microsoft Graph) ------------------------------------------
 # Read-only directory sync over Microsoft Graph, alongside (or instead of) the LDAPS one: the
-# tenant's cloud groups feed the catalog as "Entra group" access levels. It signs in as an
+# tenant's cloud groups feed the catalog as "Entra group" access levels, and its accounts --
+# members, guests and external members -- are mirrored and linked to people. It signs in as an
 # application (client credentials) with its own registration, separate from the SSO one above
 # unless you choose to reuse it; see docs/entra-setup.md. ENTRA_TENANT_ID is shared with SSO.
 # Leave ENTRA_SYNC_CLIENT_ID empty to disable the integration entirely.
@@ -252,13 +257,22 @@ ENTRA_TIMEOUT = env("ENTRA_TIMEOUT")
 # excludes win over includes. Teams-backed Microsoft 365 groups are the usual thing to exclude.
 ENTRA_GROUPS_NAME_PATTERNS = env("ENTRA_GROUPS_NAME_PATTERNS")
 ENTRA_GROUPS_EXCLUDE_PATTERNS = env("ENTRA_GROUPS_EXCLUDE_PATTERNS")
+# The account mirror: every user in the tenant -- members synced from AD, cloud-only members,
+# guests and external members -- tagged by where it comes from and linked to people. On by
+# default whenever the sync is; apps.entra.config.EntraSettings combines the two at runtime.
+ENTRA_ACCOUNTS_ENABLED = env("ENTRA_ACCOUNTS_ENABLED")
+# Globs on userPrincipalName that keep an account out of the mirror (service accounts).
+ENTRA_ACCOUNTS_EXCLUDE_PATTERNS = env("ENTRA_ACCOUNTS_EXCLUDE_PATTERNS")
 # Where the HR employee ID lives on a user: employeeId, an on-premises extension attribute
 # (onPremisesExtensionAttributes.extensionAttribute1..15) or a directory schema extension
-# (extension_<appid>_<name>).
+# (extension_<appid>_<name>). Empty = link by e-mail (guests) and by hand only.
 ENTRA_EMPLOYEE_ID_ATTRIBUTE = env("ENTRA_EMPLOYEE_ID_ATTRIBUTE")
 # Last sign-in per account needs Entra ID P1/P2 and AuditLog.Read.All; without them the sync
 # carries on without it. False stops asking.
 ENTRA_SIGN_IN_ACTIVITY = env("ENTRA_SIGN_IN_ACTIVITY")
+# Guest worklists: no sign-in for this many days; an invitation unredeemed for this many.
+ENTRA_GUEST_STALE_DAYS = env("ENTRA_GUEST_STALE_DAYS")
+ENTRA_GUEST_PENDING_DAYS = env("ENTRA_GUEST_PENDING_DAYS")
 # The scheduled-sync line shown on Admin > Entra ID; see SYNC_SCHEDULE_COMMAND.
 ENTRA_SYNC_SCHEDULE_COMMAND = env("ENTRA_SYNC_SCHEDULE_COMMAND")
 

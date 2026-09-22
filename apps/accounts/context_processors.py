@@ -34,5 +34,7 @@ def iam(request):
         "AD_ACCOUNTS_ENABLED": getattr(settings, "AD_ACCOUNTS_ENABLED", False),
         "AD_AUTH_ENABLED": settings.AD_AUTH_ENABLED,
         "ENTRA_ENABLED": getattr(settings, "ENTRA_ENABLED", False),
+        "ENTRA_ACCOUNTS_ENABLED": getattr(settings, "ENTRA_ENABLED", False)
+        and getattr(settings, "ENTRA_ACCOUNTS_ENABLED", False),
         "SUPPORT_CONTACT": settings.SUPPORT_CONTACT,
     }

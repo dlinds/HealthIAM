@@ -36,12 +36,25 @@ def _sample(key, qs):
 
 
 def _entra_quality() -> dict:
-    """The Entra ID bucket: broken cloud-group references. Imported here, like the account
-    mirror above, so the dashboard costs nothing extra where Entra ID is not configured."""
+    """The Entra ID buckets: broken cloud-group references, and the guest worklists once the
+    account mirror holds anything. Imported here, like the account mirror above, so the
+    dashboard costs nothing extra where Entra ID is not configured."""
     from apps.entra import references as entra_references
+    from apps.entra import worklists
+    from apps.entra.models import EntraAccount
 
     broken = [level for level, _ref in entra_references.broken_references()]
-    return {"broken_entra_references": (len(broken), broken[:8])}
+    items = {"broken_entra_references": (len(broken), broken[:8])}
+    if getattr(settings, "ENTRA_ACCOUNTS_ENABLED", False) or EntraAccount.objects.exists():
+        accounts = EntraAccount.objects.select_related("person")
+        for key, qs in (
+            ("entra_accounts_inactive_people", worklists.orphaned(accounts)),
+            ("entra_guests_without_person", worklists.unlinked_guests(accounts)),
+            ("entra_guests_stale", worklists.stale(accounts)),
+            ("entra_invitations_pending", worklists.pending(accounts)),
+        ):
+            items[key] = (qs.count(), list(qs.order_by("upn")[:8]))
+    return items
 
 
 @role_required("can_view")

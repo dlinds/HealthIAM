@@ -1,5 +1,7 @@
 """Writes a person makes from the Entra ID pages.
 
+- Linking an account to a person, or unlinking one, by hand: the overrides the sync then
+  respects (see `sync.link_accounts`), exactly as for Active Directory accounts.
 - Adopting cloud groups into the catalog: an `entra_group` access level per group, under the
   application or service that owns it. Like `apps.catalog.services.adopt_groups` it takes no
   reason -- recording where a group belongs grants nobody anything.
@@ -12,14 +14,73 @@ from dataclasses import dataclass, field
 from auditlog.context import set_actor
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
+from django.utils import timezone
 
 from apps.accounts import permissions as perms
 from apps.catalog.models import AccessLevel, Application
+from apps.core.audit import require_reason
+from apps.people.models import Person
 
-from .models import EntraGroup
+from .models import EntraAccount, EntraGroup
 
 MAX_LEVEL_NAME = AccessLevel._meta.get_field("name").max_length
 MAX_GROUP_NAME = AccessLevel._meta.get_field("entra_group_name").max_length
+
+
+# --- Accounts ---------------------------------------------------------------------------------
+
+
+def link_account(
+    account: EntraAccount, person: Person, *, actor, reason: str, system: bool = False
+) -> EntraAccount:
+    """Say by hand whose account this is. Survives every later sync."""
+    reason = require_reason(reason)
+    if not (system or perms.can_link_entra_account(actor, account, person)):
+        raise ValidationError({"__all__": "You may not link this account to that person."})
+    if account.person_id == person.pk and account.link_method == EntraAccount.LinkMethod.MANUAL:
+        raise ValidationError({"person": f"Already linked to {person.display_name}."})
+    account.person = person
+    account.link_method = EntraAccount.LinkMethod.MANUAL
+    account.linked_at = timezone.now()
+    account._audit_reason = reason
+    with set_actor(actor), transaction.atomic():
+        account.save(update_fields=["person", "link_method", "linked_at", "updated_at"])
+    return account
+
+
+def unlink_account(
+    account: EntraAccount, *, actor, reason: str, system: bool = False
+) -> EntraAccount:
+    """Take the link away and keep it away: the sync will not re-link it on its own."""
+    reason = require_reason(reason)
+    if not (system or perms.can_link_entra_account(actor, account)):
+        raise ValidationError({"__all__": "You may not unlink this account."})
+    if account.person_id is None:
+        raise ValidationError({"person": "This account is not linked to anyone."})
+    account.person = None
+    account.link_method = EntraAccount.LinkMethod.MANUAL
+    account.linked_at = None
+    account._audit_reason = reason
+    with set_actor(actor), transaction.atomic():
+        account.save(update_fields=["person", "link_method", "linked_at", "updated_at"])
+    return account
+
+
+def set_account_kind(
+    account: EntraAccount, kind: str, *, actor, reason: str, system: bool = False
+) -> EntraAccount:
+    reason = require_reason(reason)
+    if not (system or perms.can_link_accounts(actor)):
+        raise ValidationError({"__all__": "You may not classify Entra accounts."})
+    if kind not in EntraAccount.Kind.values:
+        raise ValidationError({"kind": "Choose a kind."})
+    if account.kind == kind:
+        return account
+    account.kind = kind
+    account._audit_reason = reason
+    with set_actor(actor), transaction.atomic():
+        account.save(update_fields=["kind", "updated_at"])
+    return account
 
 
 # --- Cloud groups into the catalog ----------------------------------------------------------

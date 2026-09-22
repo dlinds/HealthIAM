@@ -1,20 +1,27 @@
 """The Entra ID pages: Admin > Entra ID, the group list, picker and adoption flow, cloud-group
-access levels on the application page, the broken-reference report and the dashboard."""
+access levels on the application page, the broken-reference report, the account worklists,
+linking and creating people from guests, the person page and the dashboard."""
 
 import uuid
+from datetime import timedelta
 
 import pytest
 from django.urls import reverse
+from django.utils import timezone
 
 from apps.access import services as access_services
 from apps.catalog.models import AccessLevel
-from apps.entra.models import EntraGroup, EntraSyncRun
+from apps.entra.models import EntraAccount, EntraGroup, EntraSyncRun
 from apps.entra.sync import run_sync
+from apps.people.models import Person
 
 from . import factories
 from .fake_graph import fake_id
 
 pytestmark = pytest.mark.django_db
+
+CAROL = "carol_partner.example#EXT#@test.invalid"
+DAVE = "dave_gmail.example#EXT#@test.invalid"
 
 
 @pytest.fixture
@@ -30,9 +37,9 @@ def analyst_user(db, app):
 
 
 @pytest.fixture
-def synced(fake_tenant):
+def synced(fake_tenant, person_types):
     """The default tenant, mirrored."""
-    run = run_sync(EntraSyncRun.objects.create(), dry_run=False)
+    run = run_sync(EntraSyncRun.objects.create(scope="all"), dry_run=False)
     assert run.status == EntraSyncRun.Status.COMPLETED, run.error
     return fake_tenant
 
@@ -41,12 +48,17 @@ def group(name) -> EntraGroup:
     return EntraGroup.objects.get(display_name=name)
 
 
+def account(upn) -> EntraAccount:
+    return EntraAccount.objects.get(upn=upn)
+
+
 # --- Access -------------------------------------------------------------------------------------
 
 
 def test_readers_see_the_lists_and_only_admins_the_admin_page(as_user, help_desk_user, synced):
     client = as_user(help_desk_user)
     assert client.get(reverse("entra:group_list")).status_code == 200
+    assert client.get(reverse("entra:account_list")).status_code == 200
     assert client.get(reverse("entra:broken_references")).status_code == 200
     assert client.get(reverse("entra:admin_index")).status_code == 403
     assert client.post(reverse("entra:sync_start"), {"scope": "all"}).status_code == 403
@@ -83,12 +95,12 @@ def test_admin_page_says_what_the_architecture_is(as_user, admin_user, synced, s
     arch = as_user(admin_user).get(reverse("entra:admin_index")).context["architecture"]
     assert arch["label"] == "Hybrid, seen through Entra ID"
     synced.tenant = synced.tenant.__class__(id=synced.tenant.id, display_name="Test Health")
-    run_sync(EntraSyncRun.objects.create(), dry_run=False)
+    run_sync(EntraSyncRun.objects.create(scope="groups"), dry_run=False)
     arch = as_user(admin_user).get(reverse("entra:admin_index")).context["architecture"]
     assert arch["label"] == "Cloud-only"
 
 
-def test_sync_now_previews_then_applies(as_user, admin_user, fake_tenant):
+def test_sync_now_previews_then_applies(as_user, admin_user, fake_tenant, person_types):
     client = as_user(admin_user)
     resp = client.post(reverse("entra:sync_start"), {"scope": "all"})
     run = EntraSyncRun.objects.get()
@@ -103,12 +115,14 @@ def test_sync_now_previews_then_applies(as_user, admin_user, fake_tenant):
     assert client.get(reverse("entra:run_list")).status_code == 200
 
 
-def test_sync_form_offers_only_passes_that_can_run(as_user, admin_user):
+def test_sync_form_offers_only_passes_that_can_run(as_user, admin_user, settings):
     def choices():
         form = as_user(admin_user).get(reverse("entra:admin_index")).context["form"]
         return dict(form.fields["scope"].choices)
 
-    assert choices() == {"all": "Groups"}
+    assert choices()["all"] == "Groups and accounts"
+    settings.ENTRA_ACCOUNTS_ENABLED = False
+    assert choices()["all"] == "Groups" and "accounts" not in choices()
 
 
 def test_connection_test_shows_tenant_permissions_and_missing_ones(
@@ -299,15 +313,231 @@ def test_expected_access_and_defaults_show_the_cloud_group(as_user, admin_user, 
     assert "Entra ID group membership" in person_page and "SG-Epic-Nurse" in person_page
 
 
+# --- Accounts and worklists -----------------------------------------------------------------------
+
+
+def show(client, value, **params):
+    resp = client.get(reverse("entra:account_list"), {"show": value, **params})
+    return [a.upn for a in resp.context["object_list"]]
+
+
+def test_worklists(as_user, help_desk_user, synced, admin_user, settings):
+    from apps.people import services as people_services
+
+    client = as_user(help_desk_user)
+    carol = factories.PersonFactory(
+        first_name="Carol", last_name="Cho", email="carol@partner.example"
+    )
+    run_sync(EntraSyncRun.objects.create(scope="accounts"), dry_run=False)
+    assert account(CAROL).person == carol
+
+    # Carol holds no position: her guest account is enabled for nobody's current work.
+    assert show(client, "orphaned") == [CAROL]
+    # ...unless one is coming up: a guest invited ahead of the start date is expected.
+    upcoming = factories.PositionAssignmentFactory(
+        person=carol, start_date=timezone.localdate() + timedelta(days=7)
+    )
+    assert show(client, "orphaned") == []
+    upcoming.delete()
+    assert show(client, "orphaned") == [CAROL]
+    factories.PositionAssignmentFactory(person=carol)
+    assert show(client, "orphaned") == []
+    people_services.deactivate_person(carol, actor=admin_user, reason="Contract ended")
+    assert show(client, "orphaned") == [CAROL]
+
+    assert show(client, "unlinked_guests") == [
+        DAVE,
+        "erin_sister.example#EXT#@test.invalid",
+    ]
+    assert "frank@test.invalid" in show(client, "unlinked")
+    assert show(client, "unmatched") == [
+        "alice@test.invalid",
+        "bob@test.invalid",
+        "frank@test.invalid",
+    ]
+    assert CAROL in show(client, "guests") and "alice@test.invalid" not in show(client, "guests")
+
+
+def test_pending_invitations_age_out(as_user, help_desk_user, synced, settings):
+    client = as_user(help_desk_user)
+    dave = account(DAVE)
+    dave.external_user_state_changed_at = timezone.now() - timedelta(days=5)
+    dave.save()
+    assert show(client, "pending") == []
+    dave.external_user_state_changed_at = timezone.now() - timedelta(days=45)
+    dave.save()
+    assert show(client, "pending") == [DAVE]
+    settings.ENTRA_GUEST_PENDING_DAYS = 60
+    assert show(client, "pending") == []
+
+
+def test_stale_guests_need_known_sign_in_activity(as_user, help_desk_user, synced):
+    client = as_user(help_desk_user)
+    carol = account(CAROL)
+    carol.last_activity_at = timezone.now() - timedelta(days=200)
+    carol.save()
+    assert CAROL in show(client, "stale")
+    carol.last_activity_at = timezone.now() - timedelta(days=2)
+    carol.save()
+    assert CAROL not in show(client, "stale")
+    # Never signed in, created long ago: stale. Created yesterday: not yet.
+    erin = account("erin_sister.example#EXT#@test.invalid")
+    erin.last_activity_at = None
+    erin.created_in_entra_at = timezone.now() - timedelta(days=120)
+    erin.save()
+    assert "erin_sister.example#EXT#@test.invalid" in show(client, "stale")
+    # Unknown (no licence) is never taken for old.
+    erin.sign_in_activity_known = False
+    erin.save()
+    assert "erin_sister.example#EXT#@test.invalid" not in show(client, "stale")
+    # A pending invitation is its own worklist, not a stale guest.
+    assert DAVE not in show(client, "stale")
+
+
+def test_account_export(as_user, help_desk_user, synced):
+    resp = as_user(help_desk_user).get(reverse("entra:account_list"), {"format": "csv"})
+    content = b"".join(resp.streaming_content) if resp.streaming else resp.content
+    assert content.startswith(b"upn,display_name,mail,source")
+    assert b"Email one-time passcode" in content
+
+
+# --- Linking -------------------------------------------------------------------------------------
+
+
+def test_admin_links_and_unlinks_by_hand(as_user, admin_user, synced):
+    person = factories.PersonFactory(first_name="Erin", last_name="Evans", employee_id="")
+    erin = account("erin_sister.example#EXT#@test.invalid")
+    client = as_user(admin_user)
+    resp = client.post(
+        reverse("entra:account_link", args=[erin.pk]),
+        {"person": person.pk, "reason": "Confirmed with her sponsor"},
+    )
+    assert resp.status_code == 302
+    erin.refresh_from_db()
+    assert erin.person == person and erin.link_method == EntraAccount.LinkMethod.MANUAL
+    resp = client.post(
+        reverse("entra:account_unlink", args=[erin.pk]), HTTP_HX_PROMPT="Wrong person"
+    )
+    erin.refresh_from_db()
+    assert erin.person is None and erin.unlinked_by_hand
+
+
+def test_coordinators_link_guests_of_their_people_only(as_user, synced, person_types):
+    coordinator = factories.UserFactory(username="coord")
+    factories.make_coordinator(person_types["contractor"], coordinator)
+    theirs = factories.PositionAssignmentFactory(
+        person__employee_id="", person_type=person_types["contractor"]
+    ).person
+    client = as_user(coordinator)
+    erin = account("erin_sister.example#EXT#@test.invalid")
+    resp = client.post(
+        reverse("entra:account_link", args=[erin.pk]),
+        {"person": theirs.pk, "reason": "Their contractor"},
+    )
+    assert resp.status_code == 302
+    erin.refresh_from_db()
+    assert erin.person == theirs
+    # A member account is not a coordinator's to link.
+    frank = account("frank@test.invalid")
+    assert client.get(reverse("entra:account_link", args=[frank.pk])).status_code == 403
+    # Nor is a person of a type they do not coordinate.
+    employee = factories.PositionAssignmentFactory(person__employee_id="").person
+    dave = account(DAVE)
+    resp = client.post(
+        reverse("entra:account_link", args=[dave.pk]),
+        {"person": employee.pk, "reason": "Not theirs"},
+    )
+    assert resp.status_code == 200
+    assert "You may not link this account to that person." in resp.content.decode()
+
+
+def test_a_coordinator_creates_the_person_behind_a_guest(as_user, synced, person_types):
+    coordinator = factories.UserFactory(username="coord")
+    factories.make_coordinator(person_types["contractor"], coordinator)
+    sponsor = factories.PersonFactory(first_name="Sam", last_name="Sponsor")
+    position = factories.PositionFactory()
+    dave = account(DAVE)
+    client = as_user(coordinator)
+    form = client.get(reverse("entra:account_person", args=[dave.pk]))
+    assert form.status_code == 200
+    assert form.context["form"].initial["email"] == "dave@gmail.example"
+    assert b"Creating the person behind the guest account" in form.content
+    resp = client.post(
+        reverse("entra:account_person", args=[dave.pk]),
+        {
+            "first_name": "Dave",
+            "last_name": "Diaz",
+            "email": "dave@gmail.example",
+            "person_type": person_types["contractor"].pk,
+            "position": position.pk,
+            "kind": "primary",
+            "start_date": timezone.localdate().isoformat(),
+            "sponsor": sponsor.pk,
+            "reason": "Contract starting",
+        },
+    )
+    person = Person.objects.get(last_name="Diaz")
+    assert resp.status_code == 302 and resp.url == person.get_absolute_url()
+    dave.refresh_from_db()
+    assert dave.person == person and dave.link_method == EntraAccount.LinkMethod.MANUAL
+    assert person.assignments.current().get().sponsor == sponsor
+    page = client.get(person.get_absolute_url()).content.decode()
+    assert "Entra accounts" in page and "dave_gmail.example#EXT#@test.invalid" in page
+
+
+def test_creating_a_person_keeps_the_type_rules_and_rights(as_user, synced, person_types):
+    coordinator = factories.UserFactory(username="coord")
+    factories.make_coordinator(person_types["contractor"], coordinator)
+    position = factories.PositionFactory()
+    dave = account(DAVE)
+    client = as_user(coordinator)
+    resp = client.post(
+        reverse("entra:account_person", args=[dave.pk]),
+        {
+            "first_name": "Dave",
+            "last_name": "Diaz",
+            "person_type": person_types["contractor"].pk,
+            "position": position.pk,
+            "kind": "primary",
+            "start_date": timezone.localdate().isoformat(),
+            "reason": "Contract starting",
+        },
+    )
+    assert resp.status_code == 200  # a contractor needs a sponsor
+    assert not Person.objects.filter(last_name="Diaz").exists()
+    dave.refresh_from_db()
+    assert dave.person is None
+    # Only guests and external members are created from their account.
+    frank = account("frank@test.invalid")
+    assert client.get(reverse("entra:account_person", args=[frank.pk])).status_code == 403
+
+
+def test_admin_classifies_an_account_with_a_reason(as_user, admin_user, synced):
+    frank = account("frank@test.invalid")
+    client = as_user(admin_user)
+    client.post(
+        reverse("entra:account_kind", args=[frank.pk]),
+        {"kind": "service"},
+        HTTP_HX_REQUEST="true",
+        HTTP_HX_PROMPT="Runs the scanner",
+    )
+    frank.refresh_from_db()
+    assert frank.kind == EntraAccount.Kind.SERVICE
+    assert "frank@test.invalid" not in show(client, "unlinked")
+
+
 # --- Dashboard and reports ------------------------------------------------------------------------
 
 
 def test_dashboard_carries_the_entra_buckets(as_user, admin_user, synced):
     resp = as_user(admin_user).get(reverse("core:dashboard"))
     quality = resp.context["quality"]
+    assert quality["entra_guests_without_person"][0] == 3
     assert "broken_entra_references" in quality
+    assert b"Entra guests linked to nobody" in resp.content
 
 
 def test_reports_page_links_the_entra_reports(as_user, help_desk_user):
     body = as_user(help_desk_user).get(reverse("access:reports_index")).content.decode()
     assert reverse("entra:broken_references") in body
+    assert reverse("entra:account_list") + "?show=stale" in body

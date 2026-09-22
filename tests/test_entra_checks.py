@@ -43,7 +43,20 @@ def test_w002_a_path_the_app_may_not_look_into(settings, monkeypatch):
     assert "cannot be checked (Permission denied)" in warning.msg
 
 
+def test_w007_employee_id_attribute(settings):
+    settings.ENTRA_EMPLOYEE_ID_ATTRIBUTE = ""
+    assert "entra.W007" in ids()
+    settings.ENTRA_EMPLOYEE_ID_ATTRIBUTE = "department"
+    assert "entra.W007" in ids()
+    settings.ENTRA_EMPLOYEE_ID_ATTRIBUTE = "onPremisesExtensionAttributes.extensionAttribute3"
+    assert "entra.W007" not in ids()
+    settings.ENTRA_ACCOUNTS_ENABLED = False
+    settings.ENTRA_EMPLOYEE_ID_ATTRIBUTE = ""
+    assert "entra.W007" not in ids()
+
+
 def test_the_checks_are_silent_without_entra(settings):
     settings.ENTRA_ENABLED = False
     settings.ENTRA_SYNC_CLIENT_SECRET = ""
+    settings.ENTRA_EMPLOYEE_ID_ATTRIBUTE = ""
     assert ids() == set()

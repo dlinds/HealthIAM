@@ -1,0 +1,34 @@
+{# The Entra ID accounts linked to this person. Only included when ENTRA_ENABLED, so the Entra URLs resolve. #}
+<div class="card mb-3" id="entra-accounts">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <span>Entra accounts <span class="badge text-bg-secondary">{{ entra_accounts|length }}</span></span>
+    {% if iam.can_link_accounts or iam.is_coordinator %}<a class="small" href="{% url 'entra:account_list' %}?show=unlinked_guests" title="Link an unlinked guest to this person from the accounts list">Link…</a>{% endif %}
+  </div>
+  <ul class="list-group list-group-flush small">
+    {% for a in entra_accounts %}
+    <li class="list-group-item">
+      <div class="d-flex justify-content-between align-items-start gap-2">
+        <span>
+          <a class="text-mono" href="{{ a.get_absolute_url }}">{{ a.upn }}</a>
+          <span class="badge {% if a.is_external %}text-bg-info{% else %}text-bg-light border{% endif %}">{{ a.get_source_display }}</span>
+          {% if not a.is_active %}<span class="badge text-bg-secondary">not in Entra ID</span>
+          {% elif a.is_pending %}<span class="badge text-bg-warning">invitation pending</span>
+          {% elif not a.account_enabled %}<span class="badge text-bg-secondary">sign-in blocked</span>
+          {% else %}<span class="badge text-bg-success">enabled</span>{% endif %}
+          {% if a.kind != 'user' %}<span class="badge text-bg-light border">{{ a.get_kind_display }}</span>{% endif %}
+          <div class="text-body-secondary">
+            {% if a.identity_provider_label %}{{ a.identity_provider_label }} · {% endif %}
+            {% if not a.sign_in_activity_known %}sign-in activity unknown{% elif a.last_activity_at %}last sign-in {{ a.last_activity_at|date:"Y-m-d" }}{% else %}never signed in{% endif %}
+            · linked {{ a.get_link_method_display|lower }}
+          </div>
+        </span>
+        {% if a.can_unlink %}
+        <button class="btn btn-sm btn-link text-danger p-0" type="button" hx-post="{% url 'entra:account_unlink' a.pk %}?next={{ person.get_absolute_url|urlencode }}" hx-prompt="Reason for unlinking {{ a.upn }} from {{ person.display_name }}:">Unlink</button>
+        {% endif %}
+      </div>
+    </li>
+    {% empty %}
+    <li class="list-group-item text-body-secondary">No Entra account linked{% if person.employee_id %}; the sync links one whose employee ID is <span class="text-mono">{{ person.employee_id }}</span>{% endif %}{% if person.email %}{% if person.employee_id %}, or{% else %};{% endif %} a guest invited as <span class="text-mono">{{ person.email }}</span>{% endif %}.</li>
+    {% endfor %}
+  </ul>
+</div>

@@ -1,10 +1,11 @@
 from django import forms
 
+from apps.access.forms import ReasonForm
 from apps.core.forms import BootstrapForm
 from apps.directory.config import describe_passes
 
 from .config import PASSES, full_sync_passes
-from .models import EntraSyncRun
+from .models import EntraAccount, EntraSyncRun
 
 
 class SyncStartForm(BootstrapForm):
@@ -28,5 +29,15 @@ class SyncStartForm(BootstrapForm):
         self.fields["scope"].choices = [
             (value, everything if value == EntraSyncRun.Scope.ALL else label)
             for value, label in EntraSyncRun.Scope.choices
-            if value == EntraSyncRun.Scope.ALL or value in passes
+            if value in (EntraSyncRun.Scope.ALL, EntraSyncRun.Scope.GROUPS) or value in passes
         ]
+
+
+class AccountLinkForm(ReasonForm):
+    """Link an Entra account to a person by hand: the person from the picker, plus a reason."""
+
+    person = forms.IntegerField(widget=forms.HiddenInput)
+
+
+class AccountKindForm(ReasonForm):
+    kind = forms.ChoiceField(choices=EntraAccount.Kind.choices)

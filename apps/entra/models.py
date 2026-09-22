@@ -1,14 +1,15 @@
 """Read-only mirror of the parts of Microsoft Entra ID HealthIAM cares about.
 
-`EntraGroup` rows are keyed by the object ID, so a rename touches the same row, and are
-deactivated (never deleted) when the tenant stops returning them -- the lifecycle of `ADGroup`.
-`EntraSyncRun` records every sync, manual or scheduled, with counts and a per-row log, and a
-snapshot of the tenant it read: its ID and whether directory synchronization from on-premises
-AD is on, which is what tells a hybrid tenant from a cloud-only one.
+`EntraGroup` and `EntraAccount` rows are keyed by the object ID, so a rename touches the same
+row, and are deactivated (never deleted) when the tenant stops returning them -- the lifecycle of
+`ADGroup` and `DirectoryAccount`. `EntraSyncRun` records every sync, manual or scheduled, with
+counts and a per-row log, and a snapshot of the tenant it read: its ID and whether directory
+synchronization from on-premises AD is on, which is what tells a hybrid tenant from a
+cloud-only one.
 
-A group knows where it comes from. A group synced from Active Directory is an AD group whose
-membership can only change on-premises, so the catalog keeps referencing it as an `ad_group`
-level; only groups mastered in the cloud become `entra_group` levels.
+A group or an account knows where it comes from. A group synced from Active Directory is an AD
+group whose membership can only change on-premises, so the catalog keeps referencing it as an
+`ad_group` level; only groups mastered in the cloud become `entra_group` levels.
 """
 
 from __future__ import annotations
@@ -25,6 +26,24 @@ from django.utils.http import urlencode
 from apps.core.models import TimeStampedModel
 
 STALE_RUN_AFTER = timedelta(minutes=15)
+
+#: How Graph names the identity provider a guest signs in with (`identities[].issuer` of a
+#: `federated` identity), and what the pages call it. Anything else is a SAML/WS-Fed partner,
+#: named by its domain.
+IDENTITY_PROVIDERS = {
+    "externalazuread": "Entra ID (their own tenant)",
+    "microsoftaccount": "Microsoft account",
+    "microsoft account": "Microsoft account",
+    "mail": "Email one-time passcode",
+    "google.com": "Google",
+    "facebook.com": "Facebook",
+}
+
+
+def identity_provider_label(issuer: str) -> str:
+    if not issuer:
+        return ""
+    return IDENTITY_PROVIDERS.get(issuer.lower(), f"Federated: {issuer}")
 
 
 class _Mirrored(TimeStampedModel):
@@ -147,11 +166,187 @@ class EntraGroup(_Mirrored):
         return not self.unsuitable_reason
 
 
+class EntraAccount(_Mirrored):
+    """One user in the tenant: a member synced from AD, a cloud member, a guest or an external
+    member. Linked to the person it belongs to by employee ID, by e-mail (guests) or by hand."""
+
+    class Source(models.TextChoices):
+        SYNCED = "synced", "Synced from AD"
+        CLOUD = "cloud", "Cloud member"
+        CONVERTED = "converted", "Cloud member (was synced)"
+        GUEST = "guest", "Guest"
+        EXTERNAL = "external", "External member"
+
+    #: Accounts of people from outside: they rarely carry our employee ID, so e-mail links them.
+    EXTERNAL_SOURCES = (Source.GUEST, Source.EXTERNAL)
+
+    class Kind(models.TextChoices):
+        USER = "user", "User"
+        ADMIN = "admin", "Admin account"
+        SERVICE = "service", "Service account"
+        SHARED = "shared", "Shared / generic"
+        UNKNOWN = "unknown", "Unknown"
+
+    class LinkMethod(models.TextChoices):
+        EMPLOYEE_ID = "employee_id", "By employee ID"
+        EMAIL = "email", "By e-mail"
+        MANUAL = "manual", "By hand"
+
+    PENDING = "PendingAcceptance"
+
+    upn = models.CharField("User principal name", max_length=256, db_index=True)
+    display_name = models.CharField(max_length=256, blank=True)
+    given_name = models.CharField(max_length=150, blank=True)
+    surname = models.CharField(max_length=150, blank=True)
+    mail = models.EmailField(max_length=254, blank=True)
+    other_mails = models.JSONField(default=list, blank=True)
+    job_title = models.CharField(max_length=150, blank=True)
+    department = models.CharField(max_length=150, blank=True)
+    company_name = models.CharField(max_length=150, blank=True)
+    employee_id = models.CharField("Employee ID", max_length=64, blank=True, db_index=True)
+    user_type = models.CharField(max_length=20, default="Member")
+    creation_type = models.CharField(max_length=40, blank=True)
+    source = models.CharField(
+        max_length=10, choices=Source.choices, default=Source.CLOUD, db_index=True
+    )
+    identity_provider = models.CharField(
+        max_length=150, blank=True, help_text="Issuer of the federated identity a guest uses."
+    )
+    external_user_state = models.CharField("Invitation", max_length=40, blank=True)
+    external_user_state_changed_at = models.DateTimeField(null=True, blank=True)
+    account_enabled = models.BooleanField(default=True, help_text="Sign-in allowed in Entra ID.")
+    created_in_entra_at = models.DateTimeField("Created in Entra ID", null=True, blank=True)
+    last_sign_in_at = models.DateTimeField("Last interactive sign-in", null=True, blank=True)
+    last_non_interactive_sign_in_at = models.DateTimeField(null=True, blank=True)
+    last_successful_sign_in_at = models.DateTimeField(null=True, blank=True)
+    last_activity_at = models.DateTimeField(
+        "Last sign-in",
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="The latest of the sign-in timestamps Entra ID reports.",
+    )
+    sign_in_activity_known = models.BooleanField(
+        default=False, help_text="The last sync could read sign-in activity for this account."
+    )
+    on_premises_immutable_id = models.CharField(max_length=128, blank=True)
+    on_premises_object_guid = models.UUIDField(
+        "On-premises objectGUID",
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="Decoded from onPremisesImmutableId; matches the AD account mirror.",
+    )
+    on_premises_security_identifier = models.CharField(
+        "On-premises SID", max_length=184, blank=True
+    )
+    on_premises_sam_account_name = models.CharField(
+        "On-premises account name", max_length=256, blank=True
+    )
+    on_premises_domain_name = models.CharField("On-premises domain", max_length=256, blank=True)
+    kind = models.CharField(
+        max_length=10,
+        choices=Kind.choices,
+        default=Kind.USER,
+        help_text="Set by hand: the directory does not say what an account is for.",
+    )
+    person = models.ForeignKey(
+        "people.Person",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="entra_accounts",
+    )
+    link_method = models.CharField(max_length=12, choices=LinkMethod.choices, blank=True)
+    linked_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        verbose_name = "Entra account"
+        ordering = ["upn", "pk"]
+        indexes = [models.Index(Lower("upn"), name="entra_account_lupn_idx")]
+
+    def __str__(self):
+        return self.upn
+
+    def get_absolute_url(self):
+        return reverse("entra:account_list") + "?" + urlencode({"q": self.upn, "active": "all"})
+
+    @property
+    def is_external(self) -> bool:
+        return self.source in self.EXTERNAL_SOURCES
+
+    @property
+    def is_guest(self) -> bool:
+        return self.source == self.Source.GUEST
+
+    @property
+    def is_pending(self) -> bool:
+        return self.external_user_state == self.PENDING
+
+    @property
+    def pending_since(self):
+        return self.external_user_state_changed_at or self.created_in_entra_at
+
+    @property
+    def identity_provider_label(self) -> str:
+        return identity_provider_label(self.identity_provider)
+
+    @property
+    def is_linked(self) -> bool:
+        return self.person_id is not None
+
+    @property
+    def unlinked_by_hand(self) -> bool:
+        """Somebody unlinked it and wants it to stay that way: the sync leaves it alone."""
+        return self.person_id is None and self.link_method == self.LinkMethod.MANUAL
+
+    @property
+    def name(self) -> str:
+        return (
+            self.display_name
+            or f"{self.given_name} {self.surname}".strip()
+            or self.mail
+            or self.upn
+        )
+
+    def email_candidates(self) -> list[str]:
+        """Addresses this account may be known by, most trustworthy first, lower-cased.
+
+        `mail` is the address the invitation went to; `otherMails` holds alternates. A guest's
+        UPN encodes the invited address as `alice_contoso.com#EXT#@tenant`, which is only a
+        last resort: an underscore in the local part makes the decoding ambiguous.
+        """
+        seen: list[str] = []
+        for value in (self.mail, *(self.other_mails or [])):
+            value = (value or "").strip().lower()
+            if value and "@" in value and value not in seen:
+                seen.append(value)
+        if "#ext#" in self.upn.lower() and not seen:
+            local = self.upn.split("#", 1)[0]
+            if "_" in local:
+                user, _, domain = local.rpartition("_")
+                decoded = f"{user}@{domain}".lower()
+                if user and "." in domain:
+                    seen.append(decoded)
+        return seen
+
+    # Linking is what the audit trail is for here: the person's History collects it.
+    def get_additional_data(self):
+        return {
+            "reason": getattr(self, "_audit_reason", ""),
+            "person_id": self.person_id,
+            "person": self.person.display_name if self.person_id else "",
+            "kind": self._meta.verbose_name,
+        }
+
+
 class EntraSyncRun(TimeStampedModel):
     """One sync against Entra ID. Preview = dry run; apply = real sync on the same row."""
 
     class Scope(models.TextChoices):
-        ALL = "all", "Groups"
+        ALL = "all", "Groups and accounts"
+        GROUPS = "groups", "Groups only"
+        ACCOUNTS = "accounts", "Accounts only"
 
     class Status(models.TextChoices):
         PENDING = "pending", "Pending"
@@ -181,6 +376,9 @@ class EntraSyncRun(TimeStampedModel):
         help_text="The tenant synchronizes from on-premises AD: a hybrid tenant.",
     )
     directory_last_sync_at = models.DateTimeField(null=True, blank=True)
+    sign_in_activity = models.CharField(
+        max_length=500, blank=True, help_text="Why sign-in activity could not be read, if not."
+    )
     summary = models.JSONField(default=dict, blank=True)
     log = models.JSONField(default=list, blank=True)
     error = models.TextField(blank=True)
@@ -199,7 +397,8 @@ class EntraSyncRun(TimeStampedModel):
     @property
     def scope_label(self) -> str:
         """The scope as run, like `DirectorySyncRun.scope_label`: a full sync is named for the
-        passes it recorded or, when it recorded none, for the passes a full sync has here now."""
+        passes it recorded -- no accounts pass while the account mirror is off -- or, when it
+        recorded none, for the passes a full sync has here now."""
         if self.scope != self.Scope.ALL:
             return self.get_scope_display()
         from apps.directory.config import describe_passes

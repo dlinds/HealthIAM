@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import EntraGroup, EntraSyncRun
+from .models import EntraAccount, EntraGroup, EntraSyncRun
 
 GROUP_SYNC_FIELDS = (
     "tenant_id",
@@ -46,6 +46,19 @@ class EntraGroupAdmin(_MirrorAdmin):
     readonly_fields = GROUP_SYNC_FIELDS
 
 
+@admin.register(EntraAccount)
+class EntraAccountAdmin(_MirrorAdmin):
+    list_display = ("upn", "source", "account_enabled", "person", "link_method", "is_active")
+    list_filter = ("source", "account_enabled", "is_active", "kind", "link_method")
+    search_fields = ("upn", "display_name", "mail", "employee_id", "object_id")
+    raw_id_fields = ("person",)
+
+    def get_readonly_fields(self, request, obj=None):
+        # Links and kinds change on the accounts page, with a reason; everything else is the
+        # sync's. Nothing is editable here.
+        return [f.name for f in self.model._meta.fields]
+
+
 @admin.register(EntraSyncRun)
 class EntraSyncRunAdmin(admin.ModelAdmin):
     list_display = ("__str__", "trigger", "created_by", "created_at", "finished_at")
@@ -59,6 +72,7 @@ class EntraSyncRunAdmin(admin.ModelAdmin):
         "tenant_name",
         "directory_sync_enabled",
         "directory_last_sync_at",
+        "sign_in_activity",
         "started_at",
         "finished_at",
     )

@@ -270,6 +270,47 @@ def can_link_accounts(user) -> bool:
     return is_admin(user)
 
 
+def can_link_entra_account(user, account, person=None) -> bool:
+    """Link an Entra ID account to `person`, or unlink it from its person when `person` is None.
+
+    An Admin may link any account. A coordinator may link a guest or an external member --
+    the accounts of the people coordinators bring in -- to or from a person they maintain:
+    creating a person from a guest and linking the guest is one step for them.
+    """
+    if is_admin(user):
+        return True
+    if not is_coordinator(user) or not getattr(account, "is_external", False):
+        return False
+    person = person if person is not None else getattr(account, "person", None)
+    return person is None or can_edit_person(user, person)
+
+
+def linkable_entra_accounts(user, accounts) -> set:
+    """The pks among `accounts` that `can_link_entra_account` lets the user unlink or relink,
+    in one query for the whole page rather than one per linked guest."""
+    accounts = list(accounts)
+    if is_admin(user):
+        return {account.pk for account in accounts}
+    if not is_coordinator(user):
+        return set()
+    external = [account for account in accounts if getattr(account, "is_external", False)]
+    person_ids = {account.person_id for account in external if account.person_id}
+    editable = set()
+    if person_ids:
+        from apps.people.models import PositionAssignment
+
+        editable = set(
+            PositionAssignment.objects.filter(
+                person_id__in=person_ids, person_type_id__in=_coordinator_type_ids(user)
+            ).values_list("person_id", flat=True)
+        )
+    return {
+        account.pk
+        for account in external
+        if account.person_id is None or account.person_id in editable
+    }
+
+
 def can_manage_entra(user) -> bool:
     """Entra ID sync: run it, see run history, test the connection."""
     return is_admin(user)

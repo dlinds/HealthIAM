@@ -12,6 +12,8 @@ from pathlib import Path
 from django.conf import settings
 from django.core.checks import Warning, register
 
+from .config import employee_id_select
+
 TAG = "entra"
 
 
@@ -65,5 +67,37 @@ def check_certificate_file(app_configs, **kwargs):
                 ".pfx file at that path, readable by the account the app runs as."
             ),
             id="entra.W002",
+        )
+    ]
+
+
+@register(TAG)
+def check_employee_id_attribute(app_configs, **kwargs):
+    """W007: the account mirror cannot read the configured employee-ID attribute."""
+    if not (_enabled() and getattr(settings, "ENTRA_ACCOUNTS_ENABLED", False)):
+        return []
+    attribute = (settings.ENTRA_EMPLOYEE_ID_ATTRIBUTE or "").strip()
+    if not attribute:
+        return [
+            Warning(
+                "ENTRA_EMPLOYEE_ID_ATTRIBUTE is empty.",
+                hint=(
+                    "Accounts are mirrored, but only guests link to people (by e-mail); members "
+                    "are linked by hand. Set it to employeeId, an extension attribute such as "
+                    "onPremisesExtensionAttributes.extensionAttribute1, or a schema extension."
+                ),
+                id="entra.W007",
+            )
+        ]
+    if employee_id_select(attribute):
+        return []
+    return [
+        Warning(
+            f"ENTRA_EMPLOYEE_ID_ATTRIBUTE {attribute!r} is not an attribute the sync can read.",
+            hint=(
+                "Use employeeId, onPremisesExtensionAttributes.extensionAttributeN (1-15) or a "
+                "directory schema extension named extension_<appid>_<name>."
+            ),
+            id="entra.W007",
         )
     ]

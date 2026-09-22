@@ -75,8 +75,12 @@ class EntraSettings:
     timeout: int = 30
     group_name_patterns: tuple[str, ...] = ()
     group_exclude_patterns: tuple[str, ...] = ()
+    accounts_enabled: bool = True
+    account_exclude_patterns: tuple[str, ...] = ()
     employee_id_attribute: str = "employeeId"
     sign_in_activity: bool = True
+    guest_stale_days: int = 90
+    guest_pending_days: int = 30
 
     @classmethod
     def from_settings(cls) -> EntraSettings:
@@ -92,8 +96,12 @@ class EntraSettings:
             timeout=int(settings.ENTRA_TIMEOUT),
             group_name_patterns=tuple(settings.ENTRA_GROUPS_NAME_PATTERNS),
             group_exclude_patterns=tuple(settings.ENTRA_GROUPS_EXCLUDE_PATTERNS),
+            accounts_enabled=bool(settings.ENTRA_ENABLED and settings.ENTRA_ACCOUNTS_ENABLED),
+            account_exclude_patterns=tuple(settings.ENTRA_ACCOUNTS_EXCLUDE_PATTERNS),
             employee_id_attribute=(settings.ENTRA_EMPLOYEE_ID_ATTRIBUTE or "").strip(),
             sign_in_activity=bool(settings.ENTRA_SIGN_IN_ACTIVITY),
+            guest_stale_days=int(settings.ENTRA_GUEST_STALE_DAYS),
+            guest_pending_days=int(settings.ENTRA_GUEST_PENDING_DAYS),
         )
 
     @property
@@ -137,17 +145,24 @@ class EntraSettings:
             "timeout": self.timeout,
             "group_name_patterns": list(self.group_name_patterns),
             "group_exclude_patterns": list(self.group_exclude_patterns),
+            "accounts_enabled": self.accounts_enabled,
+            "account_exclude_patterns": list(self.account_exclude_patterns),
             "employee_id_attribute": self.employee_id_attribute,
             "employee_id_readable": bool(self.employee_id_select),
             "sign_in_activity": self.sign_in_activity,
+            "guest_stale_days": self.guest_stale_days,
+            "guest_pending_days": self.guest_pending_days,
         }
 
 
 #: The passes a full sync can have, by their key in `EntraSyncRun.summary`, and what a scope
 #: label calls them.
-PASSES = {"groups": "groups"}
+PASSES = {"groups": "groups", "accounts": "accounts"}
 
 
 def full_sync_passes() -> list[str]:
-    """The passes a full sync runs in this deployment, by key."""
-    return list(PASSES)
+    """The passes a full sync runs in this deployment, by key: accounts unless the account
+    mirror is off."""
+    cfg = EntraSettings.from_settings()
+    offered = {"groups": True, "accounts": cfg.accounts_enabled}
+    return [key for key in PASSES if offered[key]]

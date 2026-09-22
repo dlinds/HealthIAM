@@ -1,5 +1,6 @@
-"""Entra ID pages: the cloud group list, picker and adoption flow, the broken-reference list, and
-Admin > Entra ID (configuration, architecture, connection test, Sync now, run history).
+"""Entra ID pages: the cloud group list, picker and adoption flow, the account worklists, the
+broken-reference list, and Admin > Entra ID (configuration, architecture, connection test,
+Sync now, run history).
 
 Every view carries its own permission gate. The connection test and the sync views call
 `sync.build_client()` by module attribute so the test-suite's fake tenant replaces Graph
@@ -10,11 +11,13 @@ everywhere at once. The client secret never reaches a template: configuration co
 from django.conf import settings
 from django.contrib import messages
 from django.core.checks import run_checks
+from django.core.exceptions import PermissionDenied, ValidationError
+from django.db import transaction
 from django.db.models import Case, Count, Exists, IntegerField, OuterRef, Q, Value, When
 from django.db.models.functions import Lower
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
-from django.utils.http import urlencode
+from django.utils.http import url_has_allowed_host_and_scheme, urlencode
 from django.views.decorators.debug import sensitive_variables
 from django.views.decorators.http import require_POST
 from django.views.generic import ListView
@@ -24,12 +27,16 @@ from apps.access import reports
 from apps.accounts import permissions as perms
 from apps.accounts.mixins import PermissionCheckMixin, role_required
 from apps.catalog.models import AccessLevel, Application
+from apps.orgs.models import Position
+from apps.people import services as people_services
+from apps.people.forms import PersonCreateForm
+from apps.people.models import Person
 
-from . import checks, references, services, sync
+from . import checks, references, services, sync, worklists
 from .config import EntraSettings
-from .forms import SyncStartForm
+from .forms import AccountKindForm, AccountLinkForm, SyncStartForm
 from .graph import ConnectionInfo
-from .models import EntraGroup, EntraSyncRun
+from .models import EntraAccount, EntraGroup, EntraSyncRun
 
 PICKER_LIMIT = 15
 RECENT_RUNS = 10
@@ -65,6 +72,12 @@ def _redirect_to(request, url):
     if getattr(request, "htmx", False):
         return HttpResponseClientRedirect(url)
     return redirect(url)
+
+
+def _errors(exc: ValidationError) -> str:
+    if hasattr(exc, "message_dict"):
+        return " ".join(m for msgs in exc.message_dict.values() for m in msgs)
+    return " ".join(exc.messages)
 
 
 # --- Cloud groups ---------------------------------------------------------------------------
@@ -379,6 +392,16 @@ def architecture(run: EntraSyncRun | None) -> dict:
     }
 
 
+#: How the status card counts accounts by source, singular and plural.
+SOURCE_COUNTS = {
+    EntraAccount.Source.SYNCED: ("synced from AD", "synced from AD"),
+    EntraAccount.Source.CLOUD: ("cloud member", "cloud members"),
+    EntraAccount.Source.CONVERTED: ("cloud member once synced", "cloud members once synced"),
+    EntraAccount.Source.GUEST: ("guest", "guests"),
+    EntraAccount.Source.EXTERNAL: ("external member", "external members"),
+}
+
+
 def _status_context(runs):
     last_run = next((run for run in runs if not run.is_stale), None)
     last_completed = (
@@ -387,12 +410,27 @@ def _status_context(runs):
         .first()
     )
     groups_active, groups_inactive = _active_counts(EntraGroup.objects.all())
+    accounts_active, accounts_inactive = _active_counts(EntraAccount.objects.all())
+    by_source = dict(
+        EntraAccount.objects.filter(is_active=True)
+        .values_list("source")
+        .annotate(n=Count("pk"))
+        .values_list("source", "n")
+    )
     synced = references.groups_synced()
     return {
         "last_run": last_run,
         "architecture": architecture(last_completed),
         "groups_active": groups_active,
         "groups_inactive": groups_inactive,
+        "accounts_active": accounts_active,
+        "accounts_inactive": accounts_inactive,
+        "accounts_by_source": [
+            (value, n, SOURCE_COUNTS[value][n != 1])
+            for value in EntraAccount.Source.values
+            if (n := by_source.get(value, 0))
+        ],
+        "worklists": worklists.counts(),
         "groups_synced": synced,
         "broken_count": len(references.broken_references()) if synced else None,
     }
@@ -502,3 +540,311 @@ def run_apply(request, pk):
         )
     messages.success(request, "Sync applied — " + "; ".join(counts) + ".")
     return redirect(run)
+
+
+# --- Entra accounts ---------------------------------------------------------------------------
+
+ACCOUNT_COLUMNS = [
+    "upn",
+    "display_name",
+    "mail",
+    "source",
+    "identity_provider",
+    "invitation",
+    "employee_id",
+    "enabled",
+    "created",
+    "last_sign_in",
+    "in_entra",
+    "kind",
+    "person",
+    "person_employee_id",
+    "person_active",
+    "link",
+]
+
+
+def account_rows(accounts):
+    for a in accounts:
+        yield [
+            a.upn,
+            a.name,
+            a.mail,
+            a.get_source_display(),
+            a.identity_provider_label,
+            a.external_user_state,
+            a.employee_id,
+            "yes" if a.account_enabled else "no",
+            a.created_in_entra_at.date().isoformat() if a.created_in_entra_at else "",
+            (a.last_activity_at.date().isoformat() if a.last_activity_at else "")
+            if a.sign_in_activity_known
+            else "unknown",
+            "yes" if a.is_active else "no",
+            a.get_kind_display(),
+            a.person.sort_name if a.person_id else "",
+            a.person.employee_id if a.person_id else "",
+            ("yes" if a.person.is_active else "no") if a.person_id else "",
+            a.get_link_method_display() if a.link_method else "",
+        ]
+
+
+class EntraAccountListView(PermissionCheckMixin, ListView):
+    """The account mirror, with the worklists an IAM team runs from it."""
+
+    permission_check = "can_view"
+    model = EntraAccount
+    paginate_by = 50
+    template_name = "entra/account_list.html"
+
+    def get_queryset(self):
+        g = self.request.GET
+        qs = EntraAccount.objects.select_related("person")
+        self.q = g.get("q", "").strip()
+        if self.q:
+            qs = qs.filter(
+                Q(upn__icontains=self.q)
+                | Q(display_name__icontains=self.q)
+                | Q(given_name__icontains=self.q)
+                | Q(surname__icontains=self.q)
+                | Q(mail__icontains=self.q)
+                | Q(employee_id__iexact=self.q)
+                | Q(company_name__icontains=self.q)
+            )
+        self.active = g.get("active", "1")
+        if self.active == "1":
+            qs = qs.filter(is_active=True)
+        elif self.active == "0":
+            qs = qs.filter(is_active=False)
+        self.source = g.get("source", "")
+        if self.source in EntraAccount.Source.values:
+            qs = qs.filter(source=self.source)
+        else:
+            self.source = ""
+        qs, self.show = worklists.apply(qs, g.get("show", ""))
+        self.person_id = _int_or_none(g.get("person"))
+        if self.person_id is not None:
+            qs = qs.filter(person_id=self.person_id)
+        return qs.order_by("upn", "pk")
+
+    def get(self, request, *args, **kwargs):
+        fmt = request.GET.get("format")
+        if fmt in ("csv", "xlsx"):
+            rows = account_rows(self.get_queryset())
+            if fmt == "xlsx":
+                return reports.xlsx_response(
+                    ACCOUNT_COLUMNS, rows, "entra-accounts.xlsx", "Entra accounts"
+                )
+            return reports.csv_response(ACCOUNT_COLUMNS, rows, "entra-accounts.csv")
+        return super().get(request, *args, **kwargs)
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        user = self.request.user
+        accounts = list(ctx["object_list"])
+        can_create = perms.can_manage_people(user)
+        linkable = perms.linkable_entra_accounts(user, accounts)
+        for account in accounts:
+            account.can_link = account.pk in linkable
+            account.can_create_person = (
+                can_create and account.is_external and account.person_id is None
+            )
+        cfg = EntraSettings.from_settings()
+        ctx.update(
+            object_list=accounts,
+            q=self.q,
+            active=self.active,
+            source=self.source,
+            sources=EntraAccount.Source.choices,
+            show=self.show,
+            show_choices=worklists.SHOW_CHOICES,
+            person_id=self.person_id,
+            accounts_enabled=cfg.accounts_enabled,
+            stale_days=cfg.guest_stale_days,
+            pending_days=cfg.guest_pending_days,
+            kinds=EntraAccount.Kind.choices,
+            can_classify=perms.can_link_accounts(user),
+        )
+        return ctx
+
+
+account_list = EntraAccountListView.as_view()
+
+
+def _safe_next(request) -> str:
+    """The `next` a form or link carried, when it stays on this site; "" otherwise. It ends up
+    in a redirect and in the Cancel link, so a `javascript:` or off-site URL never gets that
+    far."""
+    target = request.POST.get("next") or request.GET.get("next") or ""
+    if target and url_has_allowed_host_and_scheme(
+        target, allowed_hosts={request.get_host()}, require_https=request.is_secure()
+    ):
+        return target
+    return ""
+
+
+def _back(request, account):
+    return _safe_next(request) or (
+        reverse("entra:account_list") + "?" + urlencode({"q": account.upn})
+    )
+
+
+def account_link(request, pk):
+    """Say by hand whose account this is."""
+    account = get_object_or_404(EntraAccount.objects.select_related("person"), pk=pk)
+    if not perms.can_link_entra_account(request.user, account):
+        raise PermissionDenied
+    form = AccountLinkForm(request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        person = Person.objects.filter(pk=form.cleaned_data["person"]).first()
+        if person is None:
+            form.add_error("person", "Pick a person from the list.")
+        else:
+            try:
+                services.link_account(
+                    account, person, actor=request.user, reason=form.cleaned_data["reason"]
+                )
+            except ValidationError as exc:
+                for field_name, msgs in exc.message_dict.items():
+                    for msg in msgs:
+                        form.add_error(field_name if field_name in form.fields else None, msg)
+            else:
+                messages.success(request, f"Linked {account.upn} to {person.display_name}.")
+                return redirect(_back(request, account))
+    return render(
+        request,
+        "entra/account_link.html",
+        {"account": account, "form": form, "next": _safe_next(request)},
+    )
+
+
+@require_POST
+def account_unlink(request, pk):
+    account = get_object_or_404(EntraAccount.objects.select_related("person"), pk=pk)
+    if not perms.can_link_entra_account(request.user, account):
+        raise PermissionDenied
+    reason = request.htmx.prompt or request.POST.get("reason", "")
+    who = account.person.display_name if account.person_id else "nobody"
+    try:
+        services.unlink_account(account, actor=request.user, reason=reason)
+    except ValidationError as exc:
+        messages.error(request, _errors(exc))
+    else:
+        messages.success(request, f"Unlinked {account.upn} from {who}.")
+    return _redirect_to(request, _back(request, account))
+
+
+@require_POST
+@role_required("can_link_accounts")
+def account_kind(request, pk):
+    """Say what an account is for. Posted by the kind select on the accounts page, which asks
+    for the reason with an htmx prompt (the HX-Prompt header), or by an ordinary form."""
+    account = get_object_or_404(EntraAccount, pk=pk)
+    data = request.POST.copy()
+    if not data.get("reason"):
+        data["reason"] = request.htmx.prompt or ""
+    form = AccountKindForm(data)
+    if form.is_valid():
+        try:
+            services.set_account_kind(
+                account,
+                form.cleaned_data["kind"],
+                actor=request.user,
+                reason=form.cleaned_data["reason"],
+            )
+        except ValidationError as exc:
+            messages.error(request, _errors(exc))
+        else:
+            messages.success(
+                request, f"{account.upn} is now a {account.get_kind_display().lower()}."
+            )
+    else:
+        messages.error(request, "Choose a kind and give a reason.")
+    return _redirect_to(request, _back(request, account))
+
+
+@role_required("can_manage_people")
+def account_create_person(request, pk):
+    """Create the person a guest belongs to, with their first assignment, and link the guest.
+
+    The usual person form, pre-filled from the account; the person type still decides whether
+    an end date, a sponsor or an organization is required, and the coordinator may only pick a
+    type they coordinate. The link is made by hand in the same transaction, so it survives
+    every later sync.
+    """
+    account = get_object_or_404(EntraAccount.objects.select_related("person"), pk=pk)
+    if not account.is_external:
+        raise PermissionDenied("Only a guest or an external member is created from its account.")
+    if account.person_id is not None:
+        messages.info(request, f"{account.upn} is already linked to {account.person.display_name}.")
+        return redirect(account.person)
+    initial = {
+        "first_name": account.given_name or account.name.split(" ")[0],
+        "last_name": account.surname
+        or (account.name.split(" ", 1)[1] if " " in account.name else ""),
+        "email": (account.email_candidates() or [""])[0],
+        "reason": f"Guest account {account.mail or account.upn} in Entra ID",
+    }
+    form = PersonCreateForm(request.POST or None, actor=request.user, initial=initial)
+    if request.method == "POST" and form.is_valid():
+        d = form.cleaned_data
+        position = Position.objects.filter(pk=d["position"]).first()
+        if position is None:
+            form.add_error("position", "Pick a position from the list.")
+        sponsor = Person.objects.filter(pk=d["sponsor"]).first() if d["sponsor"] else None
+        if d["sponsor"] and sponsor is None:
+            form.add_error("sponsor", "Pick a sponsor from the list.")
+        manager = Person.objects.filter(pk=d["manager"]).first() if d["manager"] else None
+        if d["manager"] and manager is None:
+            form.add_error("manager", "Pick a manager from the list.")
+        if form.is_valid():
+            try:
+                with transaction.atomic():
+                    person = people_services.create_person(
+                        actor=request.user,
+                        reason=d["reason"],
+                        first_name=d["first_name"],
+                        middle_name=d["middle_name"],
+                        last_name=d["last_name"],
+                        suffix=d["suffix"],
+                        preferred_name=d["preferred_name"],
+                        employee_id=d["employee_id"],
+                        email=d["email"],
+                        phone=d["phone"],
+                        work_location=d["work_location"],
+                        hire_date=d["hire_date"],
+                        manager=manager,
+                    )
+                    people_services.add_assignment(
+                        person,
+                        position,
+                        d["person_type"],
+                        kind=d["kind"],
+                        start_date=d["start_date"],
+                        end_date=d["end_date"],
+                        organization=d["organization"],
+                        sponsor=sponsor,
+                        title=d["title"],
+                        notes=d["assignment_notes"],
+                        actor=request.user,
+                        reason=d["reason"],
+                    )
+                    # The coordinator just created this person, so they may link it; checked
+                    # through the service all the same, by the same rule as any hand link.
+                    services.link_account(account, person, actor=request.user, reason=d["reason"])
+            except ValidationError as exc:
+                if hasattr(exc, "message_dict"):
+                    for field_name, msgs in exc.message_dict.items():
+                        for msg in msgs:
+                            form.add_error(field_name if field_name in form.fields else None, msg)
+                else:
+                    form.add_error(None, " ".join(exc.messages))
+            else:
+                messages.success(
+                    request, f"{person.display_name} created and linked to {account.upn}."
+                )
+                return redirect(person)
+    return render(
+        request,
+        "people/person_form.html",
+        {"form": form, "person": None, "source_account": account},
+    )

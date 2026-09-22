@@ -30,9 +30,10 @@
 
 {% if run.error %}<div class="alert alert-danger"><strong>The run failed; nothing was written.</strong><div class="text-mono small mt-1">{{ run.error }}</div></div>{% endif %}
 {% if run.is_stale %}<div class="alert alert-warning">This run was still pending after {{ run.started_at|date:"Y-m-d H:i" }} and never recorded an outcome: the worker stopped (timeout or restart) while it was reading from Graph. Nothing was written. Start a new sync; if it happens again, raise the reverse-proxy and gunicorn timeouts or use the scheduled command.</div>{% endif %}
+{% if run.sign_in_activity %}<div class="alert alert-light border small"><i class="bi bi-info-circle me-1"></i><strong>Sign-in activity was not read.</strong> {{ run.sign_in_activity }} Accounts were mirrored without it; the stale-guest worklist ignores them until it can be read (Entra ID P1/P2 and AuditLog.Read.All).</div>{% endif %}
 
 {% for kind, s in parts %}
-<div class="d-flex align-items-center gap-2 mb-1"><span class="badge text-bg-dark text-capitalize">{{ kind }}</span><span class="small text-body-secondary">{{ s.read }} directory object{{ s.read|pluralize }} read</span></div>
+<div class="d-flex align-items-center gap-2 mb-1"><span class="badge text-bg-dark text-capitalize">{{ kind }}</span><span class="small text-body-secondary">{{ s.read }} directory object{{ s.read|pluralize }} read{% if s.linked or s.unlinked or s.unmatched %} · {{ s.linked }} linked · {{ s.unlinked }} unlinked · {{ s.unmatched }} unmatched{% endif %}</span></div>
 <div class="row g-2 mb-3">
   <div class="col-6 col-md-2 col-xl"><div class="card text-center"><div class="card-body py-2"><div class="fs-4">{{ s.created }}</div><div class="small text-body-secondary">Created</div></div></div></div>
   <div class="col-6 col-md-2 col-xl"><div class="card text-center"><div class="card-body py-2"><div class="fs-4">{{ s.updated }}</div><div class="small text-body-secondary">Updated</div></div></div></div>

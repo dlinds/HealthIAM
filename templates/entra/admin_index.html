@@ -5,6 +5,7 @@
   <h1 class="h3 mb-0">Entra ID</h1>
   <div>
     <a class="btn btn-outline-secondary" href="{% url 'entra:group_list' %}"><i class="bi bi-collection me-1"></i>Entra groups</a>
+    {% if config.accounts_enabled %}<a class="btn btn-outline-secondary" href="{% url 'entra:account_list' %}"><i class="bi bi-person-badge me-1"></i>Entra accounts</a>{% endif %}
     <a class="btn btn-outline-secondary" href="{% url 'entra:broken_references' %}"><i class="bi bi-exclamation-triangle me-1"></i>Broken references</a>
   </div>
 </div>
@@ -30,6 +31,17 @@
           <dt class="col-sm-4">Timeout</dt><dd class="col-sm-8">{{ config.timeout }} s</dd>
           <dt class="col-sm-4">Group name patterns</dt><dd class="col-sm-8">{% if config.group_name_patterns %}<span class="text-mono">{{ config.group_name_patterns|join:", " }}</span>{% else %}<span class="text-body-secondary">every group in the tenant</span>{% endif %}</dd>
           <dt class="col-sm-4">Excluded patterns</dt><dd class="col-sm-8">{% if config.group_exclude_patterns %}<span class="text-mono">{{ config.group_exclude_patterns|join:", " }}</span>{% else %}<span class="text-body-secondary">none</span>{% endif %}</dd>
+          <dt class="col-sm-4">Account mirror</dt>
+          <dd class="col-sm-8">
+            {% if config.accounts_enabled %}<span class="badge text-bg-success">on</span> every account in the tenant
+            {% if config.account_exclude_patterns %}<div>excluding <span class="text-mono">{{ config.account_exclude_patterns|join:", " }}</span></div>{% endif %}
+            <div>linked to people by {% if config.employee_id_attribute %}<span class="text-mono">{{ config.employee_id_attribute }}</span>{% if not config.employee_id_readable %} <span class="badge text-bg-warning">not readable</span>{% endif %}{% else %}hand only{% endif %}, guests also by e-mail</div>
+            {% else %}<span class="badge text-bg-secondary">off</span> &mdash; <span class="text-mono">ENTRA_ACCOUNTS_ENABLED</span> is false{% endif %}
+          </dd>
+          <dt class="col-sm-4">Sign-in activity</dt>
+          <dd class="col-sm-8">{% if config.sign_in_activity %}read (needs Entra ID P1/P2 and AuditLog.Read.All){% else %}<span class="text-body-secondary">not read</span>{% endif %}</dd>
+          <dt class="col-sm-4">Guest worklists</dt>
+          <dd class="col-sm-8">no sign-in for {{ config.guest_stale_days }} days &middot; invitation pending {{ config.guest_pending_days }} days</dd>
         </dl>
         <p class="text-body-secondary mb-0 mt-2">Set through <span class="text-mono">ENTRA_*</span> environment variables; see docs/entra-setup.md. The client secret and the certificate password are never shown.</p>
       </div>
@@ -62,6 +74,22 @@
             {% else %}<span class="text-body-secondary">never</span>{% endif %}
           </dd>
           <dt class="col-sm-4">Entra groups</dt><dd class="col-sm-8"><a href="{% url 'entra:group_list' %}">{{ groups_active }} active</a> · {{ groups_inactive }} gone</dd>
+          {% if config.accounts_enabled or accounts_active or accounts_inactive %}
+          <dt class="col-sm-4">Entra accounts</dt>
+          <dd class="col-sm-8">
+            <a href="{% url 'entra:account_list' %}">{{ accounts_active }} in Entra ID</a> · {{ accounts_inactive }} gone
+            <div class="text-body-secondary">{% for value, n, text in accounts_by_source %}<a class="text-reset" href="{% url 'entra:account_list' %}?source={{ value }}">{{ n }} {{ text }}</a>{% if not forloop.last %} · {% endif %}{% endfor %}</div>
+          </dd>
+          <dt class="col-sm-4">Worklists</dt>
+          <dd class="col-sm-8">
+            {% if worklists.orphaned %}<div><a class="text-danger" href="{% url 'entra:account_list' %}?show=orphaned">{{ worklists.orphaned }} enabled for people who left or hold no position</a></div>{% endif %}
+            {% if worklists.unlinked_guests %}<div><a href="{% url 'entra:account_list' %}?show=unlinked_guests">{{ worklists.unlinked_guests }} guest{{ worklists.unlinked_guests|pluralize }} linked to nobody</a></div>{% endif %}
+            {% if worklists.pending %}<div><a href="{% url 'entra:account_list' %}?show=pending">{{ worklists.pending }} invitation{{ worklists.pending|pluralize }} pending over {{ config.guest_pending_days }} days</a></div>{% endif %}
+            {% if worklists.stale %}<div><a href="{% url 'entra:account_list' %}?show=stale">{{ worklists.stale }} guest{{ worklists.stale|pluralize }} not signed in for {{ config.guest_stale_days }} days</a></div>{% endif %}
+            {% if worklists.unlinked %}<div><a href="{% url 'entra:account_list' %}?show=unlinked">{{ worklists.unlinked }} member{{ worklists.unlinked|pluralize }} linked to nobody</a></div>{% endif %}
+            {% if not worklists.orphaned and not worklists.unlinked_guests and not worklists.pending and not worklists.stale and not worklists.unlinked %}<span class="text-body-secondary">nothing to work</span>{% endif %}
+          </dd>
+          {% endif %}
           <dt class="col-sm-4">Broken references</dt>
           <dd class="col-sm-8">
             {% if broken_count is None %}<span class="text-body-secondary">not checked yet (no completed group sync)</span>
@@ -110,7 +138,7 @@
       <div class="card-body small">
         <p>Run the sync nightly from the host, with this deployment's scheduler:</p>
         <pre class="bg-body-tertiary border rounded p-2 mb-2"><code>{{ schedule_command }}</code></pre>
-        <p class="mb-0 text-body-secondary">Add <span class="text-mono">--dry-run</span> to preview only. The exit code is non-zero when the run fails or any entry has an error. Every run is listed below.</p>
+        <p class="mb-0 text-body-secondary">Add <span class="text-mono">--dry-run</span> to preview only, <span class="text-mono">--groups-only</span> or <span class="text-mono">--accounts-only</span> to limit the scope. The exit code is non-zero when the run fails or any entry has an error. Every run is listed below.</p>
       </div>
     </div>
   </div>

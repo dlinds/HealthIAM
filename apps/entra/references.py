@@ -119,8 +119,11 @@ def in_scope(name: str) -> bool:
 
 
 def groups_synced() -> bool:
-    """True once a completed run has mirrored the group list."""
-    return EntraSyncRun.objects.filter(status=EntraSyncRun.Status.COMPLETED).exists()
+    """True once a completed run has mirrored the group list (scope all or groups)."""
+    return EntraSyncRun.objects.filter(
+        status=EntraSyncRun.Status.COMPLETED,
+        scope__in=[EntraSyncRun.Scope.ALL, EntraSyncRun.Scope.GROUPS],
+    ).exists()
 
 
 def _key(name: str) -> str:
