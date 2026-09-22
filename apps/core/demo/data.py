@@ -361,8 +361,11 @@ STAFF: tuple[StaffSpec, ...] = (
 # --- Accounts ---------------------------------------------------------------------------
 
 #: Nothing keeps a service account out of the demo mirror: `svc-scanner` below is there to
-#: show the *kind* an administrator sets by hand.
+#: show an account classified by a kind rule.
 ACCOUNT_EXCLUDE_PATTERNS: list[str] = []
+#: The kind rules the demo settings apply (`AD_ACCOUNT_KIND_PATTERNS`): a naming convention
+#: and an OU. `svc-scanner` matches the first; nothing seeded lives under the second.
+ACCOUNT_KIND_PATTERNS: list[str] = ["service=svc-*", f"service=*,{SERVICE_OU}"]
 
 #: Fixed, not relative to today: the seed is idempotent, and a timestamp that moved on every
 #: run would read as a change.
@@ -423,7 +426,7 @@ ACCOUNTS: tuple[AccountSpec, ...] = (
         "",
         kind="service",
         title="Document scanning",
-        demonstrates="a service account, marked as such by hand",
+        demonstrates="a service account, classified by the svc-* kind rule",
     ),
 )
 

@@ -210,17 +210,23 @@ def upsert_directory_account(spec, *, now=None):
         "enabled": spec.enabled,
         "when_created": data.ACCOUNT_CREATED,
     }
+    # What the demo kind rules (`data.ACCOUNT_KIND_PATTERNS`) would have decided.
+    kind = "user" if is_staff else spec.kind
+    classification = {"kind": kind, "kind_source": "" if kind == "user" else "rule"}
     account, created = DirectoryAccount.objects.get_or_create(
         object_guid=data.user_guid(spec.sam),
         defaults={
             **values,
-            "kind": "user" if is_staff else spec.kind,
+            **classification,
             "last_logon_at": data.ACCOUNT_LAST_LOGON if spec.enabled else None,
             "first_seen_at": now,
             "last_seen_at": now,
         },
     )
     if not created:
+        # Like the sync, the rules classify every account nobody classified by hand.
+        if account.kind_source != DirectoryAccount.KindSource.MANUAL:
+            values.update(classification)
         _apply(account, values)
     return account, created
 

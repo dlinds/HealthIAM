@@ -13,7 +13,9 @@ from apps.accounts import permissions as perms
 from apps.core.audit import require_reason
 from apps.people.models import Person
 
+from .config import DirectorySettings
 from .models import DirectoryAccount
+from .sync import account_kind_rules, rule_kind
 
 
 def _authorize(actor, system: bool) -> None:
@@ -62,10 +64,34 @@ def set_account_kind(
     _authorize(actor, system)
     if kind not in DirectoryAccount.Kind.values:
         raise ValidationError({"kind": "Choose a kind."})
-    if account.kind == kind:
+    manual = DirectoryAccount.KindSource.MANUAL
+    if account.kind == kind and account.kind_source == manual:
         return account
+    # Pinning the kind a rule already gives is a real change: the rules stop applying.
     account.kind = kind
+    account.kind_source = manual
     account._audit_reason = reason
     with set_actor(actor), transaction.atomic():
-        account.save(update_fields=["kind", "updated_at"])
+        account.save(update_fields=["kind", "kind_source", "updated_at"])
+    return account
+
+
+def reset_account_kind(
+    account: DirectoryAccount, *, actor, reason: str, system: bool = False
+) -> DirectoryAccount:
+    """Let the AD_ACCOUNT_KIND_PATTERNS rules decide again, applied right away rather than
+    on the next sync. Also re-applies edited rules to an account that already follows them."""
+    reason = require_reason(reason)
+    _authorize(actor, system)
+    rules = account_kind_rules(DirectorySettings.from_settings())
+    kind, kind_source, _glob = rule_kind(
+        account.sam_account_name, account.distinguished_name, rules
+    )
+    if account.kind == kind and account.kind_source == kind_source:
+        return account
+    account.kind = kind
+    account.kind_source = kind_source
+    account._audit_reason = reason
+    with set_actor(actor), transaction.atomic():
+        account.save(update_fields=["kind", "kind_source", "updated_at"])
     return account

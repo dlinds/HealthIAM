@@ -228,3 +228,36 @@ def check_account_mirror_can_link(app_configs, **kwargs):
             id="directory.W009",
         )
     ]
+
+
+@register(TAG)
+def check_account_kind_rules_are_well_formed(app_configs, **kwargs):
+    """W010: a kind rule without a pattern, or naming a kind HealthIAM does not know,
+    classifies nothing; the sync skips it silently, so say so here."""
+    if not _enabled():
+        return []
+    entries = getattr(settings, "AD_ACCOUNT_KIND_PATTERNS", None) or []
+    if not entries:
+        return []
+    from .models import DirectoryAccount
+
+    valid = set(DirectoryAccount.Kind.values)
+    bad = []
+    for entry in entries:
+        kind, sep, glob = str(entry).partition("=")
+        if not sep or not glob.strip() or kind.strip().casefold() not in valid:
+            bad.append(str(entry))
+    if not bad:
+        return []
+    return [
+        Warning(
+            f"AD_ACCOUNT_KIND_PATTERNS has {len(bad)} rule(s) the sync ignores: " + "; ".join(bad),
+            hint=(
+                "Each rule is kind=glob, where kind is one of "
+                + ", ".join(sorted(valid))
+                + " and the glob is matched against the account name and its DN. "
+                "Separate rules with semicolons."
+            ),
+            id="directory.W010",
+        )
+    ]

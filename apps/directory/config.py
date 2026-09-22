@@ -11,6 +11,8 @@ from dataclasses import dataclass, field
 
 from django.conf import settings
 
+from .matching import parse_kind_rules
+
 
 @dataclass(frozen=True)
 class DirectorySettings:
@@ -29,6 +31,7 @@ class DirectorySettings:
     account_search_bases: tuple[str, ...] = ()
     account_exclude_patterns: tuple[str, ...] = ()
     employee_id_attribute: str = "employeeID"
+    account_kind_rules: tuple[tuple[str, str], ...] = ()
 
     @classmethod
     def from_settings(cls) -> DirectorySettings:
@@ -47,6 +50,9 @@ class DirectorySettings:
             account_search_bases=tuple(getattr(settings, "AD_ACCOUNTS_SEARCH_BASES", ())),
             account_exclude_patterns=tuple(getattr(settings, "AD_ACCOUNTS_EXCLUDE_PATTERNS", ())),
             employee_id_attribute=getattr(settings, "AD_EMPLOYEE_ID_ATTRIBUTE", "employeeID") or "",
+            account_kind_rules=parse_kind_rules(
+                getattr(settings, "AD_ACCOUNT_KIND_PATTERNS", ()) or ()
+            ),
         )
 
     @property
@@ -80,4 +86,5 @@ class DirectorySettings:
             "account_exclude_patterns": list(self.account_exclude_patterns),
             "employee_id_attribute": self.employee_id_attribute,
             "accounts_enabled": self.accounts_enabled,
+            "account_kind_rules": [f"{kind}={glob}" for kind, glob in self.account_kind_rules],
         }

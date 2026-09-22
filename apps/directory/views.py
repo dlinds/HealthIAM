@@ -686,6 +686,11 @@ class DirectoryAccountListView(PermissionCheckMixin, ListView):
             qs = qs.filter(account_expires__lt=timezone.now())
         else:
             self.show = ""
+        self.kind = g.get("kind", "")
+        if self.kind in DirectoryAccount.Kind.values:
+            qs = qs.filter(kind=self.kind)
+        else:
+            self.kind = ""
         self.person_id = g.get("person", "")
         if self.person_id:
             qs = qs.filter(person_id=self.person_id)
@@ -710,7 +715,9 @@ class DirectoryAccountListView(PermissionCheckMixin, ListView):
             show=self.show,
             show_choices=SHOW_CHOICES,
             person_id=self.person_id,
+            kind=self.kind,
             kinds=DirectoryAccount.Kind.choices,
+            auto_kind=AccountKindForm.AUTO,
             accounts_enabled=DirectorySettings.from_settings().accounts_enabled,
             can_link=perms.can_link_accounts(self.request.user),
         )
@@ -777,23 +784,29 @@ def account_unlink(request, pk):
 @require_POST
 @role_required("can_link_accounts")
 def account_kind(request, pk):
+    """Set the kind by hand, or hand it back to the rules. The reason comes from the htmx
+    prompt on the accounts page, or from a plain form field."""
     account = get_object_or_404(DirectoryAccount, pk=pk)
-    form = AccountKindForm(request.POST)
+    reason = request.headers.get("HX-Prompt", "") or request.POST.get("reason", "")
+    form = AccountKindForm({"kind": request.POST.get("kind", ""), "reason": reason})
     if form.is_valid():
+        kind, reason = form.cleaned_data["kind"], form.cleaned_data["reason"]
         try:
-            services.set_account_kind(
-                account,
-                form.cleaned_data["kind"],
-                actor=request.user,
-                reason=form.cleaned_data["reason"],
-            )
+            if kind == AccountKindForm.AUTO:
+                services.reset_account_kind(account, actor=request.user, reason=reason)
+                outcome = (
+                    f"{account.sam_account_name} follows the kind rules: "
+                    f"{account.get_kind_display().lower()}."
+                )
+            else:
+                services.set_account_kind(account, kind, actor=request.user, reason=reason)
+                outcome = (
+                    f"{account.sam_account_name} is now a {account.get_kind_display().lower()}."
+                )
         except ValidationError as exc:
             messages.error(request, " ".join(m for msgs in exc.message_dict.values() for m in msgs))
         else:
-            messages.success(
-                request,
-                f"{account.sam_account_name} is now a {account.get_kind_display().lower()}.",
-            )
+            messages.success(request, outcome)
     else:
         messages.error(request, "Choose a kind and give a reason.")
     return _redirect_to(request, _back(request, account))

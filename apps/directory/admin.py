@@ -97,7 +97,7 @@ class DirectoryAccountAdmin(admin.ModelAdmin):
     readonly_fields = tuple(
         f.name
         for f in DirectoryAccount._meta.fields
-        if f.name not in ("person", "link_method", "kind")
+        if f.name not in ("person", "link_method", "kind", "kind_source")
     )
 
     def has_add_permission(self, request):

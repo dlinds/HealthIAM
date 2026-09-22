@@ -159,6 +159,10 @@ class DirectoryAccount(TimeStampedModel):
         EMPLOYEE_ID = "employee_id", "By employee ID"
         MANUAL = "manual", "By hand"
 
+    class KindSource(models.TextChoices):
+        RULE = "rule", "By rule"
+        MANUAL = "manual", "By hand"
+
     object_guid = models.UUIDField("objectGUID", unique=True)
     sam_account_name = models.CharField("Account name", max_length=256, db_index=True)
     upn = models.CharField("User principal name", max_length=256, blank=True)
@@ -185,7 +189,16 @@ class DirectoryAccount(TimeStampedModel):
         max_length=10,
         choices=Kind.choices,
         default=Kind.USER,
-        help_text="Set by hand: the directory does not say what an account is for.",
+        help_text=(
+            "What the account is for. The directory does not say: a kind comes from the "
+            "AD_ACCOUNT_KIND_PATTERNS rules or is set by hand, and a hand-set kind always wins."
+        ),
+    )
+    kind_source = models.CharField(
+        max_length=6,
+        choices=KindSource.choices,
+        blank=True,
+        help_text="Blank: no rule matched, so the account is a plain user unless set by hand.",
     )
     person = models.ForeignKey(
         "people.Person",
@@ -219,6 +232,15 @@ class DirectoryAccount(TimeStampedModel):
     @property
     def is_linked(self) -> bool:
         return self.person_id is not None
+
+    @property
+    def kind_note(self) -> str:
+        """Why the kind is what it is, for the badge on the accounts page."""
+        if self.kind_source == self.KindSource.MANUAL:
+            return "set by hand"
+        if self.kind_source == self.KindSource.RULE:
+            return "by rule"
+        return "default: no rule matched"
 
     @property
     def unlinked_by_hand(self) -> bool:

@@ -30,6 +30,7 @@ from apps.directory.ldap_client import (
     parse_filetime,
     parse_user_entry,
 )
+from apps.directory.matching import classify_account, parse_kind_rules
 from apps.directory.models import DirectoryAccount, DirectorySyncRun
 from apps.directory.sync import AccountSyncResult, run_sync
 
@@ -188,16 +189,20 @@ def test_settings_accounts_off_by_default_and_on_with_a_base(settings):
     assert cfg.accounts_enabled is False
     assert cfg.public_dict()["accounts_enabled"] is False
     assert cfg.public_dict()["account_search_bases"] == []
+    assert cfg.account_kind_rules == () and cfg.public_dict()["account_kind_rules"] == []
     settings.AD_ACCOUNTS_SEARCH_BASES = [PEOPLE_OU]
     settings.AD_ACCOUNTS_EXCLUDE_PATTERNS = ["svc-*"]
     settings.AD_EMPLOYEE_ID_ATTRIBUTE = "employeeNumber"
+    settings.AD_ACCOUNT_KIND_PATTERNS = ["service=svc-*", "nonsense", "Admin=*,OU=Admins,*"]
     cfg = DirectorySettings.from_settings()
     assert cfg.accounts_enabled is True
+    assert cfg.account_kind_rules == (("service", "svc-*"), ("admin", "*,OU=Admins,*"))
     public = cfg.public_dict()
     assert public["account_search_bases"] == [PEOPLE_OU]
     assert public["account_exclude_patterns"] == ["svc-*"]
     assert public["employee_id_attribute"] == "employeeNumber"
     assert public["accounts_enabled"] is True
+    assert public["account_kind_rules"] == ["service=svc-*", "admin=*,OU=Admins,*"]
 
 
 def test_w009_fires_only_when_accounts_are_mirrored_without_an_id_attribute(settings):
@@ -211,6 +216,38 @@ def test_w009_fires_only_when_accounts_are_mirrored_without_an_id_attribute(sett
     assert "directory.W009" in ids()
     settings.AD_ACCOUNTS_SEARCH_BASES = []
     assert "directory.W009" not in ids()
+
+
+def test_parse_kind_rules_and_classify_account():
+    rules = parse_kind_rules(
+        [" Service = svc-* ", "admin=*,OU=Admins,*", "", "nonsense", "service=", "user=svc-real"]
+    )
+    assert rules == (("service", "svc-*"), ("admin", "*,OU=Admins,*"), ("user", "svc-real"))
+    # A glob is tried against the account name and against the DN, case-insensitively.
+    assert classify_account("SVC-backup", "CN=x,OU=People,DC=t", rules) == ("service", "svc-*")
+    assert classify_account("jdoe", "CN=J,OU=Admins,DC=t", rules) == ("admin", "*,OU=Admins,*")
+    assert classify_account("jdoe", "CN=J,OU=People,DC=t", rules) is None
+    assert classify_account("x", "y", ()) is None
+    # First match wins: a user rule placed first exempts an account from a later rule.
+    rules = parse_kind_rules(["user=svc-real", "service=svc-*"])
+    assert classify_account("svc-real", "", rules) == ("user", "svc-real")
+    assert classify_account("svc-other", "", rules) == ("service", "svc-*")
+
+
+def test_w010_reports_kind_rules_the_sync_ignores(settings):
+    def w010():
+        return [w for w in run_checks(tags=[checks.TAG]) if w.id == "directory.W010"]
+
+    assert w010() == []
+    settings.AD_ACCOUNT_KIND_PATTERNS = ["service=svc-*", "admin=*-adm"]
+    assert w010() == []
+    settings.AD_ACCOUNT_KIND_PATTERNS = ["service=svc-*", "robot=*", "service=", "nonsense"]
+    (warning,) = w010()
+    assert "3 rule(s)" in warning.msg
+    assert "robot=*; service=; nonsense" in warning.msg
+    assert "admin, service, shared, unknown, user" in warning.hint
+    settings.AD_ENABLED = False
+    assert w010() == []
 
 
 # --- Sync: the account pass ---------------------------------------------------------------
@@ -372,6 +409,59 @@ def test_manual_links_and_unlinks_survive_the_sync(fake_directory, accounts_on, 
     bob = account("bob")
     assert bob.person is None and bob.unlinked_by_hand
     assert account("carol").person == other, "two accounts may belong to one person"
+
+
+def test_kind_rules_classify_accounts_and_follow_rule_changes(
+    fake_directory, accounts_on, settings, admin_user
+):
+    fake_directory.add_user("svc-scanner", ou="OU=Service Accounts", employee_id="")
+    fake_directory.add_user("adm-alice", employee_id="")
+    settings.AD_ACCOUNTS_SEARCH_BASES = [PEOPLE_OU, "OU=Service Accounts,DC=test,DC=invalid"]
+    settings.AD_ACCOUNT_KIND_PATTERNS = [
+        "service=*,OU=Service Accounts,*",
+        "admin=ADM-*",
+        "robot=*",  # unknown kind: ignored by the sync, reported by W010
+    ]
+    run = do_sync()
+    assert run.summary["accounts"]["created"] == 5
+    svc = account("svc-scanner")
+    assert svc.kind == DirectoryAccount.Kind.SERVICE
+    assert svc.kind_source == DirectoryAccount.KindSource.RULE
+    assert svc.kind_note == "by rule"
+    adm = account("adm-alice")
+    assert adm.kind == DirectoryAccount.Kind.ADMIN and adm.kind_source == "rule"
+    alice = account("alice")
+    assert alice.kind == DirectoryAccount.Kind.USER and alice.kind_source == ""
+    assert alice.kind_note == "default: no rule matched"
+    assert log_for(run, "svc-scanner")[0]["message"] == (
+        "enabled; service account by rule *,OU=Service Accounts,*"
+    )
+    assert log_for(run, "alice")[0]["message"] == "enabled"
+    entry = LogEntry.objects.filter(object_pk=str(svc.pk)).latest("pk")
+    assert entry.additional_data["reason"] == "Matches kind rule *,OU=Service Accounts,*"
+
+    # The rules change: admins become shared, nothing says service any more.
+    settings.AD_ACCOUNT_KIND_PATTERNS = ["shared=adm-*"]
+    run = do_sync()
+    assert run.summary["accounts"]["updated"] == 2
+    svc = account("svc-scanner")
+    assert svc.kind == DirectoryAccount.Kind.USER and svc.kind_source == ""
+    assert log_for(run, "svc-scanner")[0]["message"] == "kind: service -> user (no rule matches)"
+    adm = account("adm-alice")
+    assert adm.kind == DirectoryAccount.Kind.SHARED
+    assert log_for(run, "adm-alice")[0]["message"] == "kind: admin -> shared (rule adm-*)"
+    entry = LogEntry.objects.filter(object_pk=str(svc.pk)).latest("pk")
+    assert entry.additional_data["reason"] == "No kind rule matches"
+
+    # A kind set by hand is never touched, whatever the rules say.
+    services.set_account_kind(adm, "admin", actor=admin_user, reason="Known admin account")
+    settings.AD_ACCOUNT_KIND_PATTERNS = []
+    run = do_sync()
+    assert run.summary["accounts"]["unchanged"] == 5
+    adm = account("adm-alice")
+    assert adm.kind == DirectoryAccount.Kind.ADMIN
+    assert adm.kind_source == DirectoryAccount.KindSource.MANUAL
+    assert adm.kind_note == "set by hand"
 
 
 def test_exclude_patterns_and_extra_bases(fake_directory, accounts_on, settings):
@@ -572,6 +662,39 @@ def test_set_account_kind(admin_user):
         services.set_account_kind(acct, "robot", actor=admin_user, reason="Scanner login")
 
 
+def test_set_account_kind_pins_and_reset_hands_back_to_the_rules(admin_user, settings):
+    settings.AD_ACCOUNT_KIND_PATTERNS = ["service=svc-*"]
+    acct = factories.DirectoryAccountFactory(sam_account_name="svc-backup")
+    assert acct.kind == DirectoryAccount.Kind.USER and acct.kind_source == ""
+    # Reset applies the rules right away instead of waiting for a sync.
+    services.reset_account_kind(acct, actor=admin_user, reason="Apply the new rule now")
+    acct.refresh_from_db()
+    assert acct.kind == DirectoryAccount.Kind.SERVICE
+    assert acct.kind_source == DirectoryAccount.KindSource.RULE
+    entry = LogEntry.objects.filter(object_pk=str(acct.pk)).latest("pk")
+    assert entry.additional_data["reason"] == "Apply the new rule now"
+    logs = log_count()
+    services.reset_account_kind(acct, actor=admin_user, reason="Nothing to change")
+    assert log_count() == logs
+    # Pinning the kind a rule already gives is a change: the rules stop applying.
+    services.set_account_kind(acct, "service", actor=admin_user, reason="Pin it down")
+    acct.refresh_from_db()
+    assert acct.kind_source == DirectoryAccount.KindSource.MANUAL
+    assert log_count() == logs + 1
+    services.set_account_kind(acct, "service", actor=admin_user, reason="Pin it down")
+    assert log_count() == logs + 1
+    # Back to the rules, then the rules go away.
+    services.reset_account_kind(acct, actor=admin_user, reason="Rules again")
+    acct.refresh_from_db()
+    assert acct.kind_source == DirectoryAccount.KindSource.RULE
+    settings.AD_ACCOUNT_KIND_PATTERNS = []
+    services.reset_account_kind(acct, actor=admin_user, reason="Rules gone")
+    acct.refresh_from_db()
+    assert acct.kind == DirectoryAccount.Kind.USER and acct.kind_source == ""
+    with pytest.raises(ValidationError, match="may not link"):
+        services.reset_account_kind(acct, actor=None, reason="No permission")
+
+
 def test_account_model_helpers():
     acct = factories.DirectoryAccountFactory(sam_account_name="Helper.One")
     assert str(acct) == "Helper.One"
@@ -755,7 +878,7 @@ def test_account_unlink_takes_the_reason_from_the_htmx_prompt(as_user, admin_use
     assert mirror["dana"].person is not None, "a too-short reason changes nothing"
 
 
-def test_account_kind_view(as_user, admin_user, mirror):
+def test_account_kind_view(as_user, admin_user, mirror, settings):
     client = as_user(admin_user)
     acct = mirror["nobody"]
     url = reverse("directory:account_kind", args=[acct.pk])
@@ -763,8 +886,51 @@ def test_account_kind_view(as_user, admin_user, mirror):
     assert "nobody is now a shared / generic." in resp.content.decode()
     acct.refresh_from_db()
     assert acct.kind == DirectoryAccount.Kind.SHARED
+    assert acct.kind_source == DirectoryAccount.KindSource.MANUAL
     resp = client.post(url, {"kind": "robot", "reason": "Ward workstation login"}, follow=True)
     assert "Choose a kind and give a reason." in resp.content.decode()
+    resp = client.post(url, {"kind": "admin"}, follow=True)
+    assert "Choose a kind and give a reason." in resp.content.decode()
+    acct.refresh_from_db()
+    assert acct.kind == DirectoryAccount.Kind.SHARED
+
+    # From the page: the reason arrives in the htmx prompt, and "auto" hands the account
+    # back to the rules, applied at once.
+    settings.AD_ACCOUNT_KIND_PATTERNS = ["service=nobody"]
+    resp = client.post(
+        url + "?next=/directory/accounts/?show=unlinked",
+        {"kind": "auto"},
+        HTTP_HX_REQUEST="true",
+        HTTP_HX_PROMPT="Let the rules decide",
+    )
+    assert resp.status_code == 200
+    assert resp["HX-Redirect"] == "/directory/accounts/?show=unlinked"
+    acct.refresh_from_db()
+    assert acct.kind == DirectoryAccount.Kind.SERVICE
+    assert acct.kind_source == DirectoryAccount.KindSource.RULE
+    entry = LogEntry.objects.filter(object_pk=str(acct.pk)).latest("pk")
+    assert entry.additional_data["reason"] == "Let the rules decide"
+    resp = client.get("/directory/accounts/?show=unlinked")
+    assert "nobody follows the kind rules: service account." in resp.content.decode()
+
+
+def test_account_list_kind_dropdown_and_filter(as_user, admin_user, help_desk_user, mirror):
+    url = reverse("directory:account_list")
+    page = as_user(admin_user).get(url).content.decode()
+    assert "Automatic (by rule)" in page
+    assert reverse("directory:account_kind", args=[mirror["svc"].pk]) in page
+    assert """hx-vals='{"kind": "service"}'""" in page
+    assert 'title="default: no rule matched"' in page
+    assert "Reason for marking svc-scanner as user:" in page
+    assert "Reason for marking svc-scanner as service account:" not in page, "its own kind"
+
+    client = as_user(help_desk_user)
+    page = client.get(url).content.decode()
+    assert "Automatic (by rule)" not in page and "hx-vals" not in page
+    assert 'title="default: no rule matched"' in page
+    assert names(client.get(url, {"kind": "service"})) == ["svc-scanner"]
+    assert names(client.get(url, {"kind": "user"})) == ["alice", "dana", "nobody", "off"]
+    assert client.get(url, {"kind": "robot"}).context["kind"] == ""
 
 
 def test_person_page_shows_linked_accounts(as_user, help_desk_user, admin_user, mirror, people):
@@ -812,7 +978,12 @@ def test_dashboard_buckets_and_admin_counts(as_user, admin_user, mirror, setting
     settings.AD_ACCOUNTS_ENABLED = True
     resp = as_user(admin_user).get(reverse("directory:admin_index"))
     assert resp.context["accounts_enabled"] is True
-    assert PEOPLE_OU in resp.content.decode()
+    page = resp.content.decode()
+    assert PEOPLE_OU in page
+    assert "no kind rules: every account starts as a user" in page
+    settings.AD_ACCOUNT_KIND_PATTERNS = ["service=svc-*", "admin=*-adm"]
+    page = as_user(admin_user).get(reverse("directory:admin_index")).content.decode()
+    assert 'kind rules: <span class="text-mono">service=svc-*; admin=*-adm</span>' in page
     # The nav entry and the reports card appear only with the mirror on.
     assert b'href="/directory/accounts/"' in as_user(admin_user).get("/").content
     resp = as_user(admin_user).get(reverse("access:reports_index"))

@@ -36,6 +36,7 @@ AD_GROUPS_EXCLUDE_PATTERNS = ["LIC_RETIRED_*"]
 # the account tests turn it on with the `settings` fixture.
 AD_ACCOUNTS_SEARCH_BASES = []
 AD_ACCOUNTS_EXCLUDE_PATTERNS = []
+AD_ACCOUNT_KIND_PATTERNS = []
 AD_EMPLOYEE_ID_ATTRIBUTE = "employeeID"
 AD_ACCOUNTS_ENABLED = False
 # Sign-in is on with a short fuse so the throttle tests stay fast. The backend itself is not

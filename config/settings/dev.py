@@ -48,4 +48,5 @@ if not AD_SERVER_URIS and not AD_BASE_DN and env.bool("AD_DEMO_DIRECTORY", defau
     # people to their accounts and fills the account pages.
     AD_ACCOUNTS_SEARCH_BASES = [demo.STAFF_OU]
     AD_ACCOUNTS_EXCLUDE_PATTERNS = demo.ACCOUNT_EXCLUDE_PATTERNS
+    AD_ACCOUNT_KIND_PATTERNS = demo.ACCOUNT_KIND_PATTERNS
     AD_ACCOUNTS_ENABLED = True

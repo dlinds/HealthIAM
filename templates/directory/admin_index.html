@@ -53,6 +53,7 @@
             {% if config.accounts_enabled %}<span class="badge text-bg-success">on</span> under {% for base in config.account_search_bases %}<div class="text-mono">{{ base }}</div>{% endfor %}
             {% if config.account_exclude_patterns %}<div>excluding <span class="text-mono">{{ config.account_exclude_patterns|join:", " }}</span></div>{% endif %}
             <div>linked to people by <span class="text-mono">{{ config.employee_id_attribute }}</span></div>
+            {% if config.account_kind_rules %}<div>kind rules: <span class="text-mono">{{ config.account_kind_rules|join:"; " }}</span></div>{% else %}<div class="text-body-secondary">no kind rules: every account starts as a user</div>{% endif %}
             {% else %}<span class="badge text-bg-secondary">off</span> &mdash; set <span class="text-mono">AD_ACCOUNTS_SEARCH_BASES</span> to mirror user accounts and link them to people{% endif %}
           </dd>
           <dt class="col-sm-4">Sign-in</dt>

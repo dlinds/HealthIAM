@@ -19,6 +19,12 @@
     </select>
   </div>
   <div class="col-md-2">
+    <select class="form-select" name="kind">
+      <option value="">Any kind</option>
+      {% for value, label in kinds %}<option value="{{ value }}" {% if kind == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="col-md-2">
     <select class="form-select" name="active">
       <option value="1" {% if active == '1' %}selected{% endif %}>In AD</option>
       <option value="0" {% if active == '0' %}selected{% endif %}>No longer in AD</option>
@@ -51,7 +57,20 @@
         {% elif a.employee_id %}<span class="badge text-bg-warning">no person with this employee ID</span>
         {% else %}<span class="text-body-tertiary">—</span>{% endif %}
       </td>
-      <td><span class="badge text-bg-light border">{{ a.get_kind_display }}</span></td>
+      <td>
+        {% if can_link %}
+        <div class="dropdown">
+          <button class="badge text-bg-light border dropdown-toggle" type="button" data-bs-toggle="dropdown" title="{{ a.kind_note }}">{{ a.get_kind_display }}</button>
+          <ul class="dropdown-menu dropdown-menu-end">
+            {% for value, label in kinds %}{% if value != a.kind %}
+            <li><button class="dropdown-item small" type="button" hx-post="{% url 'directory:account_kind' a.pk %}?next={{ request.get_full_path|urlencode }}" hx-vals='{"kind": "{{ value }}"}' hx-prompt="Reason for marking {{ a.sam_account_name }} as {{ label|lower }}:">{{ label }}</button></li>
+            {% endif %}{% endfor %}
+            <li><hr class="dropdown-divider"></li>
+            <li><button class="dropdown-item small" type="button" hx-post="{% url 'directory:account_kind' a.pk %}?next={{ request.get_full_path|urlencode }}" hx-vals='{"kind": "{{ auto_kind }}"}' hx-prompt="Reason for letting the kind rules decide for {{ a.sam_account_name }}:">Automatic (by rule)</button></li>
+          </ul>
+        </div>
+        {% else %}<span class="badge text-bg-light border" title="{{ a.kind_note }}">{{ a.get_kind_display }}</span>{% endif %}
+      </td>
       {% if can_link %}
       <td class="text-end text-nowrap">
         {% if a.person %}<button class="btn btn-sm btn-link text-danger p-0" type="button" hx-post="{% url 'directory:account_unlink' a.pk %}?next={{ request.get_full_path|urlencode }}" hx-prompt="Reason for unlinking {{ a.sam_account_name }} from {{ a.person.display_name }}:">Unlink</button>

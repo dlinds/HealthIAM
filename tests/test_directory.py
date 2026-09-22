@@ -1672,6 +1672,7 @@ ALL_CHECKS = [
     checks.check_group_filters_are_not_wide_open,
     checks.check_synced_logins_can_be_signed_in_to,
     checks.check_account_mirror_can_link,
+    checks.check_account_kind_rules_are_well_formed,
 ]
 
 

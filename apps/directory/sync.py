@@ -33,7 +33,7 @@ from apps.people.models import Person
 from .config import DirectorySettings
 from .ldap_client import DirectoryClient, DirectoryError, DirectoryGroup, DirectoryUser
 from .ldap_client import build_client as build_client  # re-export: the seam tests patch
-from .matching import decode_group_type, excluded_by, matches_patterns
+from .matching import classify_account, decode_group_type, excluded_by, matches_patterns
 from .models import ADGroup, DirectoryAccount, DirectorySyncRun
 
 logger = logging.getLogger("apps.directory.sync")
@@ -777,6 +777,21 @@ MISSING_ACCOUNT_MESSAGE = (
 )
 
 
+def account_kind_rules(cfg: DirectorySettings) -> list[tuple[str, str]]:
+    """The configured kind rules the sync honours: check W010 reports the rest."""
+    return [(k, g) for k, g in cfg.account_kind_rules if k in DirectoryAccount.Kind.values]
+
+
+def rule_kind(sam: str, dn: str, rules) -> tuple[str, str, str]:
+    """`(kind, kind_source, glob)` the rules give an account: the first matching rule's kind
+    marked as by-rule, or a plain user with no source when nothing matches."""
+    match = classify_account(sam, dn, rules)
+    if match is None:
+        return DirectoryAccount.Kind.USER, "", ""
+    kind, glob = match
+    return kind, DirectoryAccount.KindSource.RULE, glob
+
+
 def _account_values(account: DirectoryUser) -> dict:
     return {
         "sam_account_name": account.sam,
@@ -796,20 +811,30 @@ def _account_values(account: DirectoryUser) -> dict:
     }
 
 
-def _sync_account(account: DirectoryUser, existing: dict, now) -> tuple[str, str]:
+def _sync_account(
+    account: DirectoryUser, existing: dict, now, rules: list[tuple[str, str]]
+) -> tuple[str, str]:
     values = _account_values(account)
     obj = existing.get(account.guid)
     if obj is None:
-        obj = DirectoryAccount.objects.create(
+        kind, kind_source, glob = rule_kind(account.sam, account.dn, rules)
+        obj = DirectoryAccount(
             object_guid=account.guid,
             first_seen_at=now,
             last_seen_at=now,
             last_logon_at=account.last_logon_at,
             when_changed=account.when_changed,
+            kind=kind,
+            kind_source=kind_source,
             **values,
         )
+        message = "enabled" if account.enabled else "disabled in AD"
+        if kind_source:
+            obj._audit_reason = f"Matches kind rule {glob}"
+            message += f"; {obj.get_kind_display().lower()} by rule {glob}"
+        obj.save()
         existing[account.guid] = obj
-        return "created", "enabled" if account.enabled else "disabled in AD"
+        return "created", message
 
     changed: list[str] = []
     notes: list[str] = []
@@ -821,6 +846,19 @@ def _sync_account(account: DirectoryUser, existing: dict, now) -> tuple[str, str
                 notes.append(f"employee ID: {obj.employee_id or '-'} -> {values[name] or '-'}")
             setattr(obj, name, values[name])
             changed.append(name)
+    # The rules classify every account nobody classified by hand, on every run, so a rule
+    # added after the first sync takes effect on the next one.
+    if obj.kind_source != DirectoryAccount.KindSource.MANUAL:
+        kind, kind_source, glob = rule_kind(account.sam, account.dn, rules)
+        if kind != obj.kind:
+            why = f"rule {glob}" if kind_source else "no rule matches"
+            notes.append(f"kind: {obj.kind} -> {kind} ({why})")
+            obj._audit_reason = (
+                f"Matches kind rule {glob}" if kind_source else "No kind rule matches"
+            )
+        if kind != obj.kind or kind_source != obj.kind_source:
+            obj.kind, obj.kind_source = kind, kind_source
+            changed.append("kind")
     reactivated = False
     if not obj.is_active:
         obj.activate(save=False)
@@ -904,6 +942,7 @@ def sync_accounts(
     """Upsert `DirectoryAccount` rows keyed by objectGUID, deactivate the ones no longer
     returned, then link them to people by employee ID."""
     existing = {a.object_guid: a for a in DirectoryAccount.objects.select_related("person")}
+    rules = account_kind_rules(cfg)
     seen: set = set()
     for row, account in enumerate(found, start=1):
         code = account.sam or account.upn or account.dn
@@ -924,7 +963,7 @@ def sync_accounts(
         seen.add(account.guid)
         try:
             with transaction.atomic():
-                action, message = _sync_account(account, existing, now)
+                action, message = _sync_account(account, existing, now, rules)
         except Exception as exc:  # noqa: BLE001 - one bad entry must not fail the run
             result.record(row, code, "error", f"{type(exc).__name__}: {exc}", dn=account.dn)
         else:

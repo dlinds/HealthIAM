@@ -363,7 +363,8 @@ has the linking rules.
 | `enabled` | From `userAccountControl`. |
 | `account_expires`, `last_logon_at` | Windows FILETIME attributes decoded by the client; 0 and the maximum mean never (null). `lastLogonTimestamp` replicates only every 9-14 days. |
 | `when_created`, `when_changed` | Copied from AD. |
-| `kind` | `user` / `admin` / `service` / `shared` / `unknown`, set by hand (Admin); the directory does not say what an account is for. Only `user` accounts count as *unlinked*. |
+| `kind` | `user` / `admin` / `service` / `shared` / `unknown`. The directory does not say what an account is for: the `AD_ACCOUNT_KIND_PATTERNS` rules (`kind=glob`, matched on the name and the DN, first match wins) classify every account on every sync, unless an Admin set the kind by hand. Only `user` accounts count as *unlinked*. |
+| `kind_source` | `rule` (a rule matched), `manual` (set by hand; the rules never touch it again until *Automatic* is chosen) or blank (no rule matched: the default `user`). |
 | `person` | `SET_NULL` link to `people.Person` (`related_name="directory_accounts"`): a person is never deleted, but the link is a link, not ownership. |
 | `link_method`, `linked_at` | `employee_id` (the sync) or `manual` (the accounts page). A `manual` row is never touched by the sync: with a person it means "theirs, whatever the attribute says", without one "leave it unlinked". |
 | `first_seen_at`, `last_seen_at`, `is_active`, `inactivated_at` | As `ADGroup`. |

@@ -41,7 +41,12 @@ class AccountLinkForm(ReasonForm):
 
 
 class AccountKindForm(ReasonForm):
-    kind = forms.ChoiceField(choices=DirectoryAccount.Kind.choices)
+    """`auto` hands the account back to the AD_ACCOUNT_KIND_PATTERNS rules."""
+
+    AUTO = "auto"
+    kind = forms.ChoiceField(
+        choices=[(AUTO, "Automatic (by rule)"), *DirectoryAccount.Kind.choices]
+    )
 
 
 class ADGroupRouteForm(BootstrapModelForm):

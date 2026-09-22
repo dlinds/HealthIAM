@@ -24,6 +24,7 @@ from apps.catalog.models import AccessLevel, Application
 from apps.core.demo import data as demo
 from apps.core.demo import mirror
 from apps.directory import reconcile, references
+from apps.directory.matching import classify_account, parse_kind_rules
 from apps.directory.models import ADGroup, ADGroupRoute, DirectoryAccount, DirectorySyncRun
 from apps.people.models import Person, PersonAccess, PersonName, PositionAssignment
 
@@ -176,6 +177,22 @@ def test_seed_demo_reference_statuses_cover_every_badge(db):
     # that anything is wrong, which is exactly why it has its own badge.
     broken = {level.ad_group_name for level, _status, _group in references.broken_references()}
     assert broken == {"APP_UKG_EMPLOYEE", "APP_EPIC_RESEARCH"}
+
+
+def test_seed_demo_classifies_the_service_account_by_the_demo_rule(db):
+    """svc-scanner is seeded the way a sync under the demo kind rules would write it, and
+    the rule the demo settings carry really does match it."""
+    seed()
+    svc = DirectoryAccount.objects.get(sam_account_name="svc-scanner")
+    assert svc.kind == DirectoryAccount.Kind.SERVICE
+    assert svc.kind_source == DirectoryAccount.KindSource.RULE
+    rules = parse_kind_rules(demo.ACCOUNT_KIND_PATTERNS)
+    assert classify_account(svc.sam_account_name, svc.distinguished_name, rules) == (
+        "service",
+        "svc-*",
+    )
+    staff = DirectoryAccount.objects.exclude(sam_account_name="svc-scanner")
+    assert set(staff.values_list("kind", "kind_source")) == {("user", "")}
 
 
 def test_seed_demo_routes_hold_the_vpn_groups(db):

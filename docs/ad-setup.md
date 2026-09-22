@@ -161,6 +161,7 @@ AD_GROUPS_EXCLUDE_PATTERNS=Domain *,Enterprise *,DnsAdmins,Protected Users,Key A
 | `AD_ACCOUNTS_SEARCH_BASES` | empty (off) | Semicolon-separated OU DNs holding user accounts to mirror and link to people. No fallback to the base DN. Section 13. |
 | `AD_ACCOUNTS_EXCLUDE_PATTERNS` | empty (none) | Comma-separated globs on the account name kept out of the mirror. |
 | `AD_EMPLOYEE_ID_ATTRIBUTE` | `employeeID` | The attribute carrying the HR employee ID that links an account to a person. `W009` warns when empty while accounts are mirrored. |
+| `AD_ACCOUNT_KIND_PATTERNS` | empty | Semicolon-separated `kind=glob` rules classifying mirrored accounts (service, admin, shared, unknown, user); first match wins. `W010` warns about a rule the sync ignores. Section 13. |
 
 Then run `python manage.py check`. The `directory.W00x` warnings are the AD configuration
 checks; they never stop the app from starting, so read them. **Admin → Active Directory**
@@ -561,9 +562,9 @@ AD_EMPLOYEE_ID_ATTRIBUTE=employeeID
 
 There is deliberately no fallback to the base DN: mirroring every account in the domain,
 computers' and service accounts' OUs included, has to be an explicit choice. Name the OUs
-that hold people, and keep service, admin and shared accounts out with the exclude patterns
-or classify them afterwards (**Kind** on the accounts page: user, admin, service, shared),
-which takes them off the *unlinked* worklist.
+that hold people, and either keep service, admin and shared accounts out with the exclude
+patterns or mirror them and classify them (next section), which takes them off the
+*unlinked* worklist while keeping them in view.
 
 ### What is mirrored
 
@@ -577,6 +578,34 @@ row; an account that stops being returned is marked *no longer in AD* (never del
 comes back when it reappears. The same guards as for groups apply: an empty listing while
 mirrored accounts exist fails the run, and so does a run that would deactivate more than half
 of a mirror of twenty or more.
+
+### Classifying accounts
+
+Every account has a **kind**: user (the default), admin account, service account, shared /
+generic, or unknown. The directory does not say what an account is for, so the kind comes
+from rules, or from an administrator:
+
+```
+AD_ACCOUNT_KIND_PATTERNS=service=svc-*;service=*,OU=Service Accounts,*;admin=*-adm;shared=ws-*
+```
+
+- Rules are `kind=glob`, separated by semicolons (a glob may contain commas). The glob is
+  matched, case-insensitively, against the account name **and** against its distinguished
+  name, so a naming convention (`svc-*`) and an OU (`*,OU=Service Accounts,*`) both work.
+- The first matching rule wins. A `user=` rule placed first exempts an account from a later
+  rule (`user=svc-realperson;service=svc-*`).
+- The rules are applied on every sync to every account nobody classified by hand, so a rule
+  added after the first sync takes effect on the next run, and an account no rule matches is
+  a plain user again. **Kind** on the accounts page shows *by rule*, *set by hand* or
+  *default: no rule matched* on hover.
+- An Admin sets the kind by hand from the accounts page (the kind badge opens a menu; a
+  reason is asked for and lands in the account's History). A hand-set kind always wins over
+  the rules; *Automatic (by rule)* in the same menu hands the account back to them, applied at
+  once.
+- Only accounts of kind *user* count as *linked to nobody*, so classifying the service, admin
+  and shared accounts is what makes that worklist a list of people.
+- Check `directory.W010` reports a rule the sync ignores: one without a glob, or naming a
+  kind that does not exist.
 
 ### Linking rules
 

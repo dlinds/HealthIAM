@@ -42,6 +42,32 @@ def excluded_by(name: str, patterns: Iterable[str]) -> bool:
     return bool(patterns) and matches_patterns(name, patterns)
 
 
+def parse_kind_rules(entries: Iterable[str]) -> tuple[tuple[str, str], ...]:
+    """`kind=glob` entries of `AD_ACCOUNT_KIND_PATTERNS` as `(kind, glob)` pairs, in order.
+
+    The kind is whatever precedes the first `=`, lower-cased; the glob is the rest, so a DN
+    pattern such as `*,OU=Service Accounts,*` keeps its own equals signs. Entries without a
+    glob are dropped here; a kind HealthIAM does not know is left for the sync to ignore and
+    for check W010 to report, because this module knows nothing about the model.
+    """
+    rules: list[tuple[str, str]] = []
+    for entry in entries:
+        kind, sep, glob = (entry or "").partition("=")
+        kind, glob = kind.strip().casefold(), glob.strip()
+        if sep and kind and glob:
+            rules.append((kind, glob))
+    return tuple(rules)
+
+
+def classify_account(sam: str, dn: str, rules: Iterable[tuple[str, str]]) -> tuple[str, str] | None:
+    """`(kind, glob)` of the first rule whose glob matches the account name or its DN, or
+    None when no rule matches. Case-insensitive, like every other pattern here."""
+    for kind, glob in rules:
+        if matches_patterns(sam, [glob]) or matches_patterns(dn, [glob]):
+            return kind, glob
+    return None
+
+
 def decode_group_type(value) -> tuple[str, str]:
     """Return `(scope, category)` for a raw groupType.
 

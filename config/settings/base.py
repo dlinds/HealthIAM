@@ -32,6 +32,7 @@ env = environ.Env(
     AD_GROUPS_EXCLUDE_PATTERNS=(list, []),
     AD_ACCOUNTS_SEARCH_BASES=(str, ""),
     AD_ACCOUNTS_EXCLUDE_PATTERNS=(list, []),
+    AD_ACCOUNT_KIND_PATTERNS=(str, ""),
     AD_EMPLOYEE_ID_ATTRIBUTE=(str, "employeeID"),
     AD_AUTH_ENABLED=(bool, False),
     AD_AUTH_TIMEOUT=(int, 60),
@@ -189,6 +190,12 @@ AD_ACCOUNTS_SEARCH_BASES = [
 # Globs on sAMAccountName that keep an account out of the mirror (service accounts, admin
 # accounts that follow a naming convention).
 AD_ACCOUNTS_EXCLUDE_PATTERNS = env("AD_ACCOUNTS_EXCLUDE_PATTERNS")
+# Rules that classify mirrored accounts by kind, `kind=glob` SEMICOLON separated because a
+# glob is matched against the account name *and* its DN, which holds commas. First match
+# wins. An account nobody classified by hand follows the rules; unmatched means a plain user.
+AD_ACCOUNT_KIND_PATTERNS = [
+    r.strip() for r in env("AD_ACCOUNT_KIND_PATTERNS").split(";") if r.strip()
+]
 # The AD attribute that carries the HR employee ID; the link between an account and a person.
 AD_EMPLOYEE_ID_ATTRIBUTE = env("AD_EMPLOYEE_ID_ATTRIBUTE")
 AD_ACCOUNTS_ENABLED = AD_ENABLED and bool(AD_ACCOUNTS_SEARCH_BASES)
