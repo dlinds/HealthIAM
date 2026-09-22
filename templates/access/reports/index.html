@@ -121,5 +121,33 @@
     </div>
   </div>
   {% endif %}
+  {% if ENTRA_ACCOUNTS_ENABLED %}
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-header"><i class="bi bi-person-badge me-1"></i>Entra accounts and guests</div>
+      <div class="card-body">
+        <p class="text-body-secondary small">Every account in the tenant with the person it belongs to. The guest worklists: accounts still enabled for people who have left or hold no position, guests nobody has been identified for, invitations never redeemed and guests who stopped signing in.</p>
+        <a class="btn btn-primary" href="{% url 'entra:account_list' %}?show=orphaned"><i class="bi bi-person-x me-1"></i>Enabled, person left</a>
+        <a class="btn btn-outline-primary" href="{% url 'entra:account_list' %}?show=unlinked_guests"><i class="bi bi-person-dash me-1"></i>Unlinked guests</a>
+        <a class="btn btn-outline-primary" href="{% url 'entra:account_list' %}?show=stale"><i class="bi bi-hourglass-split me-1"></i>Stale guests</a>
+        <a class="btn btn-outline-primary" href="{% url 'entra:account_list' %}?show=pending"><i class="bi bi-envelope me-1"></i>Pending invitations</a>
+        <a class="btn btn-outline-primary" href="{% url 'entra:account_list' %}?active=all&format=xlsx"><i class="bi bi-file-earmark-excel me-1"></i>Download all</a>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+  {% if ENTRA_ENABLED %}
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-header"><i class="bi bi-exclamation-triangle me-1"></i>Broken Entra references</div>
+      <div class="card-body">
+        <p class="text-body-secondary small">Access levels whose cloud group was not returned by the last Entra ID sync, or can no longer be granted by request, with the positions that receive them by default.</p>
+        <a class="btn btn-primary" href="{% url 'entra:broken_references' %}"><i class="bi bi-list-ul me-1"></i>View</a>
+        <a class="btn btn-outline-primary" href="{% url 'entra:broken_references' %}?format=xlsx"><i class="bi bi-file-earmark-excel me-1"></i>Download Excel</a>
+        <a class="btn btn-outline-primary" href="{% url 'entra:broken_references' %}?format=csv"><i class="bi bi-filetype-csv me-1"></i>Download CSV</a>
+      </div>
+    </div>
+  </div>
+  {% endif %}
 </div>
 {% endblock %}

@@ -38,3 +38,6 @@ if settings.OIDC_ENABLED:
 
 if settings.AD_ENABLED:
     urlpatterns += [path("", include("apps.directory.urls"))]
+
+if settings.ENTRA_ENABLED:
+    urlpatterns += [path("", include("apps.entra.urls"))]

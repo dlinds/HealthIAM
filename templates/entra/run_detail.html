@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}Entra ID sync #{{ run.pk }} · HealthIAM{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb">
+  <li class="breadcrumb-item"><a href="{% url 'entra:admin_index' %}">Entra ID</a></li>
+  <li class="breadcrumb-item"><a href="{% url 'entra:run_list' %}">Sync runs</a></li>
+  <li class="breadcrumb-item active">#{{ run.pk }}</li>
+</ol></nav>
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+  <div>
+    <h1 class="h3 mb-1">{{ run.scope_label }} sync #{{ run.pk }}</h1>
+    <div class="text-body-secondary small">
+      {{ run.get_trigger_display }} · started by {{ run.created_by.display_name|default:"scheduled job" }} on {{ run.created_at|date:"Y-m-d H:i" }}
+      {% if run.server %} · <span class="text-mono">{{ run.server }}</span>{% endif %}
+      {% if run.tenant_id %} · tenant {{ run.tenant_name|default:"" }} <span class="text-mono">{{ run.tenant_id }}</span>{% endif %}
+      {% if run.directory_sync_enabled %} · hybrid{% elif run.tenant_id %} · cloud-only{% endif %}
+      {% if run.user_group %} · user group {{ run.user_group }}{% endif %}
+    </div>
+  </div>
+  <div>
+    {% if run.is_applyable %}
+    <form method="post" action="{% url 'entra:run_apply' run.pk %}" onsubmit="return confirm('Apply this sync? The mirror and logins are changed as previewed. Changes are audited and reversible only by hand.');">{% csrf_token %}
+      <button class="btn btn-primary" type="submit"><i class="bi bi-check2-circle me-1"></i>Apply sync</button>
+    </form>
+    {% elif run.status == 'completed' %}<span class="badge text-bg-success fs-6">Completed {{ run.finished_at|date:"Y-m-d H:i" }}</span>
+    {% elif run.status == 'failed' %}<span class="badge text-bg-danger fs-6">Failed</span>
+    {% elif run.is_stale %}<span class="badge text-bg-warning fs-6">Abandoned (worker stopped)</span>
+    {% else %}<span class="badge text-bg-secondary fs-6">{{ run.get_status_display }}</span>{% endif %}
+  </div>
+</div>
+
+{% if run.error %}<div class="alert alert-danger"><strong>The run failed; nothing was written.</strong><div class="text-mono small mt-1">{{ run.error }}</div></div>{% endif %}
+{% if run.is_stale %}<div class="alert alert-warning">This run was still pending after {{ run.started_at|date:"Y-m-d H:i" }} and never recorded an outcome: the worker stopped (timeout or restart) while it was reading from Graph. Nothing was written. Start a new sync; if it happens again, raise the reverse-proxy and gunicorn timeouts or use the scheduled command.</div>{% endif %}
+{% if run.sign_in_activity %}<div class="alert alert-light border small"><i class="bi bi-info-circle me-1"></i><strong>Sign-in activity was not read.</strong> {{ run.sign_in_activity }} Accounts were mirrored without it; the stale-guest worklist ignores them until it can be read (Entra ID P1/P2 and AuditLog.Read.All).</div>{% endif %}
+
+{% for kind, s in parts %}
+<div class="d-flex align-items-center gap-2 mb-1"><span class="badge text-bg-dark text-capitalize">{{ kind }}</span><span class="small text-body-secondary">{{ s.read }} directory object{{ s.read|pluralize }} read{% if s.linked or s.unlinked or s.unmatched %} · {{ s.linked }} linked · {{ s.unlinked }} unlinked · {{ s.unmatched }} unmatched{% endif %}</span></div>
+<div class="row g-2 mb-3">
+  <div class="col-6 col-md-2 col-xl"><div class="card text-center"><div class="card-body py-2"><div class="fs-4">{{ s.created }}</div><div class="small text-body-secondary">Created</div></div></div></div>
+  <div class="col-6 col-md-2 col-xl"><div class="card text-center"><div class="card-body py-2"><div class="fs-4">{{ s.updated }}</div><div class="small text-body-secondary">Updated</div></div></div></div>
+  <div class="col-6 col-md-2 col-xl"><div class="card text-center"><div class="card-body py-2"><div class="fs-4">{{ s.reactivated }}</div><div class="small text-body-secondary">Reactivated</div></div></div></div>
+  <div class="col-6 col-md-2 col-xl"><div class="card text-center {% if s.deactivated %}border-warning{% endif %}"><div class="card-body py-2"><div class="fs-4">{{ s.deactivated }}</div><div class="small text-body-secondary">Deactivated</div></div></div></div>
+  <div class="col-6 col-md-2 col-xl"><div class="card text-center"><div class="card-body py-2"><div class="fs-4">{{ s.unchanged }}</div><div class="small text-body-secondary">Unchanged</div></div></div></div>
+  <div class="col-6 col-md-2 col-xl"><div class="card text-center {% if s.skipped %}border-warning{% endif %}"><div class="card-body py-2"><div class="fs-4">{{ s.skipped }}</div><div class="small text-body-secondary">Skipped</div></div></div></div>
+  <div class="col-6 col-md-2 col-xl"><div class="card text-center {% if s.errors %}border-danger{% endif %}"><div class="card-body py-2"><div class="fs-4">{{ s.errors }}</div><div class="small text-body-secondary">Errors</div></div></div></div>
+</div>
+{% endfor %}
+{% if run.is_applyable %}<p class="text-body-secondary small">This is a dry run: nothing has been written yet. Entries with errors are skipped when applied; the tenant is read again on apply, so the result can differ slightly if Entra ID changed in between.</p>{% endif %}
+
+{% if problems %}
+<div class="card mb-3 border-danger">
+  <div class="card-header text-danger">Entries with errors ({{ problems|length }})</div>
+  <div class="table-responsive"><table class="table table-sm mb-0">
+    <thead><tr><th>Kind</th><th>Row</th><th>Entry</th><th>Problem</th></tr></thead>
+    <tbody>{% for e in problems %}<tr><td class="text-capitalize">{{ e.kind }}</td><td>{{ e.row|default:"—" }}</td><td class="text-mono" title="Object ID {{ e.dn }}">{{ e.code }}</td><td>{{ e.message }}</td></tr>{% endfor %}</tbody>
+  </table></div>
+</div>
+{% endif %}
+
+<div class="card">
+  <div class="card-header">Changes ({{ changes|length }})</div>
+  <div class="table-responsive"><table class="table table-sm mb-0">
+    <thead><tr><th>Kind</th><th>Row</th><th>Entry</th><th>Action</th><th>Detail</th></tr></thead>
+    <tbody>
+    {% for e in changes %}
+      <tr><td class="text-capitalize">{{ e.kind }}</td><td>{{ e.row|default:"—" }}</td><td class="text-mono" title="Object ID {{ e.dn }}">{{ e.code }}</td>
+        <td><span class="badge {% if e.action == 'created' or e.action == 'linked' %}text-bg-success{% elif e.action == 'deactivated' or e.action == 'unlinked' %}text-bg-warning{% elif e.action == 'skipped' %}text-bg-secondary{% else %}text-bg-info{% endif %}">{{ e.action }}</span></td>
+        <td>{{ e.message }}</td></tr>
+    {% empty %}
+      <tr><td colspan="5" class="text-body-secondary">No changes.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+</div>
+{% endblock %}

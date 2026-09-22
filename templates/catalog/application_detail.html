@@ -26,7 +26,7 @@
 
 <ul class="nav nav-tabs" role="tablist" id="appTabs">
   <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-overview" type="button">Overview</button></li>
-  <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-levels" type="button">Access levels <span class="badge text-bg-secondary">{{ level_count }}</span>{% if broken_level_count %} <span class="badge text-bg-warning" title="{{ broken_level_count }} AD group reference{{ broken_level_count|pluralize }} not found or no longer returned by the sync"><i class="bi bi-exclamation-triangle-fill me-1"></i>{{ broken_level_count }}</span>{% endif %}</button></li>
+  <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-levels" type="button">Access levels <span class="badge text-bg-secondary">{{ level_count }}</span>{% if broken_level_count %} <span class="badge text-bg-warning" title="{{ broken_level_count }} broken group reference{{ broken_level_count|pluralize }}: not found, no longer returned by the sync, or no longer grantable"><i class="bi bi-exclamation-triangle-fill me-1"></i>{{ broken_level_count }}</span>{% endif %}</button></li>
   <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-positions" type="button">Positions{% if position_count is not None %} <span class="badge text-bg-secondary">{{ position_count }}</span>{% endif %}</button></li>
   <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-support" type="button">Contacts &amp; support</button></li>
   <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-history" type="button">History</button></li>

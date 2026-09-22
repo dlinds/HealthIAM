@@ -31,6 +31,31 @@
           <div class="form-text">Start typing to pick an imported AD group. Any name can be saved; groups outside the sync filter are kept as free text.</div>
           {% endif %}
         </div>
+        <div class="col-md-12" data-access-model="entra_group">
+          <div class="row g-2">
+            {% if ENTRA_ENABLED %}
+            <div class="col-md-12">
+              <label class="form-label" for="entra-group-search">Find a cloud group</label>
+              <input class="form-control" id="entra-group-search" type="search" name="entra_group_q" placeholder="Search Entra groups by name, nickname or object ID" autocomplete="off"
+                     hx-get="{% url 'entra:group_picker' %}" hx-trigger="focus once, input changed delay:250ms" hx-target="#entra-group-picker" hx-swap="innerHTML">
+              <div id="entra-group-picker" class="list-group list-group-flush small mt-1"></div>
+            </div>
+            {% endif %}
+            <div class="col-md-6">
+              <label class="form-label" for="{{ form.entra_group_id.id_for_label }}">Object ID</label>
+              {{ form.entra_group_id }}
+              {% for e in form.entra_group_id.errors %}<div class="invalid-feedback d-block">{{ e }}</div>{% endfor %}
+            </div>
+            <div class="col-md-6">
+              <label class="form-label" for="{{ form.entra_group_name.id_for_label }}">Group name</label>
+              {{ form.entra_group_name }}
+              {% for e in form.entra_group_name.errors %}<div class="invalid-feedback d-block">{{ e }}</div>{% endfor %}
+            </div>
+            <div class="col-12 form-text mt-0">
+              An assigned security or Microsoft 365 group mastered in the cloud. A group synchronized from Active Directory is an <em>AD group</em> level; dynamic and role-assignable groups cannot be granted by request.
+            </div>
+          </div>
+        </div>
         <div class="col-md-6" data-access-model="ticket">
           <label class="form-label" for="{{ form.ticket_assignment_team.id_for_label }}">Ticket assignment team</label>
           {{ form.ticket_assignment_team }}
@@ -73,6 +98,19 @@
         groupInput.value = pick.dataset.pickGroup;
         groupInput.dispatchEvent(new Event("input", { bubbles: true }));
         groupInput.focus();
+      });
+    }
+
+    var entraId = document.getElementById("{{ form.entra_group_id.id_for_label }}");
+    var entraName = document.getElementById("{{ form.entra_group_name.id_for_label }}");
+    var entraPicker = document.getElementById("entra-group-picker");
+    if (entraId && entraName && entraPicker) {
+      entraPicker.addEventListener("click", function (event) {
+        var pick = event.target.closest("[data-pick-entra-id]");
+        if (!pick) return;
+        entraId.value = pick.dataset.pickEntraId;
+        entraName.value = pick.dataset.pickEntraName;
+        entraPicker.innerHTML = "";
       });
     }
   })();

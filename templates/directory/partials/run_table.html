@@ -6,7 +6,7 @@
   {% for r in runs %}
     <tr>
       <td><a href="{{ r.get_absolute_url }}">{{ r.pk }}</a></td>
-      <td>{{ r.get_scope_display }}</td>
+      <td>{{ r.scope_label }}</td>
       <td>{{ r.get_trigger_display }}</td>
       <td>
         {% if r.status == 'completed' %}<span class="badge text-bg-success">{{ r.get_status_display }}</span>

@@ -99,15 +99,19 @@ at applications directly.
 |---|---|
 | `name` | Unique per application. |
 | `description` | |
-| `access_model` | `ad_group`, `in_app`, `ticket`, `other`. |
+| `access_model` | `ad_group`, `entra_group`, `in_app`, `ticket`, `other`. |
 | `ad_group_name` | Required for `ad_group`. |
+| `entra_group_id`, `entra_group_name` | For `entra_group`: the cloud group's object ID (required, indexed) and its display name, a label the form refreshes from the mirror. The ID is the reference, so a rename in the tenant breaks nothing. Only an assigned security or Microsoft 365 group mastered in the cloud is accepted (see *Entra ID*). |
 | `in_app_instructions` | Required for `in_app`. |
 | `ticket_assignment_team` | Required for `ticket`. |
 | `is_active`, `sort_order` | Inactive levels stay on existing defaults but cannot be added. |
 | `source` | `manual` (added by hand), `route` (created and owned by an AD group route), `adopted` (a routed level somebody took over). See *Route-managed access levels*. |
 
 Indexed on `Lower(ad_group_name)`: every broken-reference check and the "unreferenced
-groups" filter join this column to `ADGroup.name` case-insensitively.
+groups" filter join this column to `ADGroup.name` case-insensitively. An `entra_group` level
+joins `EntraGroup.object_id` instead, and an `ad_group` level whose group moved to the cloud is
+converted in place (`apps/entra/services.py`, `convert_level`): the same row, so its defaults
+and grants stay put.
 
 ### SupportTier
 Ordered escalation: `level` (1 = first line, unique per application), `name` (team),
@@ -161,6 +165,13 @@ belongs grants nobody anything, and the single-level form asks for none either. 
 that level to a position is the access-granting decision, and still requires one.
 Adoption is idempotent through the catalog itself — an adopted group is referenced, so it
 leaves the candidate list.
+
+A written-back AD group (`ADGroup.cloud_object_id`) is refused: it is the copy of a cloud
+group, which is what gets adopted, from **Entra groups → Add to catalog**
+(`apps/entra/services.py`, `adopt_groups`). That path follows the same rules -- per-row
+transactions, no reason, one claiming level per group -- and also refuses a group an
+`ad_group` level still names (its source of authority moved, or it is the original of a
+written-back copy): that level is converted instead, keeping its defaults.
 
 ## People (`apps/people`)
 
@@ -299,20 +310,22 @@ Person types themselves and their coordinators are Admin-only. HR imports stay A
 ## Accounts and roles (`apps/accounts`)
 
 `User` extends Django's user with `entra_object_id`, `job_title`, `department_name` and
-the fields the Active Directory sync fills:
+the fields the directory syncs fill:
 
 | Field | Notes |
 |---|---|
-| `entra_object_id` | Set on first Entra ID sign-in; unique. When set, Entra owns `email`, `first_name`, `last_name` (the AD sync fills blanks only). |
+| `entra_object_id` | Set on first Entra ID sign-in, or by the Entra login pass; unique. When set, Entra owns `email`, `first_name`, `last_name` (the AD sync fills blanks only). |
 | `job_title`, `department_name` | Filled from AD `title` / `department` by the sync. |
 | `ad_object_guid` | objectGUID of the AD account; unique, the sync's primary match key. A login whose GUID differs from the entry's is an error row when matched by UPN (re-created account: clear the field to re-link) and is skipped when matched by e-mail (the entry gets its own login). Admin-role and superuser logins are only linked by GUID, set by hand in Django admin. |
 | `ad_sam_account_name`, `ad_distinguished_name` | Copied from AD for display and troubleshooting. |
 | `ad_synced_at` | Last time the sync saw the account (bumped on quiet runs too). |
 | `ad_managed` | Set the first time the sync creates or links the login, never cleared. For these logins AD owns `is_active` (disabled or removed from `IAM-Users` → inactive, back → active) and guarantees the baseline role (`AD_BASELINE_ROLE`). Logins with `ad_managed=False` are never touched by the sync. |
+| `entra_managed`, `entra_synced_at` | The same for the Entra sync's login pass, when `DIRECTORY_LOGIN_SOURCE=entra`: Entra ID owns `is_active` (removed from `ENTRA_USER_GROUP` or sign-in blocked → inactive), the name, e-mail, title and department, and guarantees `ENTRA_BASELINE_ROLE`. `entra_synced_at` is when the sync last saw the account. |
 
-`User` is audited (django-auditlog) excluding `password`, `last_login`, `date_joined` and
-`ad_synced_at`, so profile, active-state and AD-link changes appear in History whether an
-admin or the sync made them.
+`User` is audited (django-auditlog) excluding `password`, `last_login`, `date_joined`,
+`ad_synced_at` and `entra_synced_at`, so profile, active-state and directory-link changes
+appear in History whether an admin or a sync made them. `apps/accounts/login_source.py`
+decides which directory hands out logins; the other one leaves them alone.
 
 | Role | How it is granted | Can |
 |---|---|---|
@@ -343,6 +356,8 @@ patterns. Membership is **not** imported. There is no foreign key from `AccessLe
 | `name` | sAMAccountName, indexed (also by `Lower(name)`); not unique on its own. |
 | `cn`, `description`, `distinguished_name`, `managed_by_dn`, `when_changed` | Copied from AD. |
 | `group_type` | Raw `groupType` bit field, decoded into `scope` (builtin_local / global / domain_local / universal / unknown) and `category` (security / distribution). |
+| `object_sid` | objectSid as a string (`S-1-5-21-...`), indexed. Entra ID reports the same SID for the copy Entra Connect synchronizes, which is how a group converted to the cloud is found when its name is gone. |
+| `cloud_object_id` | Set from group writeback's `Group_<objectId>` marker (`adminDescription` or `msDS-ExternalDirectoryObjectId`), indexed: this AD group is the copy of that cloud group, unless the Entra mirror says the ID is this group's own synchronized copy (`apps/directory/writeback.py`). A copy is refused as an `ad_group` level and never held by a route. |
 | `first_seen_at`, `last_seen_at` | Set on import; `last_seen_at` bumped on every run that returns the group. |
 | `is_active`, `inactivated_at` | Deactivated (never deleted) when a run does not return the group; reactivated when it reappears. |
 
@@ -466,6 +481,73 @@ by AD whether or not the password was right, so counting it would lock someone o
 application for typing the correct password. Not audited, like `DirectorySyncRun`; clear a
 lockout in Django admin.
 
+## Entra ID (`apps/entra`)
+
+A read-only mirror of the tenant, filled by the Graph sync (`manage.py sync_entra` or Admin →
+Entra ID): its groups, which `entra_group` access levels reference by object ID, and its
+accounts, linked to people. Present but empty when `ENTRA_SYNC_CLIENT_ID` is not set. The
+lifecycle is the directory's: keyed by object ID, deactivated and never deleted. Every row
+records the `tenant_id` it was read from, and a run refuses to mix two tenants. See
+`docs/entra-setup.md` Part 2.
+
+### EntraGroup
+One group the tenant returned whose display name passes the configured patterns. Membership
+is **not** imported.
+
+| Field | Notes |
+|---|---|
+| `object_id` | Unique. Renames update the same row. |
+| `display_name` (indexed, also by `Lower`), `description`, `mail`, `mail_nickname`, `created_in_entra_at` | Copied from Graph. |
+| `kind` | `security`, `mail_security`, `m365`, `distribution`, `other`: decoded from `mailEnabled`, `securityEnabled` and `groupTypes`. |
+| `membership`, `membership_rule` | `assigned` or `dynamic`, and the rule of a dynamic group. |
+| `is_assignable_to_role` | Its members can hold Entra admin roles. |
+| `source` | `cloud`, `synced` (`onPremisesSyncEnabled` true) or `converted` (not synchronized any more but still carrying an on-premises identity: its source of authority moved to the cloud). |
+| `on_premises_sam_account_name` (also indexed by `Lower`), `on_premises_security_identifier`, `on_premises_domain_name`, `on_premises_last_sync_at` | The AD original. Kept once seen, whatever Graph reports later: they are the only link from a converted group back to the AD group a level names. |
+| `first_seen_at`, `last_seen_at`, `is_active`, `inactivated_at`, `tenant_id` | As `ADGroup`. |
+
+`unsuitable_reason` says why a group cannot back a level: synced from AD (reference the AD
+group), not a security or Microsoft 365 group, dynamic, or role-assignable. Audited excluding
+`last_seen_at`.
+
+### EntraAccount
+One user in the tenant, members and guests alike (except UPNs matching
+`ENTRA_ACCOUNTS_EXCLUDE_PATTERNS`), with the lifecycle of `DirectoryAccount`.
+
+| Field | Notes |
+|---|---|
+| `object_id` | Unique. |
+| `upn` (indexed, also by `Lower`), `display_name`, `given_name`, `surname`, `mail`, `other_mails`, `job_title`, `department`, `company_name` | Copied from Graph. |
+| `employee_id` | From `ENTRA_EMPLOYEE_ID_ATTRIBUTE` (`employeeId`, an on-premises extension attribute or a schema extension); indexed. |
+| `user_type`, `creation_type`, `external_user_state`, `external_user_state_changed_at` | Graph's `userType`, `creationType` and invitation state. |
+| `source` | `synced`, `cloud`, `converted` (cloud member that was synced), `guest`, `external` (a member who signs in with another organization's identity). Indexed. |
+| `identity_provider` | Issuer of the identity an external account signs in with: `ExternalAzureAD`, `MicrosoftAccount`, `mail`, `google.com`, or a SAML/WS-Fed partner's domain. |
+| `account_enabled`, `created_in_entra_at` | |
+| `last_sign_in_at`, `last_non_interactive_sign_in_at`, `last_successful_sign_in_at`, `last_activity_at` (indexed), `sign_in_activity_known` | From `signInActivity` when the sync could read it (P1/P2 and `AuditLog.Read.All`); `last_activity_at` is the latest of the three. When a run cannot read it the timestamps stay and `sign_in_activity_known` turns false, so the stale-guest worklist stops trusting them. |
+| `on_premises_immutable_id`, `on_premises_object_guid` (indexed), `on_premises_security_identifier`, `on_premises_sam_account_name`, `on_premises_domain_name` | The AD original, kept once seen. `on_premises_object_guid` is decoded from the immutable ID and meets `DirectoryAccount.object_guid`. |
+| `kind` | `user` / `admin` / `service` / `shared` / `unknown`, set by hand, as on `DirectoryAccount`. |
+| `person`, `link_method`, `linked_at` | `SET_NULL` link to `people.Person` (`related_name="entra_accounts"`). `employee_id` or `email` (the sync) or `manual` (the accounts page, or Create person); a `manual` row is never touched by the sync. |
+| `first_seen_at`, `last_seen_at`, `is_active`, `inactivated_at`, `tenant_id` | As `EntraGroup`. |
+
+Audited excluding `last_seen_at` and the sign-in columns, so a quiet run writes no history; a
+link or unlink stamps `person_id` and appears on the person's History tab with the reason.
+`apps/entra/worklists.py` holds the one definition of each worklist the pages and the
+dashboard count.
+
+### EntraSyncRun
+One sync against the tenant, the Graph sibling of `DirectorySyncRun`: preview and apply share
+the row, and the same `scope`, `status`, `trigger`, `created_by`, `started_at`, `finished_at`,
+`summary` (`users`, `groups`, `accounts` parts, `null` for a pass that did not run), `log` and
+`error` fields. `server` is the Graph host. On top, a snapshot of what the run read:
+
+| Field | Notes |
+|---|---|
+| `tenant_id`, `tenant_name` | The tenant that answered. |
+| `directory_sync_enabled`, `directory_last_sync_at` | Whether the tenant synchronizes from on-premises AD -- hybrid or cloud-only -- and when it last did. |
+| `user_group` | Display name of `ENTRA_USER_GROUP`, when the run had a login pass. |
+| `sign_in_activity` | Why sign-in activity could not be read, if it could not. |
+
+Not audited, like `DirectorySyncRun`.
+
 ## Audit log
 
 django-auditlog records create / update / delete for every model above. Entries carry
@@ -480,7 +562,8 @@ including deletions.
 
 - **AD group membership**: `ADGroup` is keyed by objectGUID and carries the DN, and
   `DirectoryAccount` carries each account's DN, so a membership import (a `member` list per
-  group, or per-account `memberOf`) can attach to both without changing their rows.
+  group, or per-account `memberOf`) can attach to both without changing their rows. The same
+  holds for `EntraGroup` and `EntraAccount` by object ID (`/groups/{id}/members`).
 - **Actual vs expected access**: with membership imported, comparing the groups of a
   person's linked accounts against the `ad_group` levels of their expected access gives the
   "who has access they should not" report; the broken-reference report already uses the same

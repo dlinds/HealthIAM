@@ -58,6 +58,13 @@ GROUP_ATTRIBUTES = [
     "groupType",
     "managedBy",
     "whenChanged",
+    # Pair the group with Entra ID: the SID is what Entra reports as onPremisesSecurityIdentifier
+    # for a group it synchronizes; the other two are where group writeback (Cloud Sync's
+    # provisioning to AD, Connect Sync's group writeback) stamps `Group_<objectId>` on the AD
+    # copy of a cloud group.
+    "objectSid",
+    "msDS-ExternalDirectoryObjectId",
+    "adminDescription",
 ]
 
 GROUP_FILTER = "(objectCategory=group)"
@@ -177,6 +184,9 @@ class DirectoryGroup:
     group_type: int = 0
     managed_by: str = ""
     when_changed: datetime | None = None
+    sid: str = ""
+    #: The Entra ID group this AD group was written back from, per its writeback marker.
+    cloud_object_id: uuid.UUID | None = None
 
 
 @dataclass
@@ -365,6 +375,43 @@ def parse_user_entry(entry: dict, *, employee_id_attribute: str = "employeeID") 
     )
 
 
+def parse_sid(value) -> str:
+    """A binary objectSid as its string form, `S-1-5-21-...`; "" when it is not one.
+
+    Revision byte, sub-authority count, a 48-bit big-endian identifier authority, then the
+    sub-authorities as 32-bit little-endian integers -- the form Entra ID reports as
+    `onPremisesSecurityIdentifier`.
+    """
+    if isinstance(value, str):
+        return value if value.upper().startswith("S-") else ""
+    if not isinstance(value, bytes) or len(value) < 8:
+        return ""
+    revision, count = value[0], value[1]
+    if len(value) != 8 + 4 * count:
+        return ""
+    authority = int.from_bytes(value[2:8], "big")
+    subs = [int.from_bytes(value[8 + 4 * i : 12 + 4 * i], "little") for i in range(count)]
+    return "-".join(["S", str(revision), str(authority), *(str(sub) for sub in subs)])
+
+
+_WRITEBACK_MARKER = re.compile(r"^Group_([0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12})$")
+
+
+def parse_cloud_object_id(raw: dict) -> uuid.UUID | None:
+    """The Entra group a written-back AD group came from, or None.
+
+    Cloud Sync writes `Group_<objectId>` to both adminDescription and
+    msDS-ExternalDirectoryObjectId when it provisions a cloud group to AD; Connect Sync's group
+    writeback uses adminDescription. adminDescription is read first: nothing but writeback puts
+    `Group_` there, since Connect Sync's own inbound rules skip such objects to avoid a loop.
+    """
+    for key in ("adminDescription", "msDS-ExternalDirectoryObjectId"):
+        match = _WRITEBACK_MARKER.match(_text(raw, key, 64))
+        if match:
+            return uuid.UUID(match.group(1))
+    return None
+
+
 def parse_group_entry(entry: dict) -> DirectoryGroup:
     raw = _raw(entry)
     dn = _text(raw, "distinguishedName", MAX_DN) or str(entry.get("dn") or "")[:MAX_DN]
@@ -377,6 +424,8 @@ def parse_group_entry(entry: dict) -> DirectoryGroup:
         group_type=_int(raw, "groupType"),
         managed_by=_text(raw, "managedBy", MAX_DN),
         when_changed=parse_generalized_time(_first(raw, "whenChanged")),
+        sid=parse_sid(_first(raw, "objectSid")),
+        cloud_object_id=parse_cloud_object_id(raw),
     )
 
 

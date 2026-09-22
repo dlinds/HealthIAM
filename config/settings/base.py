@@ -38,6 +38,26 @@ env = environ.Env(
     AD_AUTH_MAX_FAILURES=(int, 3),
     AD_AUTH_FAILURE_WINDOW=(int, 1800),
     AD_AUTH_LOCKOUT_SECONDS=(int, 1800),
+    ENTRA_SYNC_CLIENT_ID=(str, ""),
+    ENTRA_SYNC_CLIENT_SECRET=(str, ""),
+    ENTRA_SYNC_CERTIFICATE=(str, ""),
+    ENTRA_SYNC_CERTIFICATE_PASSWORD=(str, ""),
+    ENTRA_AUTHORITY_HOST=(str, "https://login.microsoftonline.com"),
+    ENTRA_GRAPH_ENDPOINT=(str, "https://graph.microsoft.com"),
+    ENTRA_VALIDATE_AUTHORITY=(bool, True),
+    ENTRA_TIMEOUT=(int, 30),
+    ENTRA_GROUPS_NAME_PATTERNS=(list, []),
+    ENTRA_GROUPS_EXCLUDE_PATTERNS=(list, []),
+    ENTRA_ACCOUNTS_ENABLED=(bool, True),
+    ENTRA_ACCOUNTS_EXCLUDE_PATTERNS=(list, []),
+    ENTRA_EMPLOYEE_ID_ATTRIBUTE=(str, "employeeId"),
+    ENTRA_SIGN_IN_ACTIVITY=(bool, True),
+    ENTRA_GUEST_STALE_DAYS=(int, 90),
+    ENTRA_GUEST_PENDING_DAYS=(int, 30),
+    ENTRA_USER_GROUP=(str, ""),
+    ENTRA_BASELINE_ROLE=(str, "Help Desk"),
+    ENTRA_SYNC_SCHEDULE_COMMAND=(str, ""),
+    DIRECTORY_LOGIN_SOURCE=(str, ""),
 )
 environ.Env.read_env(BASE_DIR / ".env")
 
@@ -65,6 +85,7 @@ INSTALLED_APPS = [
     "apps.access",
     "apps.people",
     "apps.directory",
+    "apps.entra",
 ]
 
 MIDDLEWARE = [
@@ -212,6 +233,64 @@ if AD_AUTH_ENABLED:
     # Last, so a local account is answered by ModelBackend without a network call.
     AUTHENTICATION_BACKENDS.append("apps.directory.auth.ActiveDirectoryBackend")
 
+# --- Microsoft Entra ID (Microsoft Graph) ------------------------------------------
+# Read-only directory sync over Microsoft Graph, alongside (or instead of) the LDAPS one: the
+# tenant's cloud groups feed the catalog as "Entra group" access levels, and its accounts --
+# members, guests and external members -- are mirrored and linked to people. It signs in as an
+# application (client credentials) with its own registration, separate from the SSO one above
+# unless you choose to reuse it; see docs/entra-setup.md. ENTRA_TENANT_ID is shared with SSO.
+# Leave ENTRA_SYNC_CLIENT_ID empty to disable the integration entirely -- except in
+# development, where with ENTRA_TENANT_ID empty too config/settings/dev.py substitutes a
+# synthetic demo tenant.
+ENTRA_SYNC_CLIENT_ID = env("ENTRA_SYNC_CLIENT_ID")
+ENTRA_ENABLED = bool(ENTRA_TENANT_ID and ENTRA_SYNC_CLIENT_ID)
+# One of the two credentials. A certificate is preferred (docs/entra-setup.md): a .pem holding
+# the private key and its certificate, or a .pfx/.p12 file, with an optional password.
+ENTRA_SYNC_CLIENT_SECRET = env("ENTRA_SYNC_CLIENT_SECRET")
+ENTRA_SYNC_CERTIFICATE = env("ENTRA_SYNC_CERTIFICATE")
+ENTRA_SYNC_CERTIFICATE_PASSWORD = env("ENTRA_SYNC_CERTIFICATE_PASSWORD")
+# National clouds use other hosts (docs/entra-setup.md). No trailing slash.
+ENTRA_AUTHORITY_HOST = env("ENTRA_AUTHORITY_HOST").rstrip("/")
+ENTRA_GRAPH_ENDPOINT = env("ENTRA_GRAPH_ENDPOINT").rstrip("/")
+# Before a token request MSAL asks login.microsoftonline.com whether ENTRA_AUTHORITY_HOST is a
+# Microsoft sign-in host, unless it already knows the host (the public and the US Government and
+# China clouds). False skips that check: only for an air-gapped cloud that cannot reach the
+# public one, since the check is what stops a mistyped host from receiving the credential.
+ENTRA_VALIDATE_AUTHORITY = env("ENTRA_VALIDATE_AUTHORITY")
+ENTRA_TIMEOUT = env("ENTRA_TIMEOUT")
+# fnmatch globs on the group's display name, the AD_GROUPS_* syntax. Empty = every group;
+# excludes win over includes. Teams-backed Microsoft 365 groups are the usual thing to exclude.
+ENTRA_GROUPS_NAME_PATTERNS = env("ENTRA_GROUPS_NAME_PATTERNS")
+ENTRA_GROUPS_EXCLUDE_PATTERNS = env("ENTRA_GROUPS_EXCLUDE_PATTERNS")
+# The account mirror: every user in the tenant -- members synced from AD, cloud-only members,
+# guests and external members -- tagged by where it comes from and linked to people. On by
+# default whenever the sync is; apps.entra.config.EntraSettings combines the two at runtime.
+ENTRA_ACCOUNTS_ENABLED = env("ENTRA_ACCOUNTS_ENABLED")
+# Globs on userPrincipalName that keep an account out of the mirror (service accounts).
+ENTRA_ACCOUNTS_EXCLUDE_PATTERNS = env("ENTRA_ACCOUNTS_EXCLUDE_PATTERNS")
+# Where the HR employee ID lives on a user: employeeId, an on-premises extension attribute
+# (onPremisesExtensionAttributes.extensionAttribute1..15) or a directory schema extension
+# (extension_<appid>_<name>). Empty = link by e-mail (guests) and by hand only.
+ENTRA_EMPLOYEE_ID_ATTRIBUTE = env("ENTRA_EMPLOYEE_ID_ATTRIBUTE")
+# Last sign-in per account needs Entra ID P1/P2 and AuditLog.Read.All; without them the sync
+# carries on without it. False stops asking.
+ENTRA_SIGN_IN_ACTIVITY = env("ENTRA_SIGN_IN_ACTIVITY")
+# Guest worklists: no sign-in for this many days; an invitation unredeemed for this many.
+ENTRA_GUEST_STALE_DAYS = env("ENTRA_GUEST_STALE_DAYS")
+ENTRA_GUEST_PENDING_DAYS = env("ENTRA_GUEST_PENDING_DAYS")
+# The scheduled-sync line shown on Admin > Entra ID; see SYNC_SCHEDULE_COMMAND.
+ENTRA_SYNC_SCHEDULE_COMMAND = env("ENTRA_SYNC_SCHEDULE_COMMAND")
+
+# --- Where logins come from ------------------------------------------------------------
+# One directory owns who has a HealthIAM login: members of its user group get one with the
+# baseline role and lose it when they leave the group or are disabled. "ad" is AD_USER_GROUP
+# over LDAPS; "entra" is ENTRA_USER_GROUP (a group object ID) over Graph. Empty picks AD when
+# it is configured and Entra otherwise, so an existing AD deployment is unchanged. Resolved at
+# runtime by apps.accounts.login_source, since dev.py and test.py change AD_ENABLED after this.
+DIRECTORY_LOGIN_SOURCE = env("DIRECTORY_LOGIN_SOURCE").strip().lower()
+ENTRA_USER_GROUP = env("ENTRA_USER_GROUP").strip()
+ENTRA_BASELINE_ROLE = env("ENTRA_BASELINE_ROLE")
+
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
     {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
@@ -273,6 +352,9 @@ LOGGING = {
         "django.request": {"level": "WARNING"},
         "mozilla_django_oidc": {"level": "INFO"},
         "apps.directory": {"level": "INFO"},
+        "apps.entra": {"level": "INFO"},
+        # MSAL logs token requests at INFO; the sync's own log lines say what matters.
+        "msal": {"level": "WARNING"},
     },
 }
 

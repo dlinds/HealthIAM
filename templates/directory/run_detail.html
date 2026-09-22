@@ -8,7 +8,7 @@
 </ol></nav>
 <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
   <div>
-    <h1 class="h3 mb-1">{{ run.get_scope_display }} sync #{{ run.pk }}</h1>
+    <h1 class="h3 mb-1">{{ run.scope_label }} sync #{{ run.pk }}</h1>
     <div class="text-body-secondary small">
       {{ run.get_trigger_display }} · started by {{ run.created_by.display_name|default:"scheduled job" }} on {{ run.created_at|date:"Y-m-d H:i" }}
       {% if run.server %} · server <span class="text-mono">{{ run.server }}</span>{% endif %}

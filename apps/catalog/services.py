@@ -84,6 +84,13 @@ def adopt_group(
         where = f"{existing.application.name} \u00b7 {existing.name}"
         raise ValidationError({"ad_group_name": f"Already referenced by {where}"})
 
+    # Imported here: apps.directory imports this module for the adopt page.
+    from apps.directory import writeback
+
+    refusal = writeback.refusal(group_name)
+    if refusal:
+        raise ValidationError({"ad_group_name": refusal})
+
     held = _route_held(group_name, application)
     if held is not None:
         # Adopting a group the application already holds by route takes that very row over

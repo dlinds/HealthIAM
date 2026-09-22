@@ -197,6 +197,13 @@ class PersonListView(PermissionCheckMixin, ListView):
         return ctx
 
 
+def _entra_accounts(user, person) -> list:
+    accounts = list(person.entra_accounts.order_by("upn", "pk"))
+    for account in accounts:
+        account.can_unlink = perms.can_link_entra_account(user, account)
+    return accounts
+
+
 def _detail_context(request, person):
     user = request.user
     assignments = list(
@@ -232,8 +239,9 @@ def _detail_context(request, person):
         "past_access": list(
             person.access_grants.ended().select_related("access_level__application")[:20]
         ),
-        # The reverse accessor from apps.directory; this app never imports it.
+        # The reverse accessors from apps.directory and apps.entra; this app imports neither.
         "accounts": list(person.directory_accounts.order_by("sam_account_name", "pk")),
+        "entra_accounts": _entra_accounts(user, person),
         "can_edit": perms.can_edit_person(user, person),
         "can_add": perms.can_manage_people(user),
         "expiring_days": EXPIRING_DAYS,

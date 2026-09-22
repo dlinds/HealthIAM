@@ -165,6 +165,7 @@ def _level_search(user, q, *, taken_ids=(), limit=APP_LIMIT):
             | Q(aliases__alias__icontains=q)
             | Q(access_levels__name__icontains=q)
             | Q(access_levels__ad_group_name__icontains=q)
+            | Q(access_levels__entra_group_name__icontains=q)
         ).distinct()
     if not perms.is_admin(user):
         apps_qs = apps_qs.filter(analyst_assignments__user=user).distinct()
@@ -177,7 +178,9 @@ def _level_search(user, q, *, taken_ids=(), limit=APP_LIMIT):
             matching = [
                 lvl
                 for lvl in levels
-                if q.lower() in lvl.name.lower() or q.lower() in lvl.ad_group_name.lower()
+                if q.lower() in lvl.name.lower()
+                or q.lower() in lvl.ad_group_name.lower()
+                or q.lower() in lvl.entra_group_name.lower()
             ]
             if matching:
                 levels = matching

@@ -37,8 +37,9 @@ Create the datasets (replace `tank` with your pool):
 - `tank/apps/healthiam/pgdata` — database
 - `tank/apps/healthiam/media` — uploaded CSV import files
 - `tank/apps/healthiam/certs` — only with the Active Directory sync and an
-  internal CA: holds the CA bundle PEM (`internal-ca.pem`) that the container
-  mounts read-only at `/certs/internal-ca.pem`
+  internal CA, or the Entra ID sync with a certificate: holds the CA bundle PEM
+  (`internal-ca.pem`) and the Entra sync's key and certificate
+  (`healthiam-sync.pem`), each mounted read-only under `/certs/`
 
 The web container runs as uid 568, the same uid as the TrueNAS apps user, so
 give it the media dataset:
@@ -57,6 +58,17 @@ chmod 644 /mnt/tank/apps/healthiam/certs/internal-ca.pem
 A bundle the app user cannot read fails every LDAPS connection with a
 certificate error, and `manage.py check` reports `directory.W004` when the path
 does not exist inside the container.
+
+The Entra sync's `healthiam-sync.pem` is the opposite: it holds a private key, so
+it belongs to uid 568 and nobody else may read it (`docs/entra-setup.md`
+section 9 creates it):
+
+```sh
+chown 568:568 /mnt/tank/apps/healthiam/certs/healthiam-sync.pem
+chmod 600 /mnt/tank/apps/healthiam/certs/healthiam-sync.pem
+```
+
+`entra.W002` reports a path that does not exist inside the container.
 
 Leave `pgdata` alone. The Postgres image starts as root and chowns its data
 directory to its own internal user, so setting that one to 568 gets undone on
@@ -122,14 +134,16 @@ docker exec -it ix-healthiam-web-1 python manage.py seed_demo
 The container runs `config.settings.prod`, which never substitutes the demo directory the
 way development does, so the seeded AD groups and the Active Directory pages stay hidden
 until the `AD_*` block in the YAML is filled in. To browse them without a domain controller,
-copy the demo block from the end of the Active Directory section of `.env.example`. Never
-seed demo data on an instance pointed at a real directory: the synthetic groups and logins
-are not in it, so the next sync deactivates them.
+copy the demo block from the end of the Active Directory section of `.env.example`; the
+demo Entra ID tenant has a block at the end of the Entra ID section. Never seed demo data on
+an instance pointed at a real directory: the synthetic groups and logins are not in it, so
+the next sync deactivates them (and the Entra sync refuses to run over the demo tenant until
+its rows are deleted).
 
-## Scheduling the AD sync
+## Scheduling the directory syncs
 
 Skip this section unless the `AD_*` block in the YAML is filled in
-(`docs/ad-setup.md`). The sync is a management command inside the web
+(`docs/ad-setup.md`), or the Entra ID one (`docs/entra-setup.md`). The sync is a management command inside the web
 container, so it runs from the host with `docker exec`. TrueNAS has a cron
 scheduler built in: System > Advanced > Cron Jobs > Add.
 
@@ -153,6 +167,16 @@ is listed under Admin > Active Directory, and the Schedule card there shows the
 same command. Do the first sync from that page (Preview, then Apply) before
 enabling the cron job.
 
+The Entra ID sync is a second cron job of the same shape, a little later so the
+two do not overlap:
+
+```sh
+docker exec ix-healthiam-web-1 python manage.py sync_entra >/dev/null
+```
+
+for example at `30 2 * * *`, with `--groups-only`, `--accounts-only` and
+`--users-only` to limit it. Its runs are listed under Admin > Entra ID.
+
 ## Upgrading
 
 1. Cut a release as above.
@@ -173,7 +197,8 @@ Leave `SECURE_SSL_REDIRECT` false: the proxy already serves HTTPS and sets
 `X-Forwarded-Proto`, which the app trusts via `SECURE_PROXY_SSL_HEADER`.
 
 With the AD sync enabled, **Sync now** under Admin > Active Directory reads the
-whole directory inside one request. The container's gunicorn allows 120 s per
+whole directory inside one request, and so does **Sync now** under Admin > Entra ID
+for the tenant. The container's gunicorn allows 120 s per
 request, but most proxies cut an upstream off after 60 s (Nginx Proxy Manager:
 Advanced > `proxy_read_timeout 180s;`; Caddy: `reverse_proxy` with
 `transport http { response_header_timeout 180s }`). Raise the proxy's upstream
@@ -209,3 +234,12 @@ well as the catalog, so it is the record of who changed what.
   `directory.W004`), or a URI in `AD_SERVER_URIS` uses an IP address or a short
   name instead of the FQDN on the certificate. Verification is never disabled;
   fix the bundle or the name.
+- **Entra sync fails with `invalid_client` and `AADSTS7000222`** — the client
+  secret expired. Create a new one, or better a certificate
+  (`docs/entra-setup.md` section 9), and Save the YAML.
+- **Entra sync fails with HTTP 403 `Authorization_RequestDenied`** — a permission
+  is missing or admin consent was never granted. **Test connection** under
+  Admin > Entra ID names the missing permission.
+- **Entra sync cannot reach `login.microsoftonline.com` or `graph.microsoft.com`**
+  — the NAS needs outbound HTTPS to both. Behind a proxy, set `HTTPS_PROXY` in
+  the YAML's environment; the sync honours it.

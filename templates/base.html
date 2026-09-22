@@ -46,6 +46,7 @@
             <li><a class="dropdown-item" href="{% url 'orgs:import_list' %}">HR imports</a></li>
             <li><a class="dropdown-item" href="{% url 'people:type_list' %}">People types &amp; coordinators</a></li>
             {% if AD_ENABLED and iam.can_manage_directory %}<li><a class="dropdown-item" href="{% url 'directory:admin_index' %}">Active Directory</a></li>{% endif %}
+            {% if ENTRA_ENABLED and iam.can_manage_entra %}<li><a class="dropdown-item" href="{% url 'entra:admin_index' %}">Entra ID</a></li>{% endif %}
             <li><a class="dropdown-item" href="{% url 'admin:index' %}">Django admin</a></li>
           </ul>
         </li>

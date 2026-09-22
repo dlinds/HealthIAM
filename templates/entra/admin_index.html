@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+{% block title %}Entra ID · HealthIAM{% endblock %}
+{% block content %}
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+  <h1 class="h3 mb-0">Entra ID</h1>
+  <div>
+    <a class="btn btn-outline-secondary" href="{% url 'entra:group_list' %}"><i class="bi bi-collection me-1"></i>Entra groups</a>
+    {% if config.accounts_enabled %}<a class="btn btn-outline-secondary" href="{% url 'entra:account_list' %}"><i class="bi bi-person-badge me-1"></i>Entra accounts</a>{% endif %}
+    <a class="btn btn-outline-secondary" href="{% url 'entra:broken_references' %}"><i class="bi bi-exclamation-triangle me-1"></i>Broken references</a>
+    <a class="btn btn-outline-secondary" href="{% url 'entra:conversions' %}"><i class="bi bi-arrow-left-right me-1"></i>Conversions{% if conversion_count %} <span class="badge text-bg-info">{{ conversion_count }}</span>{% endif %}</a>
+  </div>
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-header">Effective configuration</div>
+      <div class="card-body small">
+        {% for w in check_warnings %}
+        <div class="alert alert-warning py-2"><strong>{{ w.id }}</strong> {{ w.msg }}{% if w.hint %}<div class="mt-1">{{ w.hint }}</div>{% endif %}</div>
+        {% endfor %}
+        <dl class="row mb-0">
+          <dt class="col-sm-4">Tenant</dt><dd class="col-sm-8 text-mono">{{ config.tenant }}</dd>
+          <dt class="col-sm-4">Application</dt><dd class="col-sm-8 text-mono">{{ config.client_id }}</dd>
+          <dt class="col-sm-4">Credential</dt>
+          <dd class="col-sm-8">
+            {% if config.credential == 'certificate' %}<span class="badge text-bg-success">certificate</span> <span class="text-mono">{{ config.certificate }}</span>{% if config.certificate_password_set %} (password set){% endif %}
+            {% elif config.credential == 'secret' %}<span class="badge text-bg-success">client secret</span> <span class="text-body-secondary">set; a certificate is preferred</span>
+            {% else %}<span class="badge text-bg-warning">none</span>{% endif %}
+          </dd>
+          <dt class="col-sm-4">Endpoints</dt><dd class="col-sm-8"><div class="text-mono">{{ config.authority_host }}{% if not config.validate_authority %} <span class="badge text-bg-warning" title="ENTRA_VALIDATE_AUTHORITY is off: MSAL does not check that this is a Microsoft sign-in host">not validated</span>{% endif %}</div><div class="text-mono">{{ config.graph_endpoint }}</div></dd>
+          <dt class="col-sm-4">Timeout</dt><dd class="col-sm-8">{{ config.timeout }} s</dd>
+          <dt class="col-sm-4">Group name patterns</dt><dd class="col-sm-8">{% if config.group_name_patterns %}<span class="text-mono">{{ config.group_name_patterns|join:", " }}</span>{% else %}<span class="text-body-secondary">every group in the tenant</span>{% endif %}</dd>
+          <dt class="col-sm-4">Excluded patterns</dt><dd class="col-sm-8">{% if config.group_exclude_patterns %}<span class="text-mono">{{ config.group_exclude_patterns|join:", " }}</span>{% else %}<span class="text-body-secondary">none</span>{% endif %}</dd>
+          <dt class="col-sm-4">Account mirror</dt>
+          <dd class="col-sm-8">
+            {% if config.accounts_enabled %}<span class="badge text-bg-success">on</span> every account in the tenant
+            {% if config.account_exclude_patterns %}<div>excluding <span class="text-mono">{{ config.account_exclude_patterns|join:", " }}</span></div>{% endif %}
+            <div>linked to people by {% if config.employee_id_attribute %}<span class="text-mono">{{ config.employee_id_attribute }}</span>{% if not config.employee_id_readable %} <span class="badge text-bg-warning">not readable</span>{% endif %}{% else %}hand only{% endif %}, guests also by e-mail</div>
+            {% else %}<span class="badge text-bg-secondary">off</span> &mdash; <span class="text-mono">ENTRA_ACCOUNTS_ENABLED</span> is false{% endif %}
+          </dd>
+          <dt class="col-sm-4">Sign-in activity</dt>
+          <dd class="col-sm-8">{% if config.sign_in_activity %}read (needs Entra ID P1/P2 and AuditLog.Read.All){% else %}<span class="text-body-secondary">not read</span>{% endif %}</dd>
+          <dt class="col-sm-4">Guest worklists</dt>
+          <dd class="col-sm-8">no sign-in for {{ config.guest_stale_days }} days &middot; invitation pending {{ config.guest_pending_days }} days</dd>
+          <dt class="col-sm-4">Logins</dt>
+          <dd class="col-sm-8">
+            {% if config.login_sync %}<span class="badge text-bg-success">from Entra ID</span> members of <span class="text-mono">{{ config.user_group }}</span> get a login with {{ config.baseline_role }}
+            {% elif login_source %}from {{ login_source }}{% if login_source == 'Entra ID' %} &mdash; no <span class="text-mono">ENTRA_USER_GROUP</span>, so a login appears at first sign-in{% endif %}
+            {% else %}<span class="text-body-secondary">at first sign-in only</span>{% endif %}
+          </dd>
+        </dl>
+        <p class="text-body-secondary mb-0 mt-2">Set through <span class="text-mono">ENTRA_*</span> environment variables; see docs/entra-setup.md. The client secret and the certificate password are never shown.</p>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-6">
+    <div class="card mb-3">
+      <div class="card-header">Architecture</div>
+      <div class="card-body small">
+        {% if architecture.known %}
+        <div class="fw-semibold">{{ architecture.label }}</div>
+        <p class="mb-2">{{ architecture.detail }}</p>
+        <dl class="row mb-0">
+          <dt class="col-sm-4">Tenant</dt><dd class="col-sm-8">{{ architecture.tenant_name|default:"—" }} <span class="text-mono text-body-secondary">{{ architecture.tenant_id }}</span></dd>
+          {% if architecture.hybrid %}<dt class="col-sm-4">Last directory sync</dt><dd class="col-sm-8">{{ architecture.last_directory_sync|date:"Y-m-d H:i"|default:"—" }}</dd>{% endif %}
+          <dt class="col-sm-4">As of</dt><dd class="col-sm-8">the sync run of {{ architecture.as_of|date:"Y-m-d H:i" }}</dd>
+        </dl>
+        {% else %}
+        <p class="text-body-secondary mb-0">Not known until a sync has completed: the tenant says whether it synchronizes from on-premises Active Directory.{% if architecture.ad %} HealthIAM also reads AD over LDAPS here.{% endif %}</p>
+        {% endif %}
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header">Status</div>
+      <div class="card-body small">
+        <dl class="row mb-0">
+          <dt class="col-sm-4">Last run</dt>
+          <dd class="col-sm-8">
+            {% if last_run %}<a href="{{ last_run.get_absolute_url }}">#{{ last_run.pk }}</a> · {{ last_run.scope_label|lower }} · {{ last_run.get_status_display|lower }} · {{ last_run.created_at|date:"Y-m-d H:i" }}{% if last_run.created_by %} by {{ last_run.created_by.display_name }}{% endif %}
+            {% else %}<span class="text-body-secondary">never</span>{% endif %}
+          </dd>
+          <dt class="col-sm-4">Entra groups</dt><dd class="col-sm-8"><a href="{% url 'entra:group_list' %}">{{ groups_active }} active</a> · {{ groups_inactive }} gone</dd>
+          {% if config.accounts_enabled or accounts_active or accounts_inactive %}
+          <dt class="col-sm-4">Entra accounts</dt>
+          <dd class="col-sm-8">
+            <a href="{% url 'entra:account_list' %}">{{ accounts_active }} in Entra ID</a> · {{ accounts_inactive }} gone
+            <div class="text-body-secondary">{% for value, n, text in accounts_by_source %}<a class="text-reset" href="{% url 'entra:account_list' %}?source={{ value }}">{{ n }} {{ text }}</a>{% if not forloop.last %} · {% endif %}{% endfor %}</div>
+          </dd>
+          <dt class="col-sm-4">Worklists</dt>
+          <dd class="col-sm-8">
+            {% if worklists.orphaned %}<div><a class="text-danger" href="{% url 'entra:account_list' %}?show=orphaned">{{ worklists.orphaned }} enabled for people who left or hold no position</a></div>{% endif %}
+            {% if worklists.unlinked_guests %}<div><a href="{% url 'entra:account_list' %}?show=unlinked_guests">{{ worklists.unlinked_guests }} guest{{ worklists.unlinked_guests|pluralize }} linked to nobody</a></div>{% endif %}
+            {% if worklists.pending %}<div><a href="{% url 'entra:account_list' %}?show=pending">{{ worklists.pending }} invitation{{ worklists.pending|pluralize }} pending over {{ config.guest_pending_days }} days</a></div>{% endif %}
+            {% if worklists.stale %}<div><a href="{% url 'entra:account_list' %}?show=stale">{{ worklists.stale }} guest{{ worklists.stale|pluralize }} not signed in for {{ config.guest_stale_days }} days</a></div>{% endif %}
+            {% if worklists.unlinked %}<div><a href="{% url 'entra:account_list' %}?show=unlinked">{{ worklists.unlinked }} member{{ worklists.unlinked|pluralize }} linked to nobody</a></div>{% endif %}
+            {% if not worklists.orphaned and not worklists.unlinked_guests and not worklists.pending and not worklists.stale and not worklists.unlinked %}<span class="text-body-secondary">nothing to work</span>{% endif %}
+          </dd>
+          {% endif %}
+          {% if config.login_sync or managed_active or managed_inactive %}
+          <dt class="col-sm-4">Managed logins</dt><dd class="col-sm-8">{{ managed_active }} active · {{ managed_inactive }} inactive</dd>
+          {% endif %}
+          <dt class="col-sm-4">Broken references</dt>
+          <dd class="col-sm-8">
+            {% if broken_count is None %}<span class="text-body-secondary">not checked yet (no completed group sync)</span>
+            {% else %}<a href="{% url 'entra:broken_references' %}">{{ broken_count }} access level{{ broken_count|pluralize }}</a>{% endif %}
+          </dd>
+          <dt class="col-sm-4">To convert</dt>
+          <dd class="col-sm-8">{% if conversion_count %}<a href="{% url 'entra:conversions' %}">{{ conversion_count }} AD-group level{{ conversion_count|pluralize }} whose group is mastered in the cloud now</a>{% else %}<span class="text-body-secondary">none</span>{% endif %}</dd>
+        </dl>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-lg-4">
+    <div class="card h-100">
+      <div class="card-header">Sync now</div>
+      <div class="card-body">
+        <form method="post" action="{% url 'entra:sync_start' %}"
+              hx-post="{% url 'entra:sync_start' %}" hx-indicator="#sync-indicator" hx-disabled-elt="find button[type=submit]">
+          {% csrf_token %}
+          {% include "partials/form_fields.html" with form=form %}
+          <button class="btn btn-primary" type="submit">
+            <span id="sync-indicator" class="spinner-border spinner-border-sm htmx-indicator me-1" role="status" aria-hidden="true"></span><i class="bi bi-eye me-1"></i>Preview sync
+          </button>
+        </form>
+        <p class="text-body-secondary small mt-2 mb-0">A large tenant takes a while to list; the button stays disabled until the preview is ready.</p>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-4">
+    <div class="card h-100">
+      <div class="card-header">Test connection</div>
+      <div class="card-body">
+        <p class="text-body-secondary small">Gets a token, reads the tenant and lists the permissions the application holds{% if config.login_sync %}, and resolves the user group{% endif %}. Nothing is written.</p>
+        <button class="btn btn-outline-primary" type="button"
+                hx-post="{% url 'entra:connection_test' %}" hx-target="#connection-result" hx-swap="innerHTML"
+                hx-indicator="#test-indicator" hx-disabled-elt="this">
+          <span id="test-indicator" class="spinner-border spinner-border-sm htmx-indicator me-1" role="status" aria-hidden="true"></span><i class="bi bi-plug me-1"></i>Test connection
+        </button>
+        <div id="connection-result" class="mt-3"></div>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-4">
+    <div class="card h-100">
+      <div class="card-header">Schedule</div>
+      <div class="card-body small">
+        <p>Run the sync nightly from the host, with this deployment's scheduler:</p>
+        <pre class="bg-body-tertiary border rounded p-2 mb-2"><code>{{ schedule_command }}</code></pre>
+        <p class="mb-0 text-body-secondary">Add <span class="text-mono">--dry-run</span> to preview only, <span class="text-mono">--groups-only</span>, <span class="text-mono">--accounts-only</span> or <span class="text-mono">--users-only</span> to limit the scope. The exit code is non-zero when the run fails or any entry has an error. Every run is listed below.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header d-flex justify-content-between"><span>Recent sync runs</span><a class="small" href="{% url 'entra:run_list' %}">All runs</a></div>
+  {% include "directory/partials/run_table.html" with runs=runs %}
+</div>
+{% endblock %}

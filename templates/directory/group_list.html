@@ -63,6 +63,8 @@
     <tr>
       <td>
         <span class="text-mono">{{ g.name }}</span>
+        {% if g.is_written_back %}<span class="badge text-bg-info" title="Group writeback created this AD group from a cloud group; its membership is managed in Entra ID. Reference the cloud group, not this copy.">written back from Entra ID</span>
+          {% if g.cloud_group and ENTRA_ENABLED %}<div class="small">AD copy of <a href="{{ g.cloud_group.get_absolute_url }}">{{ g.cloud_group.display_name }}</a></div>{% endif %}{% endif %}
         {% if g.cn and g.cn != g.name %}<div class="small text-body-secondary">{{ g.cn }}</div>{% endif %}
         <div class="small text-body-tertiary text-truncate" style="max-width: 28rem" title="{{ g.distinguished_name }}">{{ g.distinguished_name }}</div>
       </td>

@@ -1,9 +1,17 @@
 """Local development settings."""
 
 from apps.core.demo import data as demo
+from apps.core.demo import entra_data as entra_demo
 
 from .base import *  # noqa: F401,F403
-from .base import AD_BASE_DN, AD_SERVER_URIS, AUTHENTICATION_BACKENDS, env
+from .base import (
+    AD_BASE_DN,
+    AD_SERVER_URIS,
+    AUTHENTICATION_BACKENDS,
+    ENTRA_SYNC_CLIENT_ID,
+    ENTRA_TENANT_ID,
+    env,
+)
 
 DEBUG = env("DEBUG", default=True)
 
@@ -49,3 +57,27 @@ if not AD_SERVER_URIS and not AD_BASE_DN and env.bool("AD_DEMO_DIRECTORY", defau
     AD_ACCOUNTS_SEARCH_BASES = [demo.STAFF_OU]
     AD_ACCOUNTS_EXCLUDE_PATTERNS = demo.ACCOUNT_EXCLUDE_PATTERNS
     AD_ACCOUNTS_ENABLED = True
+
+# --- Demo Entra ID tenant ------------------------------------------------------------------
+# The same fallback for the tenant that demo directory synchronizes to, which `seed_demo` writes
+# into the Entra mirror (apps/core/demo/entra_data.py): only when nothing at all is said about
+# the sync, and ENTRA_DEMO_TENANT=false turns it off. ENTRA_TENANT_ID is shared with SSO, but
+# OIDC_ENABLED was decided in base.py before this runs, so the demo tenant never switches SSO on.
+#
+# Nothing here reaches Microsoft, and no credential is sent. Both hosts are under .invalid, which
+# never resolves (a proxy, if one is set, is asked for them and refuses), and
+# ENTRA_VALIDATE_AUTHORITY is off so MSAL goes straight to them rather than first asking
+# login.microsoftonline.com about an authority it does not know. Test connection, Sync now and
+# `manage.py sync_entra` fail, as they do for the demo directory. Logins stay with Active
+# Directory: ENTRA_USER_GROUP is left empty, so DIRECTORY_LOGIN_SOURCE resolves to "ad".
+if not ENTRA_TENANT_ID and not ENTRA_SYNC_CLIENT_ID and env.bool("ENTRA_DEMO_TENANT", default=True):
+    ENTRA_TENANT_ID = str(entra_demo.TENANT_ID)
+    ENTRA_SYNC_CLIENT_ID = str(entra_demo.CLIENT_ID)
+    ENTRA_ENABLED = True
+    # A placeholder, as for the demo directory's bind: it keeps entra.W001 quiet.
+    ENTRA_SYNC_CLIENT_SECRET = entra_demo.CLIENT_SECRET
+    ENTRA_AUTHORITY_HOST = entra_demo.AUTHORITY_HOST
+    ENTRA_GRAPH_ENDPOINT = entra_demo.GRAPH_ENDPOINT
+    ENTRA_VALIDATE_AUTHORITY = False
+    ENTRA_GROUPS_NAME_PATTERNS = []
+    ENTRA_GROUPS_EXCLUDE_PATTERNS = entra_demo.GROUP_EXCLUDE_PATTERNS

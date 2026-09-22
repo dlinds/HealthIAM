@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}AD-group levels to convert · HealthIAM{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb">
+  {% if iam.can_manage_entra %}<li class="breadcrumb-item"><a href="{% url 'entra:admin_index' %}">Entra ID</a></li>{% endif %}
+  <li class="breadcrumb-item active">Conversions</li>
+</ol></nav>
+<h1 class="h3 mb-1">AD-group levels whose group lives in the cloud now</h1>
+<p class="text-body-secondary small">
+  Access levels that name an Active Directory group whose membership is managed in Entra ID today &mdash; because the group's source of authority moved to the cloud
+  (or directory synchronization was switched off), or because the AD group is the written-back copy of a cloud group. Converting one makes it an <em>Entra group</em>
+  level for that cloud group: the same row, so its position defaults and person grants stay exactly where they are. The reason is recorded on the application's History.
+</p>
+<div class="table-responsive">
+<table class="table table-hover table-sm align-middle">
+  <thead><tr><th>Application</th><th>Access level</th><th>AD group</th><th>Cloud group</th><th>Why</th><th style="width: 22rem"></th></tr></thead>
+  <tbody>
+  {% for row in rows %}
+    <tr>
+      <td><a href="{{ row.level.application.get_absolute_url }}">{{ row.level.application.name }}</a></td>
+      <td><a href="{{ row.level.get_absolute_url }}">{{ row.level.name }}</a>{% if not row.level.is_active %} <span class="badge text-bg-secondary">inactive level</span>{% endif %}</td>
+      <td class="text-mono">{{ row.level.ad_group_name }}</td>
+      <td>{{ row.group.display_name }}<div class="small text-body-tertiary text-mono">{{ row.group.object_id }}</div></td>
+      <td class="small">{% if row.group.source == 'converted' %}source of authority moved to the cloud{% else %}written back from this cloud group{% endif %}</td>
+      <td>
+        {% if row.can_convert %}
+        <form method="post" action="{% url 'entra:level_convert' row.level.pk %}" class="d-flex gap-1">
+          {% csrf_token %}
+          <input type="hidden" name="group" value="{{ row.group.object_id }}">
+          <input class="form-control form-control-sm" type="text" name="reason" placeholder="Reason" required minlength="3" maxlength="500">
+          <button class="btn btn-sm btn-primary text-nowrap" type="submit">Convert</button>
+        </form>
+        {% else %}<span class="small text-body-tertiary">an analyst for {{ row.level.application.name }} converts it</span>{% endif %}
+      </td>
+    </tr>
+  {% empty %}
+    <tr><td colspan="6" class="text-body-secondary">No AD-group level names a group that moved to the cloud.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endblock %}

@@ -58,6 +58,7 @@
       <div class="col-lg-4">
         {% include "people/partials/identifiers.html" %}
         {% if AD_ENABLED %}{% include "people/partials/directory_accounts.html" %}{% endif %}
+        {% if ENTRA_ENABLED %}{% include "people/partials/entra_accounts.html" %}{% endif %}
         {% if former_names %}
         <div class="card mb-3">
           <div class="card-header">Former names</div>

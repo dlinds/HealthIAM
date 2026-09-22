@@ -47,6 +47,17 @@ class ADGroup(TimeStampedModel):
     category = models.CharField(max_length=20, choices=Category.choices, default=Category.SECURITY)
     managed_by_dn = models.CharField("Managed by", max_length=1024, blank=True)
     when_changed = models.DateTimeField(null=True, blank=True)
+    # Pairing with Entra ID (apps.entra). The SID matches onPremisesSecurityIdentifier of the
+    # group's synchronized copy; cloud_object_id is set on a group that group writeback created
+    # from a cloud group, from the `Group_<objectId>` marker it stamps on it.
+    object_sid = models.CharField("objectSid", max_length=184, blank=True, db_index=True)
+    cloud_object_id = models.UUIDField(
+        "Written back from Entra group",
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="Object ID of the Entra ID group this AD group is the written-back copy of.",
+    )
     first_seen_at = models.DateTimeField()
     last_seen_at = models.DateTimeField()
     is_active = models.BooleanField(default=True)
@@ -298,6 +309,19 @@ class DirectorySyncRun(TimeStampedModel):
 
     def get_absolute_url(self):
         return reverse("directory:run_detail", args=[self.pk])
+
+    @property
+    def scope_label(self) -> str:
+        """The scope as run. A full sync is named for the passes it recorded -- a deployment
+        without an account search base, or whose logins come from Entra ID, has fewer than
+        three -- and, when it recorded none (it failed, or is still running), for the passes a
+        full sync has here now."""
+        if self.scope != self.Scope.ALL:
+            return self.get_scope_display()
+        from .config import PASSES, describe_passes, full_sync_passes
+
+        ran = [name for name in PASSES if (self.summary or {}).get(name) is not None]
+        return describe_passes(ran or full_sync_passes())
 
     @property
     def total_errors(self) -> int:

@@ -6,7 +6,8 @@ Position-based access defaults and application catalog for a healthcare organiza
   application **access levels** it receives by default.
 - The **application catalog** is the source of truth for every system: aliases, vendor,
   tier, lifecycle, PHI/PII/clinical/PCI flags, hosting, authentication, owners, escalation
-  tiers, vendor contacts, and how each access level is granted (AD group, in-app, ticket).
+  tiers, vendor contacts, and how each access level is granted (AD group, Entra ID group,
+  in-app, ticket).
 - **People** are the workforce: employees, providers, students, travelers, contractors and
   vendor staff, each holding one or more positions for a period. What a person should have is
   the defaults of the positions they hold today.
@@ -18,8 +19,8 @@ Position-based access defaults and application catalog for a healthcare organiza
 
 Python 3.11+ · Django 5.2 · PostgreSQL 16 · server-rendered templates + htmx ·
 Bootstrap 5 (vendored, no build step) · Entra ID SSO (OIDC) · optional on-prem AD sync
-(LDAPS via ldap3) · django-auditlog. Served by gunicorn in the container and by waitress
-on a native Windows install.
+(LDAPS via ldap3) · optional Entra ID sync (Microsoft Graph via MSAL) · django-auditlog.
+Served by gunicorn in the container and by waitress on a native Windows install.
 
 ## Quick start (local)
 
@@ -40,6 +41,13 @@ routes, reference badges and the reports. There is no fake LDAP server, so **Tes
 and **Sync now** fail against a host that does not exist; `python manage.py demo_ad drift`
 stands in for an overnight sync that found changes. See `docs/ad-setup.md` section 12.
 
+It writes the hybrid Entra ID tenant that directory synchronizes to as well, *Demo Health*:
+cloud groups behind access levels that are fine, deleted, never returned or made dynamic, a
+group whose source of authority moved to the cloud, a group written back to AD, and guests in
+every worklist. Development points the Entra settings at it the same way unless `.env` sets
+`ENTRA_TENANT_ID` or `ENTRA_SYNC_CLIENT_ID`; Test connection and Sync fail there too, without
+reaching Microsoft or sending a credential. See `docs/entra-setup.md` section 17.
+
 Everything in one container instead:
 
 ```bash
@@ -55,7 +63,7 @@ docker compose exec web python manage.py seed_demo
 | **Analyst** | Assignment on an application | Edit that application, its access levels, and add/remove its levels on any position |
 | **Application Owner** | Contact linked to a login, named as business or technical owner | Edit that application's descriptive, contact and support fields |
 | **Coordinator** | Assignment on a person type (Admin → People types) | Create people and organizations; add, extend and end position assignments of that type |
-| **Help Desk** | `Help Desk` group; also the baseline every login created by the AD sync is guaranteed (`AD_BASELINE_ROLE`) | Read-only: look up positions and applications, run reports |
+| **Help Desk** | `Help Desk` group; also the baseline every login a directory sync creates is guaranteed (`AD_BASELINE_ROLE`, `ENTRA_BASELINE_ROLE`) | Read-only: look up positions and applications, run reports |
 | **Auditor** | `Auditor` group | Read-only plus full change history and exports |
 
 Signed-in users with no role see a "no access" page. Authorization rules live in one place:
@@ -81,9 +89,17 @@ All settings are read from the environment (or `.env`); see `.env.example`.
 | `AD_ACCOUNTS_SEARCH_BASES`, `AD_ACCOUNTS_EXCLUDE_PATTERNS`, `AD_EMPLOYEE_ID_ATTRIBUTE` | OUs whose user accounts are mirrored and linked to people by the employee ID in that attribute (`employeeID`); empty bases = no account mirror |
 | `AD_AUTH_ENABLED`, `AD_AUTH_TIMEOUT` | Let synced people sign in with their AD password (LDAPS bind); seconds to wait for the bind (60, long enough for a step-up approval) |
 | `AD_AUTH_MAX_FAILURES`, `AD_AUTH_FAILURE_WINDOW`, `AD_AUTH_LOCKOUT_SECONDS` | Wrong passwords per login inside the window before attempts stop reaching AD, and for how long. Keep under the domain's own lockout policy; `0` disables |
+| `ENTRA_SYNC_CLIENT_ID` | With `ENTRA_TENANT_ID`, turns on the read-only Entra ID sync over Microsoft Graph, with its own app registration. Development falls back to the seeded demo tenant when neither is set. See `docs/entra-setup.md` Part 2 |
+| `ENTRA_DEMO_TENANT` | `false` turns that development fallback off, leaving the Entra sync disabled |
+| `ENTRA_SYNC_CERTIFICATE`, `ENTRA_SYNC_CERTIFICATE_PASSWORD`, `ENTRA_SYNC_CLIENT_SECRET` | The sync's credential: a `.pem` (key + certificate) or `.pfx`, preferred, or a client secret |
+| `ENTRA_AUTHORITY_HOST`, `ENTRA_GRAPH_ENDPOINT`, `ENTRA_VALIDATE_AUTHORITY`, `ENTRA_TIMEOUT` | National clouds; whether MSAL validates an unknown sign-in host (`true`); seconds per request (30) |
+| `ENTRA_GROUPS_NAME_PATTERNS`, `ENTRA_GROUPS_EXCLUDE_PATTERNS` | Comma-separated globs on the display name selecting the groups to mirror and reference-check |
+| `ENTRA_ACCOUNTS_ENABLED`, `ENTRA_ACCOUNTS_EXCLUDE_PATTERNS`, `ENTRA_EMPLOYEE_ID_ATTRIBUTE` | The account mirror (on), UPN globs kept out of it, and where the HR employee ID lives (`employeeId`) |
+| `ENTRA_SIGN_IN_ACTIVITY`, `ENTRA_GUEST_STALE_DAYS`, `ENTRA_GUEST_PENDING_DAYS` | Read last sign-in (needs P1/P2 and `AuditLog.Read.All`); days before a guest counts as stale (90) or an invitation as pending too long (30) |
+| `DIRECTORY_LOGIN_SOURCE`, `ENTRA_USER_GROUP`, `ENTRA_BASELINE_ROLE` | Which directory hands out logins (`ad`/`entra`; empty = AD when configured); with `entra`, the object ID of the login group and the role its members are guaranteed (`Help Desk`) |
 | `SUPPORT_CONTACT` | Shown on the no-access page |
 | `LOG_FILE` | Empty (the default) logs to the console. A path sends logging to that rotating file instead -- needed by the Windows service, which has no console |
-| `SYNC_SCHEDULE_COMMAND` | Overrides the scheduled-sync command shown on Admin → Active Directory, for deployments where the container's `docker exec` line is wrong |
+| `SYNC_SCHEDULE_COMMAND`, `ENTRA_SYNC_SCHEDULE_COMMAND` | Override the scheduled-sync command shown on Admin → Active Directory and Admin → Entra ID, for deployments where the container's `docker exec` line is wrong |
 | `DJANGO_SETTINGS_MODULE` | `config.settings.dev` (default for `manage.py`) or `config.settings.prod` |
 
 ## Day-to-day
@@ -137,6 +153,22 @@ All settings are read from the environment (or `.env`); see `.env.example`.
   sign in with their AD password, verified by an LDAPS bind. `manage.py demo_ad` drifts the
   seeded demo directory so a demo can show the catalog noticing a rename, a group that
   disappeared and one that arrived. See `docs/ad-setup.md`.
+- **Entra ID** (on by default in development against the seeded demo tenant; configured with
+  `ENTRA_SYNC_CLIENT_ID` elsewhere): the **Entra groups** page lists the tenant's groups with
+  where each comes from (cloud, synced from AD, converted to cloud) and who references it;
+  assigned cloud security and Microsoft 365 groups become **Entra group** access levels through
+  the access-level form's picker or **Add to catalog**, and positions carry them by default
+  like any other. Each level shows an *In Entra ID* badge or why it is broken, and the
+  dashboard and Reports list the broken ones. In a hybrid tenant, groups synced from AD stay
+  AD-group levels, **Conversions** turns the level of a group whose source of authority moved
+  to the cloud (or an AD copy made by group writeback) into an Entra-group level without
+  losing its defaults, and without LDAPS the AD-group levels are checked through Entra ID. The
+  **Entra accounts** page mirrors every account in the tenant -- members, guests and external
+  members -- linked to people by employee ID, by e-mail for guests, or by hand, with the guest
+  worklists: enabled for someone who left, linked to nobody (**Create person…**), invitations
+  pending too long, not signed in lately. With `DIRECTORY_LOGIN_SOURCE=entra` one Entra group
+  hands out logins instead of `IAM-Users`. **Admin → Entra ID** and `manage.py sync_entra`
+  preview, apply and schedule it. See `docs/entra-setup.md`.
 - **History**: Admin/Auditor see every change with actor, before/after and reason; every
   application and position page shows its own history.
 
@@ -153,7 +185,7 @@ Project layout:
 
 ```
 config/          settings (base/dev/prod/test), urls, wsgi
-apps/accounts    User, roles, permissions, Entra OIDC backend, role middleware
+apps/accounts    User, roles, permissions, Entra OIDC backend, role middleware, login_source
 apps/orgs        Department, JobCode, Position, CSV importers, ImportBatch
 apps/catalog     Vendor, Contact, Application, AccessLevel, SupportTier, analysts,
                  services (bulk adoption of AD groups)
@@ -163,9 +195,13 @@ apps/people      PersonType (+ coordinators), ExternalOrganization, Person, Pers
                  writes, expected access), importers (HR people feed), reports,
                  bootstrap_person_types
 apps/directory   ADGroup, ADGroupRoute, DirectoryAccount, DirectorySyncRun, LDAPS client,
-                 sync engine (groups, logins, accounts + linking), routing, sync_ad, AD pages
+                 sync engine (groups, logins, accounts + linking), routing, group writeback
+                 pairing, sync_ad, AD pages
+apps/entra       EntraGroup, EntraAccount, EntraSyncRun, Graph client (MSAL), sync engine
+                 (groups, accounts + linking, logins), reference badges and conversions,
+                 guest worklists, sync_entra, Entra pages
 apps/core        base layout, dashboard, global search, audit history views,
-                 demo/ (the synthetic directory seed_demo and demo_ad write)
+                 demo/ (the synthetic directory and tenant seed_demo and demo_ad write)
 templates/       Django templates; partials/ for htmx fragments
 static/          app.css, app.js, vendored Bootstrap / Icons / htmx
 docs/            data-model.md, entra-setup.md, ad-setup.md, import-format.md,
@@ -183,6 +219,7 @@ tests/           pytest suite with factories
   `deploy/windows/Install-HealthIAM.ps1` sets up the virtual environment, the database
   and a Windows service running waitress, and `Setup-IIS.ps1` puts IIS in front for TLS.
   The usual choice when HealthIAM sits beside the domain controllers it syncs from.
+  `Register-SyncTask.ps1` schedules `sync_ad` and, with `-Command sync_entra`, the Entra sync.
 - `Dockerfile` runs `collectstatic` (whitenoise) and starts gunicorn; the entrypoint
   applies migrations and creates the role groups and the default person types.
 - The people tables use PostgreSQL exclusion constraints, so the first migration installs the

@@ -11,6 +11,9 @@ from dataclasses import dataclass, field
 
 from django.conf import settings
 
+#: The passes a full sync can have, by their key in `DirectorySyncRun.summary`.
+PASSES = ("users", "groups", "accounts")
+
 
 @dataclass(frozen=True)
 class DirectorySettings:
@@ -81,3 +84,25 @@ class DirectorySettings:
             "employee_id_attribute": self.employee_id_attribute,
             "accounts_enabled": self.accounts_enabled,
         }
+
+
+def full_sync_passes() -> list[str]:
+    """The passes a full sync runs in this deployment: no users pass when logins come from
+    Entra ID, no accounts pass without an account search base."""
+    from apps.accounts import login_source
+
+    offered = {
+        "users": login_source.ad_manages_logins(),
+        "groups": True,
+        "accounts": DirectorySettings.from_settings().accounts_enabled,
+    }
+    return [name for name in PASSES if offered[name]]
+
+
+def describe_passes(names) -> str:
+    """["users", "groups", "accounts"] -> "Users, groups and accounts"."""
+    names = list(names)
+    if not names:
+        return ""
+    joined = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+    return joined[:1].upper() + joined[1:]

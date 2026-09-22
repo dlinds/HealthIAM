@@ -32,6 +32,19 @@ class User(AbstractUser):
         default=False,
         help_text="Created or linked by the AD sync: IAM-Users membership controls the account.",
     )
+    # Filled by the Entra ID sync (apps.entra) when DIRECTORY_LOGIN_SOURCE is "entra": the same
+    # contract as ad_managed, with ENTRA_USER_GROUP in place of IAM-Users. Never cleared.
+    entra_managed = models.BooleanField(
+        "Managed by Entra ID",
+        default=False,
+        help_text="Created or linked by the Entra ID sync: its user group controls the account.",
+    )
+    entra_synced_at = models.DateTimeField("Last Entra ID sync", null=True, blank=True)
+
+    @property
+    def directory_managed(self) -> bool:
+        """A directory sync owns this login's active state and baseline role."""
+        return self.ad_managed or self.entra_managed
 
     class Meta:
         ordering = ["username"]

@@ -37,6 +37,7 @@
         <td class="small">
           <span class="badge text-bg-light border">{{ r.access_level.get_access_model_display }}</span>
           {% if r.access_level.access_model == 'ad_group' %}<span class="text-mono">{{ r.access_level.ad_group_name }}</span>
+          {% elif r.access_level.access_model == 'entra_group' %}{{ r.access_level.entra_group_name|default:r.access_level.entra_group_id }}
           {% elif r.access_level.access_model == 'ticket' %}{{ r.access_level.ticket_assignment_team }}
           {% elif r.access_level.access_model == 'in_app' %}{{ r.access_level.in_app_instructions|truncatechars:100 }}{% endif %}
         </td>

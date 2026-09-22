@@ -17,6 +17,13 @@
             {% if form.hr_owned %}This person comes from the <strong>HR feed</strong>: the fields it owns are shown but cannot be edited here; the next import would put them back.{% endif %}
           </p>
         {% else %}
+          {% if source_account %}
+          <div class="alert alert-info small">
+            <i class="bi bi-person-badge me-1"></i>Creating the person behind the {{ source_account.get_source_display|lower }} account
+            <span class="text-mono">{{ source_account.mail|default:source_account.upn }}</span>{% if source_account.identity_provider_label %} ({{ source_account.identity_provider_label }}){% endif %}.
+            The account is linked to them when you save, and the link survives every later sync.
+          </div>
+          {% endif %}
           <p class="text-body-secondary small">A person is created together with their first position assignment. Pick the type first: it decides whether an end date, a sponsor or an organization is required.</p>
         {% endif %}
         <form method="post">
@@ -63,7 +70,7 @@
           <h2 class="h6 text-uppercase text-body-secondary mt-4">Reason</h2>
           {% include "people/partials/field.html" with field=form.reason %}
           <button class="btn btn-primary" type="submit">Save</button>
-          <a class="btn btn-link" href="{% if person %}{{ person.get_absolute_url }}{% else %}{% url 'people:person_list' %}{% endif %}">Cancel</a>
+          <a class="btn btn-link" href="{% if person %}{{ person.get_absolute_url }}{% elif source_account %}{{ source_account.get_absolute_url }}{% else %}{% url 'people:person_list' %}{% endif %}">Cancel</a>
         </form>
       </div>
     </div>

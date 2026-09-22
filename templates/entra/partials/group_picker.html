@@ -1,0 +1,14 @@
+{% for g in results %}
+{% if g.is_assignable %}
+<button type="button" class="list-group-item list-group-item-action d-flex justify-content-between align-items-center gap-2 py-1" data-pick-entra-id="{{ g.object_id }}" data-pick-entra-name="{{ g.display_name }}">
+  <span class="text-truncate">{{ g.display_name }}{% if g.description %} <span class="text-body-secondary">· {{ g.description|truncatechars:70 }}</span>{% endif %}</span>
+  <span class="badge text-bg-light border text-nowrap">{{ g.get_kind_display }}</span>
+</button>
+{% else %}
+<div class="list-group-item py-1 text-body-tertiary" title="{{ g.unsuitable_reason }}">
+  <span class="text-truncate">{{ g.display_name }}</span> <span class="small">&mdash; {{ g.unsuitable_reason }}</span>
+</div>
+{% endif %}
+{% empty %}
+<div class="list-group-item text-body-secondary py-1">No mirrored group matches. Paste the object ID of a group outside the sync filter instead.</div>
+{% endfor %}

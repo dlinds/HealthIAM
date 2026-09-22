@@ -22,10 +22,11 @@ from django.contrib.auth.models import Group
 from django.contrib.auth.validators import UnicodeUsernameValidator
 from django.core.exceptions import ValidationError
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 from django.views.decorators.debug import sensitive_variables
 
-from apps.accounts import roles
+from apps.accounts import login_source, roles
 from apps.accounts.models import User
 from apps.orgs.importers import ImportResult
 from apps.people.models import Person
@@ -183,6 +184,15 @@ def run_sync(
 
     try:
         cfg = DirectorySettings.from_settings()
+        if users_scope and not login_source.ad_manages_logins():
+            # Entra ID owns logins in this deployment (DIRECTORY_LOGIN_SOURCE); two directories
+            # deciding who is active would undo each other every night.
+            if run.scope == DirectorySyncRun.Scope.USERS:
+                raise DirectoryError(
+                    "Logins come from Entra ID in this deployment (DIRECTORY_LOGIN_SOURCE="
+                    f"{login_source.effective() or 'entra'}); the AD sync leaves them alone."
+                )
+            users_scope = False
         if accounts_scope and not cfg.accounts_enabled:
             if run.scope == DirectorySyncRun.Scope.ACCOUNTS:
                 raise DirectoryError(
@@ -208,7 +218,7 @@ def run_sync(
         # Guards: an empty listing while managed rows exist is a directory problem, not a
         # mass departure.
         if users_scope and not members:
-            managed = User.objects.filter(ad_managed=True, is_active=True).count()
+            managed = managed_logins().count()
             if managed:
                 raise DirectoryError(
                     f"{cfg.user_group} returned no members; refusing to deactivate "
@@ -357,6 +367,12 @@ def _reconcile_after_sync(run: DirectorySyncRun, groups_result: SyncResult | Non
 
 
 # --- Users ---------------------------------------------------------------------------
+
+
+def managed_logins():
+    """Logins the users pass answers for: its own, and those the Entra ID sync handed out while
+    that was this deployment's login source -- nothing else would ever deactivate them."""
+    return User.objects.filter(Q(ad_managed=True) | Q(entra_managed=True), is_active=True)
 
 
 class _UserSync:
@@ -605,11 +621,7 @@ class _UserSync:
                 "userPrincipalName or mail could not be matched, so no login was deactivated.",
             )
             return
-        stale = (
-            User.objects.filter(ad_managed=True, is_active=True)
-            .exclude(pk__in=self.protected_ids)
-            .order_by("username")
-        )
+        stale = managed_logins().exclude(pk__in=self.protected_ids).order_by("username")
         for user in stale:
             user.is_active = False
             user.ad_synced_at = self.now
@@ -618,7 +630,10 @@ class _UserSync:
                 0,
                 user.username,
                 "deactivated",
-                f"No longer a member of {self.cfg.user_group}",
+                f"No longer a member of {self.cfg.user_group}"
+                if user.ad_managed
+                else f"Not a member of {self.cfg.user_group}: a login from Entra ID, and logins "
+                "come from Active Directory now",
                 dn=user.ad_distinguished_name,
             )
 
@@ -653,6 +668,8 @@ GROUP_FIELDS = (
     "category",
     "managed_by_dn",
     "when_changed",
+    "object_sid",
+    "cloud_object_id",
 )
 MISSING_GROUP_MESSAGE = (
     "Not returned by the group search (deleted, moved outside the search bases, or renamed "
@@ -671,6 +688,8 @@ def _group_values(group: DirectoryGroup) -> dict:
         "category": category,
         "managed_by_dn": group.managed_by,
         "when_changed": group.when_changed,
+        "object_sid": group.sid,
+        "cloud_object_id": group.cloud_object_id,
     }
 
 

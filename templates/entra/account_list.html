@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}Entra accounts · HealthIAM{% endblock %}
+{% block content %}
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+  <h1 class="h3 mb-0">Entra accounts</h1>
+  <div>
+    <a class="btn btn-outline-primary" href="?{{ request.GET.urlencode }}&format=xlsx"><i class="bi bi-file-earmark-excel me-1"></i>Excel</a>
+    <a class="btn btn-outline-primary" href="?{{ request.GET.urlencode }}&format=csv"><i class="bi bi-filetype-csv me-1"></i>CSV</a>
+  </div>
+</div>
+{% if not accounts_enabled %}
+<div class="alert alert-light border small"><i class="bi bi-info-circle me-1"></i>The account mirror is off: <span class="text-mono">ENTRA_ACCOUNTS_ENABLED</span> is false. See docs/entra-setup.md.</div>
+{% endif %}
+<p class="text-body-secondary small">
+  Every user in the tenant: members synchronized from AD, cloud members, guests and external members, each linked to the person it belongs to &mdash; by employee ID,
+  by e-mail for guests, or by hand. A guest is worth tracking because its engagement ends and the account does not: the worklists below find those.
+</p>
+<form class="row g-2 mb-3 js-autosubmit" method="get">
+  <div class="col-md-3"><input class="form-control" type="search" name="q" value="{{ q }}" placeholder="UPN, name, e-mail, company, employee ID"></div>
+  <div class="col-md-3">
+    <select class="form-select" name="show">
+      {% for value, label in show_choices %}<option value="{{ value }}" {% if show == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="col-md-2">
+    <select class="form-select" name="source">
+      <option value="">Any source</option>
+      {% for value, label in sources %}<option value="{{ value }}" {% if source == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="col-md-2">
+    <select class="form-select" name="active">
+      <option value="1" {% if active == '1' %}selected{% endif %}>In Entra ID</option>
+      <option value="0" {% if active == '0' %}selected{% endif %}>No longer in Entra ID</option>
+      <option value="all" {% if active == 'all' %}selected{% endif %}>All</option>
+    </select>
+  </div>
+  {% if person_id %}<input type="hidden" name="person" value="{{ person_id }}">{% endif %}
+  <div class="col-auto"><button class="btn btn-outline-secondary" type="submit">Filter</button></div>
+</form>
+{% if show == 'stale' %}<div class="alert alert-light border small py-2">Guests and external members with no sign-in in the last {{ stale_days }} days, or none at all since being created that long ago. Accounts whose sign-in activity the last sync could not read are left out rather than guessed at.</div>{% endif %}
+{% if show == 'pending' %}<div class="alert alert-light border small py-2">Invitations nobody has redeemed for more than {{ pending_days }} days.</div>{% endif %}
+{% if show == 'orphaned' %}<div class="alert alert-light border small py-2">Enabled accounts linked to a person who has left, or who holds no position today and has none coming up: the engagement ended, the account did not.</div>{% endif %}
+<div class="table-responsive">
+<table class="table table-hover table-sm align-middle">
+  <thead><tr><th>Account</th><th>Name</th><th>Source</th><th>State</th><th>Last sign-in</th><th>Person</th><th>Kind</th><th></th></tr></thead>
+  <tbody>
+  {% for a in object_list %}
+    <tr class="{% if not a.is_active %}text-body-tertiary{% endif %}">
+      <td>
+        <span class="text-mono small text-break">{{ a.upn }}</span>
+        {% if a.mail and a.mail|lower != a.upn|lower %}<div class="small text-body-secondary text-break">{{ a.mail }}</div>{% endif %}
+        {% if a.ad_account %}<div class="small"><a href="{{ a.ad_account.get_absolute_url }}">AD account {{ a.ad_account.sam_account_name }}</a></div>{% endif %}
+      </td>
+      <td>{{ a.name }}<div class="small text-body-secondary">{{ a.job_title }}{% if a.department %} · {{ a.department }}{% endif %}{% if a.company_name %} · {{ a.company_name }}{% endif %}</div></td>
+      <td class="small">
+        <span class="badge {% if a.is_external %}text-bg-info{% else %}text-bg-light border{% endif %}">{{ a.get_source_display }}</span>
+        {% if a.identity_provider_label %}<div class="text-body-secondary">{{ a.identity_provider_label }}</div>{% endif %}
+        {% if a.employee_id %}<div class="text-mono">{{ a.employee_id }}</div>{% endif %}
+      </td>
+      <td>
+        {% if not a.is_active %}<span class="badge text-bg-secondary">not in Entra ID</span>
+        {% elif a.is_pending %}<span class="badge text-bg-warning">invitation pending</span>{% if a.pending_since %}<div class="small text-body-secondary">since {{ a.pending_since|date:"Y-m-d" }}</div>{% endif %}
+        {% elif not a.account_enabled %}<span class="badge text-bg-secondary">sign-in blocked</span>
+        {% else %}<span class="badge text-bg-success">enabled</span>{% endif %}
+      </td>
+      <td class="text-nowrap small">
+        {% if not a.sign_in_activity_known %}<span class="text-body-tertiary" title="The last sync could not read sign-in activity">unknown</span>
+        {% elif a.last_activity_at %}{{ a.last_activity_at|date:"Y-m-d" }}
+        {% else %}<span class="text-body-secondary">never</span>{% endif %}
+      </td>
+      <td>
+        {% if a.person %}<a href="{{ a.person.get_absolute_url }}">{{ a.person.sort_name }}</a>{% if not a.person.is_active %} <span class="badge text-bg-danger">person inactive</span>{% endif %}<div class="small text-body-secondary">{{ a.get_link_method_display|lower }}</div>
+        {% elif a.unlinked_by_hand %}<span class="text-body-secondary">unlinked by hand</span>
+        {% elif a.employee_id %}<span class="badge text-bg-warning text-wrap">no person with this employee ID</span>
+        {% else %}<span class="text-body-tertiary">—</span>{% endif %}
+      </td>
+      <td>
+        {% if can_classify %}
+        <select class="form-select form-select-sm" name="kind" aria-label="Kind of {{ a.upn }}" style="min-width: 10rem"
+                hx-post="{% url 'entra:account_kind' a.pk %}?next={{ request.get_full_path|urlencode }}" hx-trigger="change"
+                hx-prompt="Reason for changing the kind of {{ a.upn }}:">
+          {% for value, label in kinds %}<option value="{{ value }}" {% if a.kind == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+        </select>
+        {% else %}<span class="badge text-bg-light border">{{ a.get_kind_display }}</span>{% endif %}
+      </td>
+      <td class="text-end text-nowrap">
+        {% if a.can_link %}
+          {% if a.person %}<button class="btn btn-sm btn-link text-danger p-0" type="button" hx-post="{% url 'entra:account_unlink' a.pk %}?next={{ request.get_full_path|urlencode }}" hx-prompt="Reason for unlinking {{ a.upn }} from {{ a.person.display_name }}:">Unlink</button>
+          {% else %}<a class="btn btn-sm btn-link p-0" href="{% url 'entra:account_link' a.pk %}?next={{ request.get_full_path|urlencode }}">Link…</a>{% endif %}
+        {% endif %}
+        {% if a.can_create_person %}<a class="btn btn-sm btn-link p-0 ms-2" href="{% url 'entra:account_person' a.pk %}" title="Create the person this guest belongs to, and link the account">Create person…</a>{% endif %}
+      </td>
+    </tr>
+  {% empty %}
+    <tr><td colspan="8" class="text-body-secondary">No accounts{% if accounts_enabled %} match{% else %} mirrored yet{% endif %}.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% include "partials/pagination.html" %}
+{% endblock %}

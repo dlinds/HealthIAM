@@ -41,6 +41,9 @@ GROUPS_OU = f"OU=Groups,{BASE_DN}"
 # A child of the search base, so groups no application owns are visibly filed apart without
 # needing a second search base.
 INFRA_OU = f"OU=Infrastructure,{GROUPS_OU}"
+# Where Entra ID's group writeback puts the AD copies of cloud groups. Under the search base, so
+# the AD sync imports them -- and recognizes them for what they are.
+WRITEBACK_OU = f"OU=Cloud Groups,{GROUPS_OU}"
 STAFF_OU = f"OU=Staff,{BASE_DN}"
 SERVICE_OU = f"OU=Service Accounts,{BASE_DN}"
 
@@ -90,6 +93,24 @@ def user_guid(sam: str) -> uuid.UUID:
     return uuid.uuid5(NAMESPACE, f"user:{sam}")
 
 
+#: demo.local's domain SID. An object's SID appends a relative ID taken from its GUID, so it is
+#: as stable as the GUID and clear of the well-known RIDs below 1000. Entra ID reports the same
+#: SIDs for what Entra Connect synchronizes, which is how the two mirrors meet on them.
+DOMAIN_SID = "S-1-5-21-1004336348-1177238915-682003330"
+
+
+def _rid(guid: uuid.UUID) -> int:
+    return 1100 + guid.int % 900_000
+
+
+def group_sid(name: str) -> str:
+    return f"{DOMAIN_SID}-{_rid(group_guid(name))}"
+
+
+def user_sid(sam: str) -> str:
+    return f"{DOMAIN_SID}-{_rid(user_guid(sam))}"
+
+
 # --- Groups -----------------------------------------------------------------------------
 
 
@@ -116,10 +137,20 @@ class GroupSpec:
     state: str = State.ACTIVE
     #: Why this group is in the demo. Printed by `demo_ad status`; never stored.
     demonstrates: str = ""
+    #: The display name of the cloud group Entra ID's group writeback made this group from
+    #: (`entra_data`), whose object ID the sync reads back from the `Group_<objectId>` marker.
+    written_back_from: str = ""
 
     @property
     def dn(self) -> str:
         return f"CN={self.name},{self.ou}"
+
+
+#: The AD copy of the cloud group FS_NURSING_EDUCATION, named the way group writeback names one
+#: when it keeps the cloud display name: that name, then the last 12 characters of the cloud
+#: object ID. `tests/test_demo_entra.py` keeps the suffix honest.
+WRITTEN_BACK_FROM = "FS_NURSING_EDUCATION"
+WRITTEN_BACK_GROUP = f"{WRITTEN_BACK_FROM}_d897fb98bd92"
 
 
 GROUPS: tuple[GroupSpec, ...] = (
@@ -209,6 +240,19 @@ GROUPS: tuple[GroupSpec, ...] = (
     GroupSpec("BADGE_OR_SUITE", "Badge access: operating room suite", ou=INFRA_OU),
     GroupSpec(
         "BADGE_PHARMACY_VAULT", "Badge access: pharmacy controlled-substance vault", ou=INFRA_OU
+    ),
+    # -- Written back from Entra ID ------------------------------------------------------
+    GroupSpec(
+        WRITTEN_BACK_GROUP,
+        "File share: nursing education materials. Managed in Entra ID.",
+        ou=WRITEBACK_OU,
+        group_type=UNIVERSAL_SECURITY,
+        managed_by="",
+        written_back_from=WRITTEN_BACK_FROM,
+        demonstrates=(
+            "the AD copy of a cloud group: flagged, kept off the adoption worklist and out of "
+            "the FS_* route, refused as an AD-group level"
+        ),
     ),
     GroupSpec(
         "APP_DEMO_UNUSED",

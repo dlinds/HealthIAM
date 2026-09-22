@@ -75,6 +75,12 @@ The login's username is the `userPrincipalName` in lower case, which is also wha
 presents as `preferred_username`, so a person who signs in through Entra lands on the same
 login the sync created (see `docs/entra-setup.md`).
 
+Logins come from one directory per deployment. With `DIRECTORY_LOGIN_SOURCE=entra` an Entra
+group hands them out instead (`docs/entra-setup.md` section 15), and this sync leaves logins
+alone: it skips its users pass and **Sync now** stops offering it. Switched back to AD, the
+users pass answers for the logins the Entra sync gave out too: the ones whose account is in
+IAM-Users are taken over, the rest deactivated.
+
 ## 4. Baseline role and check W001
 
 Every login the sync creates or links gets `AD_BASELINE_ROLE` (default `Help Desk`) and is
@@ -125,7 +131,14 @@ An access level with `access_model = ad_group` is then shown as:
 | (nothing) | No group sync has completed yet. |
 
 Names that match the patterns but live in an OU outside the search bases show **Not found
-in AD**; widen the bases or move the group. Narrowing the bases or patterns later
+in AD**; widen the bases or move the group.
+
+A group that Entra ID's group writeback created from a cloud group (it carries
+`Group_<objectId>` in `adminDescription`) is imported like any other. Once the Entra ID sync is
+configured it is marked *written back from Entra ID*: its membership is managed in the cloud, so
+it is refused as an AD-group level, kept off the **Add to catalog** worklist and never held by a
+route. Reference the cloud group instead; `docs/entra-setup.md` section 13 has the detail.
+Without the Entra ID sync it stays an ordinary AD group, the only way to grant that access. Narrowing the bases or patterns later
 deactivates the groups that fall outside them (their levels then read "Not returned by the
 last sync" or "outside sync filter"); widening them again reactivates the groups.
 
@@ -542,7 +555,9 @@ happened to it. `demo_ad restore` is the way back.
   It is there only to keep `directory.W003` from crowding out W008.
 
 The demo world lives in `apps/core/demo/data.py` (the inventory, and what each entry is there
-to demonstrate) and `apps/core/demo/mirror.py` (the writers both commands share).
+to demonstrate) and `apps/core/demo/mirror.py` (the writers both commands share). The seed
+also writes the hybrid Entra ID tenant `demo.local` synchronizes to, with one group written
+back to `OU=Cloud Groups`; see `docs/entra-setup.md` section 17.
 
 ## 13. Account mirror
 
