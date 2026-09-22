@@ -46,3 +46,22 @@ AD_AUTH_TIMEOUT = 5
 AD_AUTH_MAX_FAILURES = 3
 AD_AUTH_FAILURE_WINDOW = 600
 AD_AUTH_LOCKOUT_SECONDS = 60
+
+# Entra ID is "configured" the same way: a tenant and an application nothing can reach, so the
+# checks are exercised and the Graph client is tested against a fake HTTP session. The hosts
+# are under .invalid, which never resolves, so a test that forgot the fake fails fast instead of
+# calling Microsoft.
+ENTRA_TENANT_ID = "5f0e7a6c-0b1d-4c2e-9f3a-7b6d5e4c3b2a"
+ENTRA_SYNC_CLIENT_ID = "0c4a9d2e-7f61-4b58-a3c9-2e1f0d6b7a85"
+ENTRA_ENABLED = True
+ENTRA_SYNC_CLIENT_SECRET = "entra-test-secret-not-real"  # grep target for secret-leak tests
+ENTRA_SYNC_CERTIFICATE = ""
+ENTRA_SYNC_CERTIFICATE_PASSWORD = ""
+ENTRA_AUTHORITY_HOST = "https://login.test.invalid"
+ENTRA_GRAPH_ENDPOINT = "https://graph.test.invalid"
+# Off, so MSAL goes straight to the .invalid host above and fails there instead of first asking
+# login.microsoftonline.com about it. The production default has a test of its own.
+ENTRA_VALIDATE_AUTHORITY = False
+ENTRA_TIMEOUT = 5
+ENTRA_EMPLOYEE_ID_ATTRIBUTE = "employeeId"
+ENTRA_SIGN_IN_ACTIVITY = True

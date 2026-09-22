@@ -38,6 +38,16 @@ env = environ.Env(
     AD_AUTH_MAX_FAILURES=(int, 3),
     AD_AUTH_FAILURE_WINDOW=(int, 1800),
     AD_AUTH_LOCKOUT_SECONDS=(int, 1800),
+    ENTRA_SYNC_CLIENT_ID=(str, ""),
+    ENTRA_SYNC_CLIENT_SECRET=(str, ""),
+    ENTRA_SYNC_CERTIFICATE=(str, ""),
+    ENTRA_SYNC_CERTIFICATE_PASSWORD=(str, ""),
+    ENTRA_AUTHORITY_HOST=(str, "https://login.microsoftonline.com"),
+    ENTRA_GRAPH_ENDPOINT=(str, "https://graph.microsoft.com"),
+    ENTRA_VALIDATE_AUTHORITY=(bool, True),
+    ENTRA_TIMEOUT=(int, 30),
+    ENTRA_EMPLOYEE_ID_ATTRIBUTE=(str, "employeeId"),
+    ENTRA_SIGN_IN_ACTIVITY=(bool, True),
 )
 environ.Env.read_env(BASE_DIR / ".env")
 
@@ -65,6 +75,7 @@ INSTALLED_APPS = [
     "apps.access",
     "apps.people",
     "apps.directory",
+    "apps.entra",
 ]
 
 MIDDLEWARE = [
@@ -212,6 +223,35 @@ if AD_AUTH_ENABLED:
     # Last, so a local account is answered by ModelBackend without a network call.
     AUTHENTICATION_BACKENDS.append("apps.directory.auth.ActiveDirectoryBackend")
 
+# --- Microsoft Entra ID (Microsoft Graph) ------------------------------------------
+# Read-only directory sync over Microsoft Graph, alongside (or instead of) the LDAPS one. It
+# signs in as an application (client credentials) with its own registration, separate from the
+# SSO one above unless you choose to reuse it; see docs/entra-setup.md. ENTRA_TENANT_ID is
+# shared with SSO. Leave ENTRA_SYNC_CLIENT_ID empty to disable the integration entirely.
+ENTRA_SYNC_CLIENT_ID = env("ENTRA_SYNC_CLIENT_ID")
+ENTRA_ENABLED = bool(ENTRA_TENANT_ID and ENTRA_SYNC_CLIENT_ID)
+# One of the two credentials. A certificate is preferred (docs/entra-setup.md): a .pem holding
+# the private key and its certificate, or a .pfx/.p12 file, with an optional password.
+ENTRA_SYNC_CLIENT_SECRET = env("ENTRA_SYNC_CLIENT_SECRET")
+ENTRA_SYNC_CERTIFICATE = env("ENTRA_SYNC_CERTIFICATE")
+ENTRA_SYNC_CERTIFICATE_PASSWORD = env("ENTRA_SYNC_CERTIFICATE_PASSWORD")
+# National clouds use other hosts (docs/entra-setup.md). No trailing slash.
+ENTRA_AUTHORITY_HOST = env("ENTRA_AUTHORITY_HOST").rstrip("/")
+ENTRA_GRAPH_ENDPOINT = env("ENTRA_GRAPH_ENDPOINT").rstrip("/")
+# Before a token request MSAL asks login.microsoftonline.com whether ENTRA_AUTHORITY_HOST is a
+# Microsoft sign-in host, unless it already knows the host (the public and the US Government and
+# China clouds). False skips that check: only for an air-gapped cloud that cannot reach the
+# public one, since the check is what stops a mistyped host from receiving the credential.
+ENTRA_VALIDATE_AUTHORITY = env("ENTRA_VALIDATE_AUTHORITY")
+ENTRA_TIMEOUT = env("ENTRA_TIMEOUT")
+# Where the HR employee ID lives on a user: employeeId, an on-premises extension attribute
+# (onPremisesExtensionAttributes.extensionAttribute1..15) or a directory schema extension
+# (extension_<appid>_<name>).
+ENTRA_EMPLOYEE_ID_ATTRIBUTE = env("ENTRA_EMPLOYEE_ID_ATTRIBUTE")
+# Last sign-in per account needs Entra ID P1/P2 and AuditLog.Read.All; without them the sync
+# carries on without it. False stops asking.
+ENTRA_SIGN_IN_ACTIVITY = env("ENTRA_SIGN_IN_ACTIVITY")
+
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
     {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
@@ -273,6 +313,9 @@ LOGGING = {
         "django.request": {"level": "WARNING"},
         "mozilla_django_oidc": {"level": "INFO"},
         "apps.directory": {"level": "INFO"},
+        "apps.entra": {"level": "INFO"},
+        # MSAL logs token requests at INFO; the sync's own log lines say what matters.
+        "msal": {"level": "WARNING"},
     },
 }
 
