@@ -42,6 +42,12 @@
           <dd class="col-sm-8">{% if config.sign_in_activity %}read (needs Entra ID P1/P2 and AuditLog.Read.All){% else %}<span class="text-body-secondary">not read</span>{% endif %}</dd>
           <dt class="col-sm-4">Guest worklists</dt>
           <dd class="col-sm-8">no sign-in for {{ config.guest_stale_days }} days &middot; invitation pending {{ config.guest_pending_days }} days</dd>
+          <dt class="col-sm-4">Logins</dt>
+          <dd class="col-sm-8">
+            {% if config.login_sync %}<span class="badge text-bg-success">from Entra ID</span> members of <span class="text-mono">{{ config.user_group }}</span> get a login with {{ config.baseline_role }}
+            {% elif login_source %}from {{ login_source }}{% if login_source == 'Entra ID' %} &mdash; no <span class="text-mono">ENTRA_USER_GROUP</span>, so a login appears at first sign-in{% endif %}
+            {% else %}<span class="text-body-secondary">at first sign-in only</span>{% endif %}
+          </dd>
         </dl>
         <p class="text-body-secondary mb-0 mt-2">Set through <span class="text-mono">ENTRA_*</span> environment variables; see docs/entra-setup.md. The client secret and the certificate password are never shown.</p>
       </div>
@@ -90,6 +96,9 @@
             {% if not worklists.orphaned and not worklists.unlinked_guests and not worklists.pending and not worklists.stale and not worklists.unlinked %}<span class="text-body-secondary">nothing to work</span>{% endif %}
           </dd>
           {% endif %}
+          {% if config.login_sync or managed_active or managed_inactive %}
+          <dt class="col-sm-4">Managed logins</dt><dd class="col-sm-8">{{ managed_active }} active · {{ managed_inactive }} inactive</dd>
+          {% endif %}
           <dt class="col-sm-4">Broken references</dt>
           <dd class="col-sm-8">
             {% if broken_count is None %}<span class="text-body-secondary">not checked yet (no completed group sync)</span>
@@ -122,7 +131,7 @@
     <div class="card h-100">
       <div class="card-header">Test connection</div>
       <div class="card-body">
-        <p class="text-body-secondary small">Gets a token, reads the tenant and lists the permissions the application holds. Nothing is written.</p>
+        <p class="text-body-secondary small">Gets a token, reads the tenant and lists the permissions the application holds{% if config.login_sync %}, and resolves the user group{% endif %}. Nothing is written.</p>
         <button class="btn btn-outline-primary" type="button"
                 hx-post="{% url 'entra:connection_test' %}" hx-target="#connection-result" hx-swap="innerHTML"
                 hx-indicator="#test-indicator" hx-disabled-elt="this">
@@ -138,7 +147,7 @@
       <div class="card-body small">
         <p>Run the sync nightly from the host, with this deployment's scheduler:</p>
         <pre class="bg-body-tertiary border rounded p-2 mb-2"><code>{{ schedule_command }}</code></pre>
-        <p class="mb-0 text-body-secondary">Add <span class="text-mono">--dry-run</span> to preview only, <span class="text-mono">--groups-only</span> or <span class="text-mono">--accounts-only</span> to limit the scope. The exit code is non-zero when the run fails or any entry has an error. Every run is listed below.</p>
+        <p class="mb-0 text-body-secondary">Add <span class="text-mono">--dry-run</span> to preview only, <span class="text-mono">--groups-only</span>, <span class="text-mono">--accounts-only</span> or <span class="text-mono">--users-only</span> to limit the scope. The exit code is non-zero when the run fails or any entry has an error. Every run is listed below.</p>
       </div>
     </div>
   </div>

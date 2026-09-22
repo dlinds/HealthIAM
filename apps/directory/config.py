@@ -87,10 +87,12 @@ class DirectorySettings:
 
 
 def full_sync_passes() -> list[str]:
-    """The passes a full sync runs in this deployment: no accounts pass without an account
-    search base."""
+    """The passes a full sync runs in this deployment: no users pass when logins come from
+    Entra ID, no accounts pass without an account search base."""
+    from apps.accounts import login_source
+
     offered = {
-        "users": True,
+        "users": login_source.ad_manages_logins(),
         "groups": True,
         "accounts": DirectorySettings.from_settings().accounts_enabled,
     }

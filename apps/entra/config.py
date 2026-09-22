@@ -79,11 +79,16 @@ class EntraSettings:
     account_exclude_patterns: tuple[str, ...] = ()
     employee_id_attribute: str = "employeeId"
     sign_in_activity: bool = True
+    user_group: str = ""
+    baseline_role: str = "Help Desk"
+    login_sync: bool = False
     guest_stale_days: int = 90
     guest_pending_days: int = 30
 
     @classmethod
     def from_settings(cls) -> EntraSettings:
+        from apps.accounts import login_source
+
         return cls(
             tenant=settings.ENTRA_TENANT_ID,
             client_id=settings.ENTRA_SYNC_CLIENT_ID,
@@ -100,6 +105,9 @@ class EntraSettings:
             account_exclude_patterns=tuple(settings.ENTRA_ACCOUNTS_EXCLUDE_PATTERNS),
             employee_id_attribute=(settings.ENTRA_EMPLOYEE_ID_ATTRIBUTE or "").strip(),
             sign_in_activity=bool(settings.ENTRA_SIGN_IN_ACTIVITY),
+            user_group=settings.ENTRA_USER_GROUP,
+            baseline_role=settings.ENTRA_BASELINE_ROLE,
+            login_sync=login_source.entra_manages_logins(),
             guest_stale_days=int(settings.ENTRA_GUEST_STALE_DAYS),
             guest_pending_days=int(settings.ENTRA_GUEST_PENDING_DAYS),
         )
@@ -150,6 +158,9 @@ class EntraSettings:
             "employee_id_attribute": self.employee_id_attribute,
             "employee_id_readable": bool(self.employee_id_select),
             "sign_in_activity": self.sign_in_activity,
+            "user_group": self.user_group,
+            "baseline_role": self.baseline_role,
+            "login_sync": self.login_sync,
             "guest_stale_days": self.guest_stale_days,
             "guest_pending_days": self.guest_pending_days,
         }
@@ -157,12 +168,12 @@ class EntraSettings:
 
 #: The passes a full sync can have, by their key in `EntraSyncRun.summary`, and what a scope
 #: label calls them.
-PASSES = {"groups": "groups", "accounts": "accounts"}
+PASSES = {"users": "logins", "groups": "groups", "accounts": "accounts"}
 
 
 def full_sync_passes() -> list[str]:
-    """The passes a full sync runs in this deployment, by key: accounts unless the account
-    mirror is off."""
+    """The passes a full sync runs in this deployment, by key: logins only where Entra ID is
+    the login source, accounts unless the account mirror is off."""
     cfg = EntraSettings.from_settings()
-    offered = {"groups": True, "accounts": cfg.accounts_enabled}
+    offered = {"users": cfg.login_sync, "groups": True, "accounts": cfg.accounts_enabled}
     return [key for key in PASSES if offered[key]]

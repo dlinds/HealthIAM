@@ -22,6 +22,7 @@ from django.views.generic import ListView
 from django_htmx.http import HttpResponseClientRedirect
 
 from apps.access import reports
+from apps.accounts import login_source
 from apps.accounts import permissions as perms
 from apps.accounts.mixins import PermissionCheckMixin, role_required
 from apps.accounts.models import User
@@ -407,6 +408,8 @@ def admin_index(request):
     ctx = {
         "config": DirectorySettings.from_settings().public_dict(),
         "sign_in": _sign_in_context(),
+        "manages_logins": login_source.ad_manages_logins(),
+        "login_source": login_source.label(),
         "check_warnings": run_checks(tags=[checks.TAG]),
         "form": SyncStartForm(),
         "runs": runs,

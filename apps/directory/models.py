@@ -302,8 +302,9 @@ class DirectorySyncRun(TimeStampedModel):
     @property
     def scope_label(self) -> str:
         """The scope as run. A full sync is named for the passes it recorded -- a deployment
-        without an account search base has two -- and, when it recorded none (it failed, or is
-        still running), for the passes a full sync has here now."""
+        without an account search base, or whose logins come from Entra ID, has fewer than
+        three -- and, when it recorded none (it failed, or is still running), for the passes a
+        full sync has here now."""
         if self.scope != self.Scope.ALL:
             return self.get_scope_display()
         from .config import PASSES, describe_passes, full_sync_passes

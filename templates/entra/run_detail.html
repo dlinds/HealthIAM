@@ -14,11 +14,12 @@
       {% if run.server %} · <span class="text-mono">{{ run.server }}</span>{% endif %}
       {% if run.tenant_id %} · tenant {{ run.tenant_name|default:"" }} <span class="text-mono">{{ run.tenant_id }}</span>{% endif %}
       {% if run.directory_sync_enabled %} · hybrid{% elif run.tenant_id %} · cloud-only{% endif %}
+      {% if run.user_group %} · user group {{ run.user_group }}{% endif %}
     </div>
   </div>
   <div>
     {% if run.is_applyable %}
-    <form method="post" action="{% url 'entra:run_apply' run.pk %}" onsubmit="return confirm('Apply this sync? The mirror is changed as previewed. Changes are audited and reversible only by hand.');">{% csrf_token %}
+    <form method="post" action="{% url 'entra:run_apply' run.pk %}" onsubmit="return confirm('Apply this sync? The mirror and logins are changed as previewed. Changes are audited and reversible only by hand.');">{% csrf_token %}
       <button class="btn btn-primary" type="submit"><i class="bi bi-check2-circle me-1"></i>Apply sync</button>
     </form>
     {% elif run.status == 'completed' %}<span class="badge text-bg-success fs-6">Completed {{ run.finished_at|date:"Y-m-d H:i" }}</span>

@@ -24,8 +24,10 @@ from django.views.generic import ListView
 from django_htmx.http import HttpResponseClientRedirect
 
 from apps.access import reports
+from apps.accounts import login_source
 from apps.accounts import permissions as perms
 from apps.accounts.mixins import PermissionCheckMixin, role_required
+from apps.accounts.models import User
 from apps.catalog.models import AccessLevel, Application
 from apps.orgs.models import Position
 from apps.people import services as people_services
@@ -411,6 +413,7 @@ def _status_context(runs):
     )
     groups_active, groups_inactive = _active_counts(EntraGroup.objects.all())
     accounts_active, accounts_inactive = _active_counts(EntraAccount.objects.all())
+    managed_active, managed_inactive = _active_counts(User.objects.filter(entra_managed=True))
     by_source = dict(
         EntraAccount.objects.filter(is_active=True)
         .values_list("source")
@@ -431,8 +434,11 @@ def _status_context(runs):
             if (n := by_source.get(value, 0))
         ],
         "worklists": worklists.counts(),
+        "managed_active": managed_active,
+        "managed_inactive": managed_inactive,
         "groups_synced": synced,
         "broken_count": len(references.broken_references()) if synced else None,
+        "login_source": login_source.label(),
     }
 
 

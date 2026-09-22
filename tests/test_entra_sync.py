@@ -61,6 +61,7 @@ def test_preview_writes_nothing_and_apply_writes_it_all(fake_tenant, people):
     assert EntraGroup.objects.count() == 0 and EntraAccount.objects.count() == 0
     assert run.summary["groups"]["created"] == 7  # IAM-* kept out by the test settings
     assert run.summary["accounts"]["created"] == 6
+    assert run.summary["users"] is None  # AD is the login source in the test settings
 
     run = run_sync(run, dry_run=False)
     assert run.status == EntraSyncRun.Status.COMPLETED, run.error
@@ -259,6 +260,12 @@ def test_a_listing_that_breaks_midway_writes_nothing(fake_tenant):
     assert run.status == EntraSyncRun.Status.FAILED
     assert "connection reset" in run.error
     assert EntraGroup.objects.count() == 0
+
+
+def test_a_logins_only_run_is_refused_where_entra_does_not_own_logins(fake_tenant):
+    run = do_sync(scope="users")
+    assert run.status == EntraSyncRun.Status.FAILED
+    assert "DIRECTORY_LOGIN_SOURCE=entra" in run.error
 
 
 def test_an_accounts_only_run_is_refused_with_the_mirror_off(fake_tenant, settings):

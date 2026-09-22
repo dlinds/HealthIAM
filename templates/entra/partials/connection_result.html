@@ -9,6 +9,7 @@
     {% endif %}
     {% if info.granted %}<li>Permissions: <span class="text-mono">{{ info.granted|join:", " }}</span>.</li>{% endif %}
     {% if info.missing %}<li class="text-danger">Missing: <span class="text-mono">{{ info.missing|join:", " }}</span> &mdash; grant {% if info.missing|length == 1 %}it{% else %}them{% endif %} as application permissions, with admin consent.</li>{% endif %}
+    {% if info.user_group %}<li>User group: {{ info.user_group }}.</li>{% endif %}
     {% for w in info.warnings %}<li class="text-warning-emphasis">{{ w }}</li>{% endfor %}
   </ul>
 </div>

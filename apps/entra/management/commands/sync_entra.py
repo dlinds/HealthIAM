@@ -7,9 +7,10 @@ from apps.entra.models import EntraSyncRun
 
 class Command(BaseCommand):
     help = (
-        "Mirror Entra ID groups and accounts over Microsoft Graph and link accounts to people. "
-        "Intended for a scheduled job (cron, or a Windows Scheduled Task): manage.py sync_entra "
-        "[--dry-run] [--groups-only | --accounts-only]. Every run is recorded under Admin > "
+        "Mirror Entra ID groups and accounts over Microsoft Graph, link accounts to people, and "
+        "-- when Entra ID is the login source -- sync logins from ENTRA_USER_GROUP. Intended for "
+        "a scheduled job (cron, or a Windows Scheduled Task): manage.py sync_entra [--dry-run] "
+        "[--users-only | --groups-only | --accounts-only]. Every run is recorded under Admin > "
         "Entra ID; the exit code is non-zero when the run failed or any row had an error."
     )
 
@@ -18,6 +19,9 @@ class Command(BaseCommand):
             "--dry-run",
             action="store_true",
             help="Preview: read from Graph and record the run, but write nothing.",
+        )
+        parser.add_argument(
+            "--users-only", action="store_true", help="Only sync logins from ENTRA_USER_GROUP."
         )
         parser.add_argument(
             "--groups-only", action="store_true", help="Only mirror the tenant's groups."
@@ -33,10 +37,14 @@ class Command(BaseCommand):
             raise CommandError(
                 "Entra ID sync is not configured: set ENTRA_TENANT_ID and ENTRA_SYNC_CLIENT_ID."
             )
-        only = [k for k in ("groups_only", "accounts_only") if options[k]]
+        only = [k for k in ("users_only", "groups_only", "accounts_only") if options[k]]
         if len(only) > 1:
-            raise CommandError("--groups-only and --accounts-only cannot be combined.")
-        if options["groups_only"]:
+            raise CommandError(
+                "--users-only, --groups-only and --accounts-only cannot be combined."
+            )
+        if options["users_only"]:
+            scope = EntraSyncRun.Scope.USERS
+        elif options["groups_only"]:
             scope = EntraSyncRun.Scope.GROUPS
         elif options["accounts_only"]:
             scope = EntraSyncRun.Scope.ACCOUNTS

@@ -11,8 +11,9 @@ class AccountsConfig(AppConfig):
 
         from . import models
 
-        # Logins are now changed by the AD sync as well as by admins, so their history matters.
-        # Credentials and pure bookkeeping timestamps stay out of the diff.
+        # Logins are now changed by the directory syncs as well as by admins, so their history
+        # matters. Credentials and pure bookkeeping timestamps stay out of the diff.
         register_for_audit(
-            models.User, exclude=("password", "last_login", "date_joined", "ad_synced_at")
+            models.User,
+            exclude=("password", "last_login", "date_joined", "ad_synced_at", "entra_synced_at"),
         )

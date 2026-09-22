@@ -120,9 +120,13 @@ def test_sync_form_offers_only_passes_that_can_run(as_user, admin_user, settings
         form = as_user(admin_user).get(reverse("entra:admin_index")).context["form"]
         return dict(form.fields["scope"].choices)
 
-    assert choices()["all"] == "Groups and accounts"
+    assert choices()["all"] == "Groups and accounts" and "users" not in choices()
     settings.ENTRA_ACCOUNTS_ENABLED = False
     assert choices()["all"] == "Groups" and "accounts" not in choices()
+    settings.ENTRA_ACCOUNTS_ENABLED = True
+    settings.DIRECTORY_LOGIN_SOURCE = "entra"
+    settings.ENTRA_USER_GROUP = str(fake_id("group:IAM-Users-Cloud"))
+    assert choices()["all"] == "Logins, groups and accounts" and "users" in choices()
 
 
 def test_connection_test_shows_tenant_permissions_and_missing_ones(

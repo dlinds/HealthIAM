@@ -344,7 +344,8 @@ class EntraSyncRun(TimeStampedModel):
     """One sync against Entra ID. Preview = dry run; apply = real sync on the same row."""
 
     class Scope(models.TextChoices):
-        ALL = "all", "Groups and accounts"
+        ALL = "all", "Logins, groups and accounts"
+        USERS = "users", "Logins only"
         GROUPS = "groups", "Groups only"
         ACCOUNTS = "accounts", "Accounts only"
 
@@ -376,6 +377,7 @@ class EntraSyncRun(TimeStampedModel):
         help_text="The tenant synchronizes from on-premises AD: a hybrid tenant.",
     )
     directory_last_sync_at = models.DateTimeField(null=True, blank=True)
+    user_group = models.CharField("User group", max_length=256, blank=True)
     sign_in_activity = models.CharField(
         max_length=500, blank=True, help_text="Why sign-in activity could not be read, if not."
     )
@@ -397,8 +399,8 @@ class EntraSyncRun(TimeStampedModel):
     @property
     def scope_label(self) -> str:
         """The scope as run, like `DirectorySyncRun.scope_label`: a full sync is named for the
-        passes it recorded -- no accounts pass while the account mirror is off -- or, when it
-        recorded none, for the passes a full sync has here now."""
+        passes it recorded -- no logins pass where logins come from Active Directory -- or, when
+        it recorded none, for the passes a full sync has here now."""
         if self.scope != self.Scope.ALL:
             return self.get_scope_display()
         from apps.directory.config import describe_passes

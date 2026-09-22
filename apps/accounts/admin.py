@@ -19,6 +19,8 @@ class UserAdmin(DjangoUserAdmin):
                     "ad_distinguished_name",
                     "ad_synced_at",
                     "ad_managed",
+                    "entra_synced_at",
+                    "entra_managed",
                 )
             },
         ),
@@ -31,6 +33,7 @@ class UserAdmin(DjangoUserAdmin):
         "is_active",
         "is_staff",
         "ad_managed",
+        "entra_managed",
     )
-    readonly_fields = ("ad_synced_at",)
+    readonly_fields = ("ad_synced_at", "entra_synced_at")
     search_fields = ("username", "email", "first_name", "last_name")

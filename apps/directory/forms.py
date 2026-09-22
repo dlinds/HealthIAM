@@ -24,8 +24,9 @@ class SyncStartForm(BootstrapForm):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # A pass that cannot run is not offered, and the full sync is named for what it does:
-        # without a search base for accounts there is no account pass.
+        # A pass that cannot run is not offered, and the full sync is named for what it does.
+        # Without a search base for accounts there is no account pass; with Entra ID as the
+        # login source there is no users pass.
         passes = full_sync_passes()
         self.fields["scope"].choices = [
             (value, describe_passes(passes) if value == DirectorySyncRun.Scope.ALL else label)

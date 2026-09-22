@@ -54,7 +54,10 @@ env = environ.Env(
     ENTRA_SIGN_IN_ACTIVITY=(bool, True),
     ENTRA_GUEST_STALE_DAYS=(int, 90),
     ENTRA_GUEST_PENDING_DAYS=(int, 30),
+    ENTRA_USER_GROUP=(str, ""),
+    ENTRA_BASELINE_ROLE=(str, "Help Desk"),
     ENTRA_SYNC_SCHEDULE_COMMAND=(str, ""),
+    DIRECTORY_LOGIN_SOURCE=(str, ""),
 )
 environ.Env.read_env(BASE_DIR / ".env")
 
@@ -275,6 +278,16 @@ ENTRA_GUEST_STALE_DAYS = env("ENTRA_GUEST_STALE_DAYS")
 ENTRA_GUEST_PENDING_DAYS = env("ENTRA_GUEST_PENDING_DAYS")
 # The scheduled-sync line shown on Admin > Entra ID; see SYNC_SCHEDULE_COMMAND.
 ENTRA_SYNC_SCHEDULE_COMMAND = env("ENTRA_SYNC_SCHEDULE_COMMAND")
+
+# --- Where logins come from ------------------------------------------------------------
+# One directory owns who has a HealthIAM login: members of its user group get one with the
+# baseline role and lose it when they leave the group or are disabled. "ad" is AD_USER_GROUP
+# over LDAPS; "entra" is ENTRA_USER_GROUP (a group object ID) over Graph. Empty picks AD when
+# it is configured and Entra otherwise, so an existing AD deployment is unchanged. Resolved at
+# runtime by apps.accounts.login_source, since dev.py and test.py change AD_ENABLED after this.
+DIRECTORY_LOGIN_SOURCE = env("DIRECTORY_LOGIN_SOURCE").strip().lower()
+ENTRA_USER_GROUP = env("ENTRA_USER_GROUP").strip()
+ENTRA_BASELINE_ROLE = env("ENTRA_BASELINE_ROLE")
 
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},

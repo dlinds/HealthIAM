@@ -42,8 +42,9 @@
           <dt class="col-sm-4">Bind password</dt><dd class="col-sm-8">{% if config.bind_password_set %}<span class="badge text-bg-success">set</span>{% else %}<span class="badge text-bg-warning">not set</span>{% endif %}</dd>
           <dt class="col-sm-4">CA bundle</dt><dd class="col-sm-8 text-mono">{{ config.ca_bundle|default:"system trust store" }}</dd>
           <dt class="col-sm-4">Timeout</dt><dd class="col-sm-8">{{ config.timeout }} s</dd>
-          <dt class="col-sm-4">User group</dt><dd class="col-sm-8 text-mono">{{ config.user_group }}</dd>
-          <dt class="col-sm-4">Baseline role</dt><dd class="col-sm-8">{{ config.baseline_role }}</dd>
+          <dt class="col-sm-4">User group</dt>
+          <dd class="col-sm-8">{% if manages_logins %}<span class="text-mono">{{ config.user_group }}</span>{% else %}<span class="text-body-secondary">not used &mdash; logins come from {{ login_source|default:"another directory" }} (<span class="text-mono">DIRECTORY_LOGIN_SOURCE</span>)</span>{% endif %}</dd>
+          {% if manages_logins %}<dt class="col-sm-4">Baseline role</dt><dd class="col-sm-8">{{ config.baseline_role }}</dd>{% endif %}
           <dt class="col-sm-4">Group search bases</dt><dd class="col-sm-8">{% for base in config.group_search_bases %}<div class="text-mono">{{ base }}</div>{% endfor %}</dd>
           <dt class="col-sm-4">Group name patterns</dt><dd class="col-sm-8">{% if config.group_name_patterns %}<span class="text-mono">{{ config.group_name_patterns|join:", " }}</span>{% else %}<span class="text-body-secondary">all groups under the search bases</span>{% endif %}</dd>
           <dt class="col-sm-4">Excluded patterns</dt><dd class="col-sm-8">{% if config.group_exclude_patterns %}<span class="text-mono">{{ config.group_exclude_patterns|join:", " }}</span>{% else %}<span class="text-body-secondary">none</span>{% endif %}</dd>

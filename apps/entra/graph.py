@@ -41,7 +41,7 @@ MAX_RULE = 4000
 #: Application permissions the sync needs, as they appear in the token's `roles` claim, each
 #: with the broader permissions that also cover it. User.Read.All reads every user, guests
 #: included, with the properties the mirror needs (GroupMember.Read.All alone returns member IDs
-#: only); GroupMember.Read.All reads groups and their transitive members;
+#: only); GroupMember.Read.All reads groups and the login group's transitive members;
 #: Organization.Read.All reads the tenant, which is what tells hybrid from cloud-only.
 #: Directory.Read.All covers all three.
 REQUIRED_ROLES = {
@@ -143,7 +143,7 @@ class GraphPermissionError(GraphError):
 
 
 class GraphNotFound(GraphError):
-    """Graph answered 404: the object asked for does not exist."""
+    """Graph answered 404, e.g. the configured login group does not exist."""
 
 
 @dataclass(frozen=True)
@@ -250,6 +250,7 @@ class ConnectionInfo:
     tenant: TenantInfo | None = None
     granted: list[str] = field(default_factory=list)
     missing: list[str] = field(default_factory=list)
+    user_group: str = ""
     error: str = ""
     warnings: list[str] = field(default_factory=list)
 
@@ -794,6 +795,13 @@ class MsalGraphClient(GraphClient):
                 info.missing = missing_roles(
                     info.granted, sign_in_activity=self.cfg.sign_in_activity
                 )
+            if self.cfg.login_sync and self.cfg.user_group:
+                try:
+                    group = self.get_group(self.cfg.user_group)
+                except GraphError as exc:
+                    info.warnings.append(f"User group {self.cfg.user_group}: {exc}")
+                else:
+                    info.user_group = group.display_name
             info.ok = True
         except GraphError as exc:
             info.error = str(exc)

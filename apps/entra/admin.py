@@ -72,6 +72,7 @@ class EntraSyncRunAdmin(admin.ModelAdmin):
         "tenant_name",
         "directory_sync_enabled",
         "directory_last_sync_at",
+        "user_group",
         "sign_in_activity",
         "started_at",
         "finished_at",

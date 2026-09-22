@@ -71,3 +71,8 @@ ENTRA_EMPLOYEE_ID_ATTRIBUTE = "employeeId"
 ENTRA_SIGN_IN_ACTIVITY = True
 ENTRA_GUEST_STALE_DAYS = 90
 ENTRA_GUEST_PENDING_DAYS = 30
+# Active Directory stays the login source, so every AD login test is unchanged; the Entra
+# login tests switch it with the `settings` fixture.
+DIRECTORY_LOGIN_SOURCE = ""
+ENTRA_USER_GROUP = ""
+ENTRA_BASELINE_ROLE = "Help Desk"
