@@ -157,7 +157,7 @@ them. That is the whole reason `Setup-IIS.ps1` exists:
 |---|---|---|
 | `proxy/preserveHostHeader` | off | IIS forwards `Host: 127.0.0.1:8000`, so Django builds absolute URLs from that. Entra SSO then fails with `AADSTS50011`; everything else looks fine. |
 | `rewrite/allowedServerVariables` | empty | A rule may not set `HTTP_X_FORWARDED_PROTO`, so IIS rejects the rule with HTTP 500.50 — or, if the rule is removed to get past that, the header never arrives and sign-in loops. |
-| `proxy/timeout` | 30 s | **Sync now** reads a whole directory in one request and will exceed it. |
+| `proxy/timeout` | 30 s | **Sync now** reads a whole directory, or a whole tenant, in one request and will exceed it. |
 
 The rewrite rule itself, in `deploy\windows\web.config`, sets `X-Forwarded-Proto: https`;
 `SECURE_PROXY_SSL_HEADER` in `config/settings/prod.py` is what reads it. Leave
@@ -177,9 +177,10 @@ request timeout, so when ARR gives up the browser gets a 502 **but the sync keep
 and completes normally**. Check the run list rather than clicking again — a second click
 starts a second concurrent sync.
 
-## Scheduling the AD sync
+## Scheduling the directory syncs
 
-Skip this unless the `AD_` block in `.env` is filled in (`docs/ad-setup.md`).
+Skip this unless the `AD_` block in `.env` is filled in (`docs/ad-setup.md`), or the
+Entra ID one (`docs/entra-setup.md`, and the certificate note below).
 
 ```powershell
 .\deploy\windows\Register-SyncTask.ps1 -InstallRoot C:\HealthIAM -At 02:00
@@ -202,6 +203,50 @@ pass them through the wrapper:
 
 ```powershell
 .\deploy\windows\Invoke-Sync.ps1 -InstallRoot C:\HealthIAM --dry-run
+```
+
+The Entra ID sync is a second task of the same kind, a little later so the two do not
+overlap:
+
+```powershell
+.\deploy\windows\Register-SyncTask.ps1 -InstallRoot C:\HealthIAM -Command sync_entra -At 02:30
+```
+
+It is named *HealthIAM Entra sync*, logs to `logs\sync_entra.log`, and its runs are listed
+under **Admin → Entra ID**, whose Schedule card shows `ENTRA_SYNC_SCHEDULE_COMMAND`. The
+installer writes that into a new `.env`; it keeps an existing one, so on a host installed
+before the Entra ID integration, add the line from `deploy\windows\env.windows.example`
+yourself. `-Command sync_entra` works on `Invoke-Sync.ps1` as well,
+with `--groups-only`, `--accounts-only` or `--users-only` passed through.
+
+### The Entra sync certificate
+
+Put the `.pem` holding the private key and the certificate (`docs/entra-setup.md`
+section 9) under `C:\HealthIAM\certs\` and point `ENTRA_SYNC_CERTIFICATE` at it, unquoted.
+The install root's ACL already limits it to Administrators, SYSTEM (the sync task) and the
+service -- but only for a file **copied** in: a file moved from elsewhere on the same volume
+keeps the permissions it had. When in doubt:
+
+```powershell
+icacls C:\HealthIAM\certs\healthiam-sync.pem /reset
+```
+
+which replaces them with the inherited ones. `manage.py check --tag entra` reports
+`entra.W002` when the path does not exist.
+
+Without `openssl`, PowerShell makes the pair and exports a `.pfx` instead, which works the
+same with `ENTRA_SYNC_CERTIFICATE_PASSWORD`:
+
+```powershell
+$cert = New-SelfSignedCertificate -Subject 'CN=HealthIAM directory sync' `
+    -CertStoreLocation Cert:\LocalMachine\My -KeyExportPolicy Exportable `
+    -KeySpec Signature -KeyLength 3072 -NotAfter (Get-Date).AddYears(2)
+# The public half, to upload to the app registration:
+Export-Certificate -Cert $cert -FilePath C:\HealthIAM\certs\healthiam-sync.cer
+Export-PfxCertificate -Cert $cert -FilePath C:\HealthIAM\certs\healthiam-sync.pfx `
+    -Password (Read-Host -AsSecureString 'Password for the .pfx')
+# The .pfx is the only copy the sync needs; take the certificate and its key out of the store.
+Remove-Item "Cert:\LocalMachine\My\$($cert.Thumbprint)" -DeleteKey
 ```
 
 ### The CA bundle is usually unnecessary here
@@ -347,7 +392,7 @@ pg_restore --clean --if-exists --no-owner --dbname "postgres://..." C:\HealthIAM
 | `Setup-IIS.ps1` | The IIS site, the TLS binding, and the three machine-scope proxy settings |
 | `Update-HealthIAM.ps1` | Upgrade in place, with a dump taken first |
 | `Backup-Database.ps1` / `Register-BackupTask.ps1` | `pg_dump` with retention, and its daily task |
-| `Register-SyncTask.ps1` / `Invoke-Sync.ps1` | The nightly AD sync task and its exit-code-preserving wrapper |
+| `Register-SyncTask.ps1` / `Invoke-Sync.ps1` | The nightly AD and Entra ID sync tasks (`-Command sync_entra`) and their exit-code-preserving wrapper |
 | `serve.py` | The waitress entry point. Run it directly to debug a service that will not start |
 | `healthiam_service.py` | The Windows service wrapper around `serve.py` |
 | `web.config` | The IIS rewrite rule, including the `X-Forwarded-Proto` server variable |

@@ -87,6 +87,24 @@ services:
       # AD_AUTH_MAX_FAILURES: "3"
       # AD_AUTH_FAILURE_WINDOW: "1800"
       # AD_AUTH_LOCKOUT_SECONDS: "1800"
+      # --- Microsoft Entra ID (Microsoft Graph), optional. See docs/entra-setup.md. ---
+      # Read-only sync of the tenant's groups and accounts, beside or instead of AD. On once
+      # ENTRA_TENANT_ID and ENTRA_SYNC_CLIENT_ID are both set; its own app registration.
+      # ENTRA_TENANT_ID: CHANGE_ME_TENANT_ID
+      # ENTRA_SYNC_CLIENT_ID: CHANGE_ME_SYNC_APPLICATION_ID
+      # The credential: a .pem with the private key and the certificate, mounted read-only
+      # below (preferred), or a client secret, which expires.
+      # ENTRA_SYNC_CERTIFICATE: /certs/healthiam-sync.pem
+      # ENTRA_SYNC_CLIENT_SECRET: CHANGE_ME_CLIENT_SECRET
+      # Groups kept out of the mirror: the login group, groups nobody requests.
+      # ENTRA_GROUPS_EXCLUDE_PATTERNS: IAM-*,All Company
+      # Where the HR employee ID lives on a user (employeeId, an extension attribute...).
+      # ENTRA_EMPLOYEE_ID_ATTRIBUTE: employeeId
+      # Logins from an Entra group instead of AD_USER_GROUP: its object ID. People sign in
+      # with SSO, so set OIDC_RP_CLIENT_ID and OIDC_RP_CLIENT_SECRET too
+      # (docs/entra-setup.md Part 1).
+      # DIRECTORY_LOGIN_SOURCE: entra
+      # ENTRA_USER_GROUP: CHANGE_ME_LOGIN_GROUP_OBJECT_ID
     volumes:
       # CSV import batches keep their uploaded file; without this they vanish on
       # redeploy. Dataset must be owned by 568:568 (see docs).
@@ -94,5 +112,8 @@ services:
       # Internal CA bundle for LDAPS, read-only. Only needed with AD_CA_BUNDLE; the
       # file must be readable by uid 568 (chmod 644). See docs/deploy-truenas.md.
       # - /mnt/tank/apps/healthiam/certs/internal-ca.pem:/certs/internal-ca.pem:ro
+      # The Entra sync's key and certificate, read-only. It holds a private key: owned by
+      # uid 568 and chmod 600. See docs/deploy-truenas.md.
+      # - /mnt/tank/apps/healthiam/certs/healthiam-sync.pem:/certs/healthiam-sync.pem:ro
     ports:
       - "8000:8000"

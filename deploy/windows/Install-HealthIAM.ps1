@@ -246,8 +246,10 @@ DATABASE_URL=$databaseUrl
 # administrators out of their own IAM system.
 AUTH_LOCAL_LOGIN=true
 
-# Shown on Admin > Active Directory. There is no container here to docker exec into.
+# Shown on Admin > Active Directory and Admin > Entra ID. There is no container here to
+# docker exec into.
 SYNC_SCHEDULE_COMMAND=schtasks /Run /TN "$ServiceName AD sync"
+ENTRA_SYNC_SCHEDULE_COMMAND=schtasks /Run /TN "$ServiceName Entra sync"
 
 SUPPORT_CONTACT=the Information Security team
 
@@ -260,6 +262,13 @@ SUPPORT_CONTACT=the Information Security team
 #AD_BASE_DN=
 #AD_BIND_DN=
 #AD_BIND_PASSWORD=
+
+# --- Microsoft Entra ID (Microsoft Graph) -------------------------------------
+# Off until both ENTRA_TENANT_ID and ENTRA_SYNC_CLIENT_ID are set. See
+# docs/entra-setup.md Part 2; put the certificate under certs\ (docs/deploy-windows.md).
+#ENTRA_TENANT_ID=
+#ENTRA_SYNC_CLIENT_ID=
+#ENTRA_SYNC_CERTIFICATE=$InstallRoot\certs\healthiam-sync.pem
 "@
     # UTF-8 with NO byte order mark, and not Set-Content -Encoding UTF8, which writes one
     # in Windows PowerShell 5.1. django-environ opens .env as plain utf8 and does not
@@ -395,6 +404,8 @@ Still to do, by hand (docs/deploy-windows.md):
   3. Active Directory, if you want it: fill in the AD_ block in .env
      (docs/ad-setup.md), restart the service, then register the nightly sync:
        .\deploy\windows\Register-SyncTask.ps1 -InstallRoot $InstallRoot
+     Entra ID the same way: the ENTRA_ block (docs/entra-setup.md), then
+       .\deploy\windows\Register-SyncTask.ps1 -InstallRoot $InstallRoot -Command sync_entra -At 02:30
 
   4. Backups. The database holds the audit trail as well as the catalog:
        .\deploy\windows\Register-BackupTask.ps1 -InstallRoot $InstallRoot

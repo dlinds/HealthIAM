@@ -4,6 +4,10 @@ The Active Directory half is a fiction written straight into the mirror: there i
 LDAP server, so Test connection and Sync now still fail honestly. `apps.core.demo.data`
 describes the synthetic domain and `apps.core.demo.mirror` writes it; `manage.py demo_ad`
 drifts it afterwards. See `docs/ad-setup.md` section 12.
+
+The Entra ID half is the same fiction for the hybrid tenant that domain synchronizes to:
+`apps.core.demo.entra_data` describes it and `apps.core.demo.entra_mirror` writes it. See
+`docs/entra-setup.md`, "The demo tenant".
 """
 
 import datetime as dt
@@ -31,10 +35,19 @@ from apps.catalog.models import (
     Vendor,
 )
 from apps.core.demo import data as demo
-from apps.core.demo import mirror
+from apps.core.demo import entra_data as entra_demo
+from apps.core.demo import entra_mirror, mirror
 from apps.directory import reconcile
 from apps.directory.models import ADGroup, ADGroupRoute, DirectoryAccount, DirectorySyncRun
-from apps.directory.sync import MISSING_GROUP_MESSAGE, SyncResult, link_accounts
+from apps.directory.sync import (
+    MISSING_GROUP_MESSAGE,
+    AccountSyncResult,
+    SyncResult,
+    link_accounts,
+)
+from apps.entra import sync as entra_sync
+from apps.entra import worklists as entra_worklists
+from apps.entra.models import EntraAccount, EntraGroup, EntraSyncRun
 from apps.orgs.models import Department, JobCode, Position, Source
 from apps.people import services as people_services
 from apps.people.bootstrap import ensure_person_types
@@ -126,6 +139,7 @@ class Command(BaseCommand):
             self._defaults(apps, positions, users["admin"])
             people = self._people(users, positions, vendors, apps)
             counts = self._directory(users, positions)
+            entra_counts = self._entra(users)
         self.stdout.write(f"People: {people} on record.")
         self.stdout.write(self.style.SUCCESS("Demo data loaded."))
         self.stdout.write(
@@ -133,6 +147,7 @@ class Command(BaseCommand):
             f"helpdesk / auditor  (password: {PASSWORD})"
         )
         self._report_directory(counts)
+        self._report_entra(entra_counts)
 
     def _report_directory(self, counts):
         """Say what the directory half of the seed did, and what it cannot do."""
@@ -295,6 +310,9 @@ class Command(BaseCommand):
                 defaults["ticket_assignment_team"] = target
             elif model == AccessLevel.AccessModel.IN_APP:
                 defaults["in_app_instructions"] = target
+            elif model == AccessLevel.AccessModel.ENTRA_GROUP:
+                defaults["entra_group_id"] = entra_demo.group_id(target)
+                defaults["entra_group_name"] = target
             AccessLevel.objects.get_or_create(application=app, name=lname, defaults=defaults)
         for i, user in enumerate(analysts):
             ApplicationAnalyst.objects.get_or_create(
@@ -311,10 +329,11 @@ class Command(BaseCommand):
         return app
 
     def _applications(self, vendors, contacts, users):
-        AD, TICKET, IN_APP = (
+        AD, TICKET, IN_APP, ENTRA = (
             AccessLevel.AccessModel.AD_GROUP,
             AccessLevel.AccessModel.TICKET,
             AccessLevel.AccessModel.IN_APP,
+            AccessLevel.AccessModel.ENTRA_GROUP,
         )
         apps = {}
         apps["Epic"] = self._app(
@@ -501,6 +520,23 @@ class Command(BaseCommand):
                     "LIC_RETIRED_VISIO_2013",
                     "Legacy licence group kept out of the sync filter",
                 ),
+                # Cloud groups of the demo tenant (apps/core/demo/entra_data.py), one per badge:
+                # in Entra ID, deleted after its pilot, never returned, and made dynamic after
+                # the level was created.
+                (
+                    "Copilot (add-on)",
+                    ENTRA,
+                    "LIC_M365_COPILOT",
+                    "Microsoft 365 Copilot in Word, Outlook and Teams",
+                ),
+                ("Teams Phone (pilot)", ENTRA, "LIC_TEAMS_PHONE_PILOT", "Calling from Teams"),
+                ("Power BI Pro", ENTRA, "LIC_POWERBI_PRO", "Publish and share reports"),
+                (
+                    "All nursing staff",
+                    ENTRA,
+                    "DYN-All-Nursing-Staff",
+                    "Nursing news and the shared nursing calendar",
+                ),
             ],
             analysts=[users["iam"]],
             tiers=[(1, "IS Service Desk", contacts["service_desk"], "24x7")],
@@ -558,9 +594,10 @@ class Command(BaseCommand):
             levels=[("Read-only", IN_APP, "Contact HIM.", "Historical lookups")],
         )
         # Services: a home for the AD groups no vendor application owns. Separate rows per
-        # owning team rather than one bucket, so analyst rights stay scoped per team. None of
-        # them declares its access levels here -- `Network Access` gets them from its route,
-        # and the rest are the worklist that "Add to catalog" adopts from.
+        # owning team rather than one bucket, so analyst rights stay scoped per team. Their AD
+        # groups are not declared here -- `Network Access` gets them from its route, and the
+        # rest are the worklist that "Add to catalog" adopts from. File Shares holds one
+        # cloud group: a share governed in Entra ID and written back to AD for the file server.
         apps[demo.NETWORK_ACCESS] = self._app(
             demo.NETWORK_ACCESS,
             kind=Application.Kind.SERVICE,
@@ -586,6 +623,14 @@ class Command(BaseCommand):
             auth_method=Application.AuthMethod.AD_LDAP,
             technical_owner=contacts["cio"],
             analysts=[users["iam"]],
+            levels=[
+                (
+                    "Nursing education share",
+                    ENTRA,
+                    demo.WRITTEN_BACK_FROM,
+                    "Course materials; the file server sees the group's AD copy",
+                ),
+            ],
         )
         apps[demo.PRINTING] = self._app(
             demo.PRINTING,
@@ -636,6 +681,10 @@ class Command(BaseCommand):
             ("0500-7400", "ServiceNow", "ITIL fulfiller", "Works IS tickets"),
             ("0600-7500", "Epic", "Registration", "Front-desk registration"),
             ("0800-7700", "UKG", "Employee", "Timekeeping"),
+            # Cloud groups: position defaults work the same whichever directory holds them.
+            ("0100-7000", demo.FILE_SHARES, "Nursing education share", "Course materials"),
+            ("0500-7400", "M365", "Copilot (add-on)", "Pilot for Information Services analysts"),
+            ("0500-9000", "M365", "Teams Phone (pilot)", "Pilot for Information Services leads"),
         ]
         for code, app_key, level_name, reason in plan:
             pos = positions[code]
@@ -682,7 +731,7 @@ class Command(BaseCommand):
         college = org("State University College of Nursing", ExternalOrganization.Kind.SCHOOL)
         epic = org("Epic Systems", ExternalOrganization.Kind.VENDOR, vendors["Epic Systems"])
 
-        def person(first, last, employee_id="", **fields):
+        def person(first, last, employee_id="", email=None, **fields):
             lookup = (
                 {"employee_id": employee_id}
                 if employee_id
@@ -693,6 +742,12 @@ class Command(BaseCommand):
             )
             existing = Person.objects.filter(**lookup).first()
             if existing is not None:
+                # A database seeded before a demo person had an address of their own: the
+                # guest accounts link by it.
+                if email and existing.email != email:
+                    people_services.update_person(
+                        existing, actor=actor, reason=reason, system=True, email=email
+                    )
                 return existing
             return people_services.create_person(
                 actor=actor,
@@ -701,7 +756,7 @@ class Command(BaseCommand):
                 first_name=first,
                 last_name=last,
                 employee_id=employee_id,
-                email=f"{first}.{last}@example.org".lower().replace(" ", ""),
+                email=email or f"{first}.{last}@example.org".lower().replace(" ", ""),
                 **fields,
             )
 
@@ -805,7 +860,11 @@ class Command(BaseCommand):
             people_services.add_identifier(
                 anita, kind="npi", value="1234567893", actor=actor, reason="Credentialing file"
             )
-        marcus = person("Marcus", "Bell", suffix="MD")
+        # Externals carry the address they were invited to the tenant with, which is what
+        # links their Entra ID accounts to them (apps/core/demo/entra_data.py).
+        marcus = person(
+            "Marcus", "Bell", suffix="MD", email="marcus.bell@lakesidephysicians.example"
+        )
         assign(marcus, "0900-8000", "provider", -900, title="Affiliated physician")
         if not marcus.identifiers.filter(kind="npi").exists():
             people_services.add_identifier(
@@ -813,18 +872,22 @@ class Command(BaseCommand):
             )
 
         # Externals.
-        chloe = person("Chloe", "Martin")
+        chloe = person("Chloe", "Martin", email="chloe.martin@gmail.example")
         assign(chloe, "0100-7000", "traveler", -78, 12, organization=aya, sponsor=maria)
         ben = person("Ben", "Osei")
         assign(ben, "0300-7000", "traveler", -40, organization=aya, sponsor=maria)
-        lily = person("Lily", "Zhang")
+        lily = person("Lily", "Zhang", email="lily.zhang@stateu.example")
         assign(lily, "0100-7003", "student", 7, 90, organization=college, sponsor=maria)
         ravi = person("Ravi", "Menon")
         assign(ravi, "0500-7400", "contractor", -200, sponsor=grace, title="Epic analyst")
-        dana = person("Dana", "Fox")
+        dana = person("Dana", "Fox", email="dana.fox@epic.example")
         assign(dana, "0500-7400", "vendor", -20, 60, organization=epic, sponsor=grace)
-        ruth = person("Ruth", "Adler")
+        ruth = person("Ruth", "Adler", email="ruth.adler@mailbox.example")
         assign(ruth, "0600-7500", "volunteer", -365, sponsor=nora)
+        # Her contract ended three weeks ago. The demo tenant keeps her guest account enabled:
+        # the orphaned-guest worklist.
+        ines = person("Ines", "Duarte", email="ines.duarte@ayahealthcare.example")
+        assign(ines, "0100-7000", "traveler", -112, -21, organization=aya, sponsor=maria)
 
         # Beyond the positions: a grant with its ticket, and an exclusion.
         def access(who, app_key, level_name, kind, **fields):
@@ -1088,3 +1151,192 @@ class Command(BaseCommand):
     def _dn_of(name):
         spec = demo.GROUPS_BY_NAME.get(name)
         return spec.dn if spec else ""
+
+    # --- Entra ID -------------------------------------------------------------------
+
+    def _entra(self, users):
+        """Write the synthetic tenant's mirror: groups, accounts, their links, run history.
+
+        The same idea as `_directory`: no fake Graph, only what a sync would have left behind,
+        worked out by the sync's own value helpers (`apps.core.demo.entra_mirror`). The Entra
+        group levels and their position defaults were seeded with the rest of the catalog;
+        this is what gives their badges something to say.
+
+        Written whether or not Entra ID is enabled, as the directory is -- except over a
+        mirror that already holds a real tenant: the sync refuses to mix two tenants, and so
+        does the seed. (Only the mirror is spared: the demo catalog is written regardless, as
+        the AD half's is. Do not seed a real instance.)
+        """
+        foreign = entra_mirror.foreign_tenants()
+        if foreign:
+            return {"skipped": sorted(str(tenant) for tenant in foreign)}
+        self._check_referenced_entra_groups()
+        now = timezone.now()
+        for spec in entra_demo.GROUPS:
+            entra_mirror.upsert_group(spec, now=now)
+        for spec in entra_demo.ACCOUNTS:
+            entra_mirror.upsert_account(spec, now=now)
+        for spec in entra_demo.ACCOUNTS:
+            entra_mirror.link_by_hand(spec, now=now)
+        entra_sync.link_accounts(now=now)
+        self._entra_runs(users, now)
+        accounts = EntraAccount.objects.all()
+        return {
+            "groups": EntraGroup.objects.count(),
+            "synced": EntraGroup.objects.filter(source=EntraGroup.Source.SYNCED).count(),
+            "inactive": EntraGroup.objects.filter(is_active=False).count(),
+            "accounts": accounts.count(),
+            "external": accounts.filter(source__in=EntraAccount.EXTERNAL_SOURCES).count(),
+            "linked": accounts.filter(person__isnull=False).count(),
+            "runs": EntraSyncRun.objects.count(),
+        }
+
+    def _check_referenced_entra_groups(self):
+        """Refuse to seed an Entra group level naming a group the demo tenant does not have,
+        for the reason `_check_referenced_groups` gives."""
+        known = {spec.object_id for spec in entra_demo.GROUPS}
+        unknown = sorted(
+            AccessLevel.objects.filter(access_model=AccessLevel.AccessModel.ENTRA_GROUP)
+            .exclude(entra_group_id__in=known)
+            .values_list("entra_group_name", flat=True)
+        )
+        if unknown:
+            raise CommandError(
+                "Seeded access levels reference Entra groups that "
+                f"apps/core/demo/entra_data.py does not describe: {', '.join(unknown)}. Add a "
+                "CloudGroupSpec for each (state=ABSENT if it is meant to be a broken reference)."
+            )
+
+    def _entra_runs(self, users, now):
+        """Three runs, oldest first, each identified like the directory's: the first import, a
+        scheduled run that failed on an expired client secret, and last night's, which found
+        the E3 licence group's source of authority moved to the cloud, the Teams Phone pilot
+        group gone, and a guest blocked. `SyncResult` builds their summaries and logs."""
+        Status, Trigger = EntraSyncRun.Status, EntraSyncRun.Trigger
+        groups = sorted(entra_demo.MIRRORED_GROUPS, key=lambda spec: spec.name.lower())
+        accounts = sorted(entra_demo.ACCOUNTS, key=lambda spec: spec.upn.lower())
+        unmatched = entra_worklists.unmatched(EntraAccount.objects.all()).count()
+
+        # 1. The first import: every group and account became a row, and the link pass linked
+        #    whoever it could.
+        first_groups = SyncResult(kind="groups", dry_run=False)
+        for row, spec in enumerate(groups, start=1):
+            note = entra_mirror.describe_group(spec, before_conversion=True)
+            first_groups.record(row, spec.name, "created", note, dn=str(spec.object_id))
+        first_accounts = AccountSyncResult(kind="accounts", dry_run=False)
+        for row, spec in enumerate(accounts, start=1):
+            enabled = True if spec.key == entra_demo.DISABLED_LAST_NIGHT else None
+            note = entra_mirror.describe_account(spec, now=now, enabled=enabled)
+            first_accounts.record(row, spec.upn, "created", note, dn=str(spec.object_id))
+        linked = (
+            EntraAccount.objects.filter(person__isnull=False)
+            .exclude(link_method=EntraAccount.LinkMethod.MANUAL)
+            .select_related("person")
+            .order_by("upn")
+        )
+        for account in linked:
+            first_accounts.record(
+                0, account.upn, "linked", entra_mirror.link_note(account), dn=str(account.object_id)
+            )
+        first_accounts.unmatched = unmatched
+        entra_mirror.record_run(
+            status=Status.COMPLETED,
+            trigger=Trigger.MANUAL,
+            created_by=users["admin"],
+            started_at=now - dt.timedelta(days=21),
+            seconds=41,
+            groups=first_groups,
+            accounts=first_accounts,
+        )
+
+        # 2. The secret expired: the token request failed before anything was read.
+        entra_mirror.record_run(
+            status=Status.FAILED,
+            trigger=Trigger.SCHEDULED,
+            started_at=now - dt.timedelta(days=2),
+            seconds=2,
+            error=entra_demo.EXPIRED_SECRET_ERROR,
+        )
+
+        # 3. Last night's, after the secret was renewed: the one the status card reports.
+        nightly_groups = SyncResult(kind="groups", dry_run=False)
+        active = [spec for spec in groups if spec.state == demo.State.ACTIVE]
+        for row, spec in enumerate(active, start=1):
+            if spec.converted:
+                nightly_groups.record(
+                    row,
+                    spec.name,
+                    "updated",
+                    "source of authority moved to the cloud",
+                    dn=str(spec.object_id),
+                )
+            else:
+                nightly_groups.record(row, spec.name, "unchanged", dn=str(spec.object_id))
+        for spec in groups:
+            if spec.state == demo.State.INACTIVE:
+                nightly_groups.record(
+                    0,
+                    spec.name,
+                    "deactivated",
+                    entra_sync.MISSING_GROUP_MESSAGE,
+                    dn=str(spec.object_id),
+                )
+        nightly_accounts = AccountSyncResult(kind="accounts", dry_run=False)
+        for row, spec in enumerate(accounts, start=1):
+            if spec.key == entra_demo.DISABLED_LAST_NIGHT:
+                nightly_accounts.record(
+                    row, spec.upn, "updated", "disabled in Entra ID", dn=str(spec.object_id)
+                )
+            else:
+                nightly_accounts.record(row, spec.upn, "unchanged", dn=str(spec.object_id))
+        nightly_accounts.unmatched = unmatched
+        entra_mirror.record_run(
+            status=Status.COMPLETED,
+            trigger=Trigger.SCHEDULED,
+            started_at=now - dt.timedelta(days=1),
+            seconds=38,
+            groups=nightly_groups,
+            accounts=nightly_accounts,
+        )
+
+    def _report_entra(self, counts):
+        """Say what the Entra ID half of the seed did, and what it cannot do."""
+        if counts.get("skipped"):
+            self.stdout.write(
+                self.style.WARNING(
+                    f"The Entra ID mirror holds tenant {', '.join(counts['skipped'])}: a real "
+                    "tenant has been synchronized here, so the demo tenant was not written. "
+                    "The sync refuses to mix two tenants, and so does the seed."
+                )
+            )
+            return
+        if not settings.ENTRA_ENABLED:
+            self.stdout.write(
+                self.style.WARNING(
+                    "Entra ID is disabled, so the seeded tenant, the Entra group badges and the "
+                    "Admin > Entra ID page stay hidden. Development settings turn the demo tenant "
+                    "on by themselves while ENTRA_TENANT_ID and ENTRA_SYNC_CLIENT_ID are both "
+                    "unset; under production settings, copy the demo block at the end of the "
+                    "Entra ID section of .env.example into .env."
+                )
+            )
+            return
+        self.stdout.write(
+            "Demo tenant: {groups} group(s) ({synced} synced from AD, {inactive} inactive), "
+            "{accounts} account(s) ({external} guests and external members, {linked} linked "
+            "to people), {runs} sync run(s).".format(**counts)
+        )
+        if str(settings.ENTRA_TENANT_ID) == str(entra_demo.TENANT_ID):
+            self.stdout.write(
+                f"Entra ID is on with the synthetic demo tenant ({entra_demo.TENANT_NAME}). "
+                "Test connection, Sync now and `manage.py sync_entra` fail: there is no tenant."
+            )
+        else:
+            self.stdout.write(
+                self.style.WARNING(
+                    f"ENTRA_TENANT_ID is {settings.ENTRA_TENANT_ID}, not the demo tenant. The "
+                    "next Entra ID sync will refuse to run until the demo rows are deleted "
+                    "(Django admin, Entra groups and Entra accounts, as a superuser). Do not "
+                    "seed demo data on a real instance."
+                )
+            )

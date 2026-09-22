@@ -436,7 +436,9 @@ def _keep_sticky(values: dict, existing, names) -> dict:
     return values
 
 
-def _group_values(group: GraphGroup, tenant_id, existing: EntraGroup | None = None) -> dict:
+def group_values(group: GraphGroup, tenant_id, existing: EntraGroup | None = None) -> dict:
+    """The `EntraGroup` columns for one listed group. Public because the demo seed writes its
+    synthetic tenant through it, so the demo rows are exactly what a sync would store."""
     values = {
         "tenant_id": tenant_id,
         "display_name": group.display_name,
@@ -469,7 +471,8 @@ def lower_first(label: str) -> str:
     return label[:1].lower() + label[1:]
 
 
-def _describe_group(obj: EntraGroup) -> str:
+def describe_group(obj: EntraGroup) -> str:
+    """The run-log note for a group the sync created ("Security, synced from AD")."""
     parts = [obj.get_kind_display()]
     if obj.membership == EntraGroup.Membership.DYNAMIC:
         parts.append("dynamic")
@@ -480,13 +483,13 @@ def _describe_group(obj: EntraGroup) -> str:
 
 def _sync_group(group: GraphGroup, existing: dict, now, tenant_id) -> tuple[str, str]:
     obj = existing.get(group.id)
-    values = _group_values(group, tenant_id, obj)
+    values = group_values(group, tenant_id, obj)
     if obj is None:
         obj = EntraGroup.objects.create(
             object_id=group.id, first_seen_at=now, last_seen_at=now, **values
         )
         existing[group.id] = obj
-        return "created", _describe_group(obj)
+        return "created", describe_group(obj)
 
     changed: list[str] = []
     notes: list[str] = []
@@ -594,9 +597,11 @@ SIGN_IN_FIELDS = (
 MISSING_ACCOUNT_MESSAGE = "Not returned by the user listing (deleted, or excluded by pattern)"
 
 
-def _account_values(
+def account_values(
     user: GraphUser, tenant_id, existing: EntraAccount | None = None, own_domains=()
 ) -> dict:
+    """The `EntraAccount` columns for one listed user, sign-in activity apart. Public for the
+    same reason as `group_values`."""
     values = {
         "tenant_id": tenant_id,
         "upn": user.upn,
@@ -633,7 +638,7 @@ def _account_values(
     return values
 
 
-def _sign_in_values(user: GraphUser, obj: EntraAccount | None) -> dict:
+def sign_in_values(user: GraphUser, obj: EntraAccount | None) -> dict:
     """The sign-in columns to store. When the run could not read sign-in activity the old
     timestamps stay, marked unknown, so the stale-guest worklist stops trusting them."""
     if user.sign_in is None:
@@ -649,7 +654,8 @@ def _sign_in_values(user: GraphUser, obj: EntraAccount | None) -> dict:
     }
 
 
-def _describe_account(values: dict) -> str:
+def describe_account(values: dict) -> str:
+    """The run-log note for an account the sync created ("Guest, invitation pending")."""
     label = EntraAccount.Source(values["source"]).label
     state = "enabled" if values["account_enabled"] else "disabled"
     if values["external_user_state"] == EntraAccount.PENDING:
@@ -661,14 +667,14 @@ def _sync_account(
     user: GraphUser, existing: dict, now, tenant_id, own_domains=()
 ) -> tuple[str, str]:
     obj = existing.get(user.id)
-    values = _account_values(user, tenant_id, obj, own_domains)
-    sign_in = _sign_in_values(user, obj)
+    values = account_values(user, tenant_id, obj, own_domains)
+    sign_in = sign_in_values(user, obj)
     if obj is None:
         obj = EntraAccount.objects.create(
             object_id=user.id, first_seen_at=now, last_seen_at=now, **values, **sign_in
         )
         existing[user.id] = obj
-        return "created", _describe_account(values)
+        return "created", describe_account(values)
 
     changed: list[str] = []
     notes: list[str] = []
@@ -740,7 +746,8 @@ def link_accounts(result: AccountSyncResult | None = None, *, now=None) -> tuple
     automatic link whose basis has gone. Returns `(linked, unlinked, unmatched)`.
 
     A link made or removed by hand is never touched: `link_method=manual` with a person means
-    "theirs, whatever the attributes say", and with no person "leave it unlinked".
+    "theirs, whatever the attributes say", and with no person "leave it unlinked". Also used by
+    the demo seed, so the demo tenant links the way a sync would.
     """
     now = now or timezone.now()
     by_employee_id = {p.employee_id: p for p in Person.objects.exclude(employee_id="")}

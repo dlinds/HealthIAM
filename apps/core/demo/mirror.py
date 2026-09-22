@@ -29,7 +29,7 @@ from apps.directory.matching import decode_group_type
 from apps.directory.models import ADGroup, ADGroupRoute, DirectorySyncRun
 from apps.directory.sync import SyncResult
 
-from . import data
+from . import data, entra_data
 
 #: Fields a re-seed brings back in line with `data.py`. Deliberately excludes `name`, `cn`,
 #: `distinguished_name`, `is_active` and `inactivated_at`: those are drift's to own.
@@ -40,6 +40,8 @@ SEED_MANAGED_GROUP_FIELDS = (
     "category",
     "managed_by_dn",
     "when_changed",
+    "object_sid",
+    "cloud_object_id",
 )
 SEED_MANAGED_USER_FIELDS = (
     "first_name",
@@ -83,6 +85,11 @@ def group_values(spec: data.GroupSpec) -> dict:
         "category": category,
         "managed_by_dn": spec.managed_by,
         "when_changed": data.SEEDED_WHEN_CHANGED,
+        "object_sid": data.group_sid(spec.name),
+        # Group writeback's `Group_<objectId>` marker, as the AD sync reads it back.
+        "cloud_object_id": (
+            entra_data.group_id(spec.written_back_from) if spec.written_back_from else None
+        ),
     }
 
 

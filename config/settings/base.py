@@ -239,7 +239,9 @@ if AD_AUTH_ENABLED:
 # members, guests and external members -- are mirrored and linked to people. It signs in as an
 # application (client credentials) with its own registration, separate from the SSO one above
 # unless you choose to reuse it; see docs/entra-setup.md. ENTRA_TENANT_ID is shared with SSO.
-# Leave ENTRA_SYNC_CLIENT_ID empty to disable the integration entirely.
+# Leave ENTRA_SYNC_CLIENT_ID empty to disable the integration entirely -- except in
+# development, where with ENTRA_TENANT_ID empty too config/settings/dev.py substitutes a
+# synthetic demo tenant.
 ENTRA_SYNC_CLIENT_ID = env("ENTRA_SYNC_CLIENT_ID")
 ENTRA_ENABLED = bool(ENTRA_TENANT_ID and ENTRA_SYNC_CLIENT_ID)
 # One of the two credentials. A certificate is preferred (docs/entra-setup.md): a .pem holding
