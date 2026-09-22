@@ -192,6 +192,8 @@ class AccessLevelForm(ApplicationScopedForm):
             "description",
             "access_model",
             "ad_group_name",
+            "entra_group_id",
+            "entra_group_name",
             "in_app_instructions",
             "ticket_assignment_team",
             "sort_order",
@@ -203,6 +205,18 @@ class AccessLevelForm(ApplicationScopedForm):
         self.instance.application = application
         self.fields["in_app_instructions"].widget.attrs["rows"] = 2
         self.fields["description"].widget.attrs["rows"] = 2
+        self.fields["entra_group_id"].widget.attrs["placeholder"] = (
+            "00000000-0000-0000-0000-000000000000"
+        )
+        if getattr(settings, "ENTRA_ENABLED", False):
+            # Filled from the cloud-group picker, so the browser's own suggestions only get in
+            # the way.
+            self.fields["entra_group_id"].widget.attrs["autocomplete"] = "off"
+        self.fields[
+            "entra_group_name"
+        ].help_text = (
+            "Filled from Entra ID when you pick the group; the object ID is what identifies it."
+        )
         if settings.AD_ENABLED:
             # The input drives the imported-group picker; free text still saves. hx-swap is
             # explicit because the enclosing form swaps with outerHTML.
@@ -215,6 +229,32 @@ class AccessLevelForm(ApplicationScopedForm):
                     "autocomplete": "off",
                 }
             )
+
+    def _touched(self, *names) -> bool:
+        """A new level, or one whose group (or access model) this post changes."""
+        return not self.instance.pk or any(n in self.changed_data for n in names)
+
+    def clean(self):
+        cleaned = super().clean()
+        model = cleaned.get("access_model")
+        # Imported here: both apps import the catalog.
+        if model == AccessLevel.AccessModel.ENTRA_GROUP:
+            group_id = cleaned.get("entra_group_id")
+            if group_id and self._touched("entra_group_id", "access_model"):
+                from django.core.exceptions import ValidationError
+
+                from apps.entra.services import check_group_for_level
+
+                try:
+                    group = check_group_for_level(group_id)
+                except ValidationError as exc:
+                    for message in exc.message_dict.get("entra_group_id", exc.messages):
+                        self.add_error("entra_group_id", message)
+                else:
+                    if group is not None:
+                        # The mirror's spelling, whatever was typed: the name is only a label.
+                        cleaned["entra_group_name"] = group.display_name[:256]
+        return cleaned
 
 
 class AnalystForm(ApplicationScopedForm):

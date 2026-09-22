@@ -78,7 +78,7 @@
         <dl class="row mb-0">
           <dt class="col-sm-4">Last run</dt>
           <dd class="col-sm-8">
-            {% if last_run %}<a href="{{ last_run.get_absolute_url }}">#{{ last_run.pk }}</a> · {{ last_run.get_scope_display|lower }} · {{ last_run.get_status_display|lower }} · {{ last_run.created_at|date:"Y-m-d H:i" }}{% if last_run.created_by %} by {{ last_run.created_by.display_name }}{% endif %}
+            {% if last_run %}<a href="{{ last_run.get_absolute_url }}">#{{ last_run.pk }}</a> · {{ last_run.scope_label|lower }} · {{ last_run.get_status_display|lower }} · {{ last_run.created_at|date:"Y-m-d H:i" }}{% if last_run.created_by %} by {{ last_run.created_by.display_name }}{% endif %}
             {% else %}<span class="text-body-secondary">never</span>{% endif %}
           </dd>
           <dt class="col-sm-4">AD groups</dt><dd class="col-sm-8">{{ groups_active }} active · {{ groups_inactive }} inactive</dd>

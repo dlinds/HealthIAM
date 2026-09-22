@@ -121,5 +121,18 @@
     </div>
   </div>
   {% endif %}
+  {% if ENTRA_ENABLED %}
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-header"><i class="bi bi-exclamation-triangle me-1"></i>Broken Entra references</div>
+      <div class="card-body">
+        <p class="text-body-secondary small">Access levels whose cloud group was not returned by the last Entra ID sync, or can no longer be granted by request, with the positions that receive them by default.</p>
+        <a class="btn btn-primary" href="{% url 'entra:broken_references' %}"><i class="bi bi-list-ul me-1"></i>View</a>
+        <a class="btn btn-outline-primary" href="{% url 'entra:broken_references' %}?format=xlsx"><i class="bi bi-file-earmark-excel me-1"></i>Download Excel</a>
+        <a class="btn btn-outline-primary" href="{% url 'entra:broken_references' %}?format=csv"><i class="bi bi-filetype-csv me-1"></i>Download CSV</a>
+      </div>
+    </div>
+  </div>
+  {% endif %}
 </div>
 {% endblock %}

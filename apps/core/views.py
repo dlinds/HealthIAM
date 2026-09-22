@@ -35,6 +35,15 @@ def _sample(key, qs):
     return qs.order_by("code" if key.startswith("positions") else "name")[:8]
 
 
+def _entra_quality() -> dict:
+    """The Entra ID bucket: broken cloud-group references. Imported here, like the account
+    mirror above, so the dashboard costs nothing extra where Entra ID is not configured."""
+    from apps.entra import references as entra_references
+
+    broken = [level for level, _ref in entra_references.broken_references()]
+    return {"broken_entra_references": (len(broken), broken[:8])}
+
+
 @role_required("can_view")
 def dashboard(request):
     user = request.user
@@ -99,6 +108,8 @@ def dashboard(request):
             ("accounts_without_person", unlinked),
         ):
             quality_items[key] = (qs.count(), list(qs.order_by("sam_account_name")[:8]))
+    if getattr(settings, "ENTRA_ENABLED", False):
+        quality_items.update(_entra_quality())
     return render(
         request,
         "core/dashboard.html",

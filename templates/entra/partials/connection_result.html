@@ -1,0 +1,22 @@
+{# Result of Admin > Entra ID > Test connection (htmx fragment, swapped into #connection-result). #}
+{% if info.ok %}
+<div class="alert {% if info.missing %}alert-warning{% else %}alert-success{% endif %} mb-0">
+  <div><i class="bi bi-check-circle-fill me-1"></i><strong>Connected</strong>{% if info.server %} to <span class="text-mono">{{ info.server }}</span>{% endif %}{% if info.elapsed_ms %} in {{ info.elapsed_ms }} ms{% endif %}.</div>
+  <ul class="mb-0 mt-1 small">
+    {% if info.tenant %}
+    <li>Tenant {{ info.tenant.display_name|default:"(unnamed)" }} <span class="text-mono">{{ info.tenant.id }}</span>{% if info.tenant.default_domain %} · {{ info.tenant.default_domain }}{% endif %}.</li>
+    <li>{% if info.tenant.is_hybrid %}Hybrid: the tenant synchronizes from on-premises AD{% if info.tenant.on_premises_last_sync_at %} (last {{ info.tenant.on_premises_last_sync_at|date:"Y-m-d H:i" }}){% endif %}.{% else %}Cloud-only: no directory synchronization.{% endif %}</li>
+    {% endif %}
+    {% if info.granted %}<li>Permissions: <span class="text-mono">{{ info.granted|join:", " }}</span>.</li>{% endif %}
+    {% if info.missing %}<li class="text-danger">Missing: <span class="text-mono">{{ info.missing|join:", " }}</span> &mdash; grant {% if info.missing|length == 1 %}it{% else %}them{% endif %} as application permissions, with admin consent.</li>{% endif %}
+    {% for w in info.warnings %}<li class="text-warning-emphasis">{{ w }}</li>{% endfor %}
+  </ul>
+</div>
+{% else %}
+<div class="alert alert-danger mb-0">
+  <div><i class="bi bi-x-circle-fill me-1"></i><strong>Connection failed</strong>{% if info.server %} (<span class="text-mono">{{ info.server }}</span>){% endif %}.</div>
+  {% if info.error %}<div class="text-mono small mt-1">{{ info.error }}</div>{% endif %}
+  {% for w in info.warnings %}<div class="small mt-1">{{ w }}</div>{% endfor %}
+  <div class="small mt-2">Check the tenant ID, the application (client) ID and its certificate or secret, and that the application permissions have admin consent. See docs/entra-setup.md.</div>
+</div>
+{% endif %}

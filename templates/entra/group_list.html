@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block title %}Entra groups · HealthIAM{% endblock %}
+{% block content %}
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+  <h1 class="h3 mb-0">Entra groups</h1>
+  <div>
+    {% if iam.can_edit_any_access_levels %}
+    <a class="btn btn-primary" href="{% url 'entra:group_adopt' %}"><i class="bi bi-plus-lg me-1"></i>Add to catalog</a>
+    {% endif %}
+    {% if iam.can_manage_entra %}
+    <a class="btn btn-outline-secondary" href="{% url 'entra:admin_index' %}"><i class="bi bi-arrow-repeat me-1"></i>Entra ID</a>
+    {% endif %}
+  </div>
+</div>
+<p class="text-body-secondary small">
+  Groups mirrored from Entra ID by the sync. Only assigned security and Microsoft 365 groups mastered in the cloud can back an access level; a group
+  <span class="badge text-bg-light border">synced from AD</span> is an Active Directory group, referenced as one. Membership is not imported.
+  {% if not groups_synced %}<span class="text-warning-emphasis">No group sync has completed yet.</span>{% endif %}
+</p>
+<form class="row g-2 mb-3 js-autosubmit" method="get">
+  <div class="col-md-3"><input class="form-control" type="search" name="q" value="{{ q }}" placeholder="Name, nickname, AD name or object ID"></div>
+  <div class="col-md-2">
+    <select class="form-select" name="active">
+      <option value="1" {% if active == '1' %}selected{% endif %}>Active</option>
+      <option value="0" {% if active == '0' %}selected{% endif %}>No longer in Entra ID</option>
+      <option value="all" {% if active == 'all' %}selected{% endif %}>All</option>
+    </select>
+  </div>
+  <div class="col-md-2">
+    <select class="form-select" name="kind">
+      <option value="">Any kind</option>
+      {% for value, label in kinds %}<option value="{{ value }}" {% if kind == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="col-md-2">
+    <select class="form-select" name="source">
+      <option value="">Any source</option>
+      {% for value, label in sources %}<option value="{{ value }}" {% if source == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="col-md-2">
+    <select class="form-select" name="membership">
+      <option value="">Any membership</option>
+      {% for value, label in memberships %}<option value="{{ value }}" {% if membership == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="col-auto d-flex align-items-center">
+    <div class="form-check">
+      <input class="form-check-input" type="checkbox" id="assignable" name="assignable" value="1" {% if assignable %}checked{% endif %}>
+      <label class="form-check-label" for="assignable">Can back an access level</label>
+    </div>
+  </div>
+  <div class="col-auto d-flex align-items-center">
+    <div class="form-check">
+      <input class="form-check-input" type="checkbox" id="unreferenced" name="unreferenced" value="1" {% if unreferenced %}checked{% endif %}>
+      <label class="form-check-label" for="unreferenced">Not referenced by any access level</label>
+    </div>
+  </div>
+  <div class="col-auto"><button class="btn btn-outline-secondary" type="submit">Filter</button></div>
+</form>
+<div class="table-responsive">
+<table class="table table-hover table-sm align-middle">
+  <thead><tr><th>Group</th><th>Description</th><th>Kind</th><th>Source</th><th>Referenced by</th><th>Last seen</th><th>Status</th></tr></thead>
+  <tbody>
+  {% for g in object_list %}
+    <tr class="{% if not g.is_active %}text-body-tertiary{% endif %}">
+      <td>
+        {{ g.display_name }}
+        {% if g.mail_nickname %}<div class="small text-body-secondary text-mono">{{ g.mail_nickname }}</div>{% endif %}
+        <div class="small text-body-tertiary text-mono">{{ g.object_id }}</div>
+      </td>
+      <td class="small">{{ g.description|truncatechars:120 }}</td>
+      <td>
+        <span class="badge text-bg-light border">{{ g.get_kind_display }}</span>
+        {% if g.membership == 'dynamic' %}<span class="badge text-bg-warning" title="{{ g.membership_rule }}">dynamic</span>{% endif %}
+        {% if g.is_assignable_to_role %}<span class="badge text-bg-danger" title="Members can hold Entra admin roles">role-assignable</span>{% endif %}
+        {% if g.unsuitable_reason and g.source != 'synced' %}<div class="small text-body-tertiary">{{ g.unsuitable_reason }}</div>{% endif %}
+      </td>
+      <td class="small">
+        {% if g.source == 'synced' %}<span class="badge text-bg-light border">synced from AD</span>
+          <div class="text-mono">{{ g.on_premises_sam_account_name }}</div>
+        {% elif g.source == 'converted' %}<span class="badge text-bg-info" title="Synchronized from AD once; its membership is managed in the cloud now">converted to cloud</span>
+          {% if g.on_premises_sam_account_name %}<div class="text-mono">was {{ g.on_premises_sam_account_name }}</div>{% endif %}
+        {% else %}<span class="text-body-secondary">cloud</span>{% endif %}
+      </td>
+      <td class="small">
+        {% for level in g.referencing_levels %}
+          <div><a href="{{ level.get_absolute_url }}">{{ level.application.name }} · {{ level.name }}</a>{% if level.access_model == 'ad_group' %} <span class="badge text-bg-light border" title="References the group by its AD name">AD group</span>{% endif %}{% if not level.is_active %} <span class="badge text-bg-secondary">inactive level</span>{% endif %}</div>
+        {% empty %}<span class="text-body-tertiary">none</span>{% endfor %}
+      </td>
+      <td class="small text-nowrap">{{ g.last_seen_at|date:"Y-m-d" }}</td>
+      <td>{% if g.is_active %}<span class="badge text-bg-success">Active</span>{% else %}<span class="badge text-bg-secondary" title="Not returned by the sync since {{ g.inactivated_at|date:'Y-m-d' }}">Gone</span>{% endif %}</td>
+    </tr>
+  {% empty %}
+    <tr><td colspan="7" class="text-body-secondary">No Entra groups found.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% include "partials/pagination.html" %}
+{% endblock %}

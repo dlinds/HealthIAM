@@ -25,6 +25,7 @@ def iam(request):
             "can_manage_people": p.can_manage_people(user),
             "can_manage_person_types": p.can_manage_person_types(user),
             "can_link_accounts": p.can_link_accounts(user),
+            "can_manage_entra": p.can_manage_entra(user),
             "role_labels": p.role_labels(user) if user is not None else [],
         },
         "AUTH_LOCAL_LOGIN": settings.AUTH_LOCAL_LOGIN,
@@ -32,5 +33,6 @@ def iam(request):
         "AD_ENABLED": settings.AD_ENABLED,
         "AD_ACCOUNTS_ENABLED": getattr(settings, "AD_ACCOUNTS_ENABLED", False),
         "AD_AUTH_ENABLED": settings.AD_AUTH_ENABLED,
+        "ENTRA_ENABLED": getattr(settings, "ENTRA_ENABLED", False),
         "SUPPORT_CONTACT": settings.SUPPORT_CONTACT,
     }

@@ -300,6 +300,18 @@ class DirectorySyncRun(TimeStampedModel):
         return reverse("directory:run_detail", args=[self.pk])
 
     @property
+    def scope_label(self) -> str:
+        """The scope as run. A full sync is named for the passes it recorded -- a deployment
+        without an account search base has two -- and, when it recorded none (it failed, or is
+        still running), for the passes a full sync has here now."""
+        if self.scope != self.Scope.ALL:
+            return self.get_scope_display()
+        from .config import PASSES, describe_passes, full_sync_passes
+
+        ran = [name for name in PASSES if (self.summary or {}).get(name) is not None]
+        return describe_passes(ran or full_sync_passes())
+
+    @property
     def total_errors(self) -> int:
         return sum((part or {}).get("errors", 0) for part in (self.summary or {}).values())
 

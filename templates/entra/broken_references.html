@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Broken Entra references · HealthIAM{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb">
+  <li class="breadcrumb-item"><a href="{% url 'access:reports_index' %}">Reports</a></li>
+  <li class="breadcrumb-item active">Broken Entra references</li>
+</ol></nav>
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+  <div>
+    <h1 class="h3 mb-1">Access levels whose Entra group is gone or can no longer be granted</h1>
+    <div class="text-body-secondary small">
+      Every <em>Entra group</em> access level whose group was not returned by the last sync (missing), was returned before but not any more (gone),
+      or can no longer be granted by request (made dynamic or role-assignable, or now synced from AD).
+      Groups outside the sync filter{% if patterns %} (<span class="text-mono">{{ patterns|join:", " }}</span>){% endif %}{% if exclude_patterns %}, or excluded from it (<span class="text-mono">{{ exclude_patterns|join:", " }}</span>){% endif %} cannot be checked and are not listed.
+    </div>
+  </div>
+  <div>
+    <a class="btn btn-primary" href="?format=xlsx"><i class="bi bi-file-earmark-excel me-1"></i>Download Excel</a>
+    <a class="btn btn-outline-primary" href="?format=csv"><i class="bi bi-filetype-csv me-1"></i>Download CSV</a>
+  </div>
+</div>
+{% if not groups_synced %}
+<div class="alert alert-warning">The Entra group list has not been mirrored yet, so nothing can be checked. Run a sync under Admin → Entra ID first.</div>
+{% endif %}
+<div class="table-responsive">
+<table class="table table-hover table-sm align-middle">
+  <thead><tr><th>Application</th><th>Access level</th><th>Group</th><th>Status</th><th>Last seen</th><th class="text-end">Positions with default</th></tr></thead>
+  <tbody>
+  {% for row in rows %}
+    <tr>
+      <td><a href="{{ row.level.application.get_absolute_url }}">{{ row.level.application.name }}</a> {% include "catalog/partials/lifecycle_badge.html" with app=row.level.application %}</td>
+      <td><a href="{{ row.level.get_absolute_url }}">{{ row.level.name }}</a>{% if not row.level.is_active %} <span class="badge text-bg-secondary">inactive level</span>{% endif %}</td>
+      <td>
+        {% if row.level.access_model == 'entra_group' %}{{ row.level.entra_group_name|default:"—" }}<div class="small text-body-tertiary text-mono">{{ row.level.entra_group_id }}</div>
+        {% else %}<span class="text-mono">{{ row.level.ad_group_name }}</span> <span class="badge text-bg-light border">AD group</span>{% endif %}
+      </td>
+      <td><span class="badge {{ row.ref.css }}" title="{{ row.ref.title }}">{{ row.ref.label }}</span></td>
+      <td class="small text-nowrap">{% if row.ref.last_seen %}{{ row.ref.last_seen|date:"Y-m-d" }}{% else %}—{% endif %}</td>
+      <td class="text-end">{{ row.level.positions_with_default }}</td>
+    </tr>
+  {% empty %}
+    <tr><td colspan="6" class="text-body-secondary">{% if groups_synced %}Every checked access level points at a group that can still be granted.{% else %}Nothing checked yet.{% endif %}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endblock %}

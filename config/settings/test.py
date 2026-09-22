@@ -48,9 +48,9 @@ AD_AUTH_FAILURE_WINDOW = 600
 AD_AUTH_LOCKOUT_SECONDS = 60
 
 # Entra ID is "configured" the same way: a tenant and an application nothing can reach, so the
-# checks are exercised and the Graph client is tested against a fake HTTP session. The hosts
-# are under .invalid, which never resolves, so a test that forgot the fake fails fast instead of
-# calling Microsoft.
+# Entra URLs, nav entries and checks are exercised; tests replace the Graph client with a fake
+# tenant (tests/fake_graph.py). The hosts are under .invalid, which never resolves, so a test
+# that forgot the fake fails fast instead of calling Microsoft.
 ENTRA_TENANT_ID = "5f0e7a6c-0b1d-4c2e-9f3a-7b6d5e4c3b2a"
 ENTRA_SYNC_CLIENT_ID = "0c4a9d2e-7f61-4b58-a3c9-2e1f0d6b7a85"
 ENTRA_ENABLED = True
@@ -63,5 +63,7 @@ ENTRA_GRAPH_ENDPOINT = "https://graph.test.invalid"
 # login.microsoftonline.com about it. The production default has a test of its own.
 ENTRA_VALIDATE_AUTHORITY = False
 ENTRA_TIMEOUT = 5
+ENTRA_GROUPS_NAME_PATTERNS = []
+ENTRA_GROUPS_EXCLUDE_PATTERNS = ["IAM-*"]
 ENTRA_EMPLOYEE_ID_ATTRIBUTE = "employeeId"
 ENTRA_SIGN_IN_ACTIVITY = True

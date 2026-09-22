@@ -132,13 +132,25 @@ class _Echo:
         return value
 
 
+#: What a spreadsheet takes for the start of a formula. Exports carry names and addresses that
+#: come from outside the organization -- an Entra ID guest names itself, and any member can name
+#: a Microsoft 365 group -- so no cell may reach Excel as one.
+FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _csv_cell(value):
+    if isinstance(value, str) and value.startswith(FORMULA_PREFIXES):
+        return "'" + value
+    return value
+
+
 def csv_response(header, rows, filename) -> StreamingHttpResponse:
     writer = csv.writer(_Echo())
 
     def stream():
         yield writer.writerow(header)
         for row in rows:
-            yield writer.writerow(row)
+            yield writer.writerow([_csv_cell(value) for value in row])
 
     response = StreamingHttpResponse(stream(), content_type="text/csv; charset=utf-8")
     response["Content-Disposition"] = f'attachment; filename="{filename}"'
@@ -156,7 +168,10 @@ def xlsx_response(header, rows, filename, sheet_title="Report") -> HttpResponse:
     widths = [len(h) for h in header]
     for row in rows:
         ws.append(row)
-        for i, value in enumerate(row):
+        for i, (cell, value) in enumerate(zip(ws[ws.max_row], row, strict=False)):
+            if isinstance(value, str) and value.startswith("="):
+                # openpyxl stores a string starting with "=" as a formula; keep it text.
+                cell.data_type = "s"
             widths[i] = min(max(widths[i], len(str(value or ""))), 60)
     for i, w in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(i)].width = w + 2

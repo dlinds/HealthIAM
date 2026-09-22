@@ -301,6 +301,7 @@ class AccessLevel(ApplicationChildAuditMixin, TimeStampedModel):
 
     class AccessModel(models.TextChoices):
         AD_GROUP = "ad_group", "AD group membership"
+        ENTRA_GROUP = "entra_group", "Entra ID group membership"
         IN_APP = "in_app", "Configured in the application"
         TICKET = "ticket", "Ticket to an assignment team"
         OTHER = "other", "Other"
@@ -322,6 +323,18 @@ class AccessLevel(ApplicationChildAuditMixin, TimeStampedModel):
     description = models.TextField(blank=True)
     access_model = models.CharField(max_length=20, choices=AccessModel.choices)
     ad_group_name = models.CharField("AD group", max_length=200, blank=True)
+    # Unlike an AD group, a cloud group has no unique name to key on -- display names repeat
+    # freely in Entra ID -- so the object ID is what identifies it, and the name is only what it
+    # was called when the level was saved. Neither is a foreign key to the mirror, for the
+    # reason ad_group_name is not: the catalog is the record, and a level must still say which
+    # group it means on a deployment that has never synced, or after the group is deleted.
+    entra_group_id = models.UUIDField("Entra group object ID", null=True, blank=True, db_index=True)
+    entra_group_name = models.CharField(
+        "Entra group",
+        max_length=256,
+        blank=True,
+        help_text="The group's display name when the level was saved; the object ID decides.",
+    )
     in_app_instructions = models.TextField(
         "In-app instructions", blank=True, help_text="How to grant this level inside the app."
     )
@@ -379,6 +392,10 @@ class AccessLevel(ApplicationChildAuditMixin, TimeStampedModel):
     def clean(self):
         required = {
             self.AccessModel.AD_GROUP: ("ad_group_name", "Enter the AD group name."),
+            self.AccessModel.ENTRA_GROUP: (
+                "entra_group_id",
+                "Pick an Entra group, or enter its object ID.",
+            ),
             self.AccessModel.IN_APP: ("in_app_instructions", "Describe how it is configured."),
             self.AccessModel.TICKET: ("ticket_assignment_team", "Enter the assignment team."),
         }
@@ -396,6 +413,8 @@ class AccessLevel(ApplicationChildAuditMixin, TimeStampedModel):
     def access_target(self) -> str:
         if self.access_model == self.AccessModel.AD_GROUP:
             return self.ad_group_name
+        if self.access_model == self.AccessModel.ENTRA_GROUP:
+            return self.entra_group_name or str(self.entra_group_id or "")
         if self.access_model == self.AccessModel.TICKET:
             return self.ticket_assignment_team
         if self.access_model == self.AccessModel.IN_APP:

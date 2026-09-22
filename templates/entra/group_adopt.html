@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Add Entra groups to the catalog · HealthIAM{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb"><ol class="breadcrumb">
+  <li class="breadcrumb-item"><a href="{% url 'entra:group_list' %}">Entra groups</a></li>
+  <li class="breadcrumb-item active">Add to catalog</li>
+</ol></nav>
+<h1 class="h3 mb-2">Add Entra groups to the catalog</h1>
+<p class="text-body-secondary small">
+  Assigned cloud security and Microsoft 365 groups that no active access level points at yet. Adopting one creates an access level under the application or service you choose &mdash;
+  it records where the group belongs, and grants nobody anything. Assigning that level to a position is a separate step, and asks for a reason.
+  Groups synced from Active Directory are not listed: add those from AD groups.
+  {% if not groups_synced %}<span class="text-warning-emphasis">No group sync has completed yet.</span>{% endif %}
+</p>
+
+<form class="row g-2 mb-3" method="get">
+  <div class="col-md-4"><input class="form-control" type="search" name="q" value="{{ q }}" placeholder="Search name or description"></div>
+  <div class="col-auto"><button class="btn btn-outline-secondary" type="submit">Search</button></div>
+</form>
+
+{% if truncated %}
+<div class="alert alert-info py-2 small">Showing the first {{ limit }} groups. Search to narrow the list.</div>
+{% endif %}
+
+<form method="post">
+  {% csrf_token %}
+  <div class="table-responsive">
+  <table class="table table-sm align-middle">
+    <thead><tr><th style="width:2.5rem"></th><th>Entra group</th><th>Goes to</th><th>Access level name</th></tr></thead>
+    <tbody>
+    {% for g in groups %}
+      <tr>
+        <td><input class="form-check-input" type="checkbox" name="adopt" value="{{ g.object_id }}"></td>
+        <td>
+          {{ g.display_name }} <span class="badge text-bg-light border">{{ g.get_kind_display }}</span>
+          {% if g.description %}<div class="small text-body-secondary">{{ g.description|truncatechars:90 }}</div>{% endif %}
+          <div class="small text-body-tertiary text-mono">{{ g.object_id }}</div>
+        </td>
+        <td>
+          <select class="form-select form-select-sm" name="application-{{ g.object_id }}">
+            {% for a in targets %}<option value="{{ a.pk }}">{{ a.name }}{% if a.is_service %} (service){% endif %}</option>{% endfor %}
+          </select>
+        </td>
+        <td><input class="form-control form-control-sm" type="text" name="level-{{ g.object_id }}" value="{{ g.display_name|truncatechars:150 }}" maxlength="150"></td>
+      </tr>
+    {% empty %}
+      <tr><td colspan="4" class="text-body-secondary">Every assignable cloud group is already referenced by an access level.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% if groups %}
+  {% if targets %}
+  <button class="btn btn-primary" type="submit">Add the ticked groups</button>
+  <a class="btn btn-outline-secondary" href="{% url 'entra:group_list' %}">Cancel</a>
+  {% else %}
+  <div class="alert alert-warning py-2 small mb-0">You are not an analyst on any application, so there is nowhere to put these groups.</div>
+  {% endif %}
+  {% endif %}
+</form>
+{% endblock %}

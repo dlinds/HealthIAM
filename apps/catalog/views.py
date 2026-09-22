@@ -12,6 +12,7 @@ from django_htmx.http import reswap, retarget, trigger_client_event
 from apps.accounts import permissions as perms
 from apps.accounts.mixins import PermissionCheckMixin, role_required
 from apps.directory import references
+from apps.entra import references as entra_references
 
 from .forms import (
     AccessLevelForm,
@@ -110,6 +111,14 @@ LEVELS_PER_PAGE = 25
 LEVEL_STATUS_CAP = 500
 
 
+def _reference_status(levels) -> dict:
+    """`{level.pk: Reference}` from whichever directory can judge each level: the LDAPS mirror
+    for AD groups, the Entra mirror for cloud groups."""
+    status = entra_references.status_for_levels(levels)
+    status.update(references.status_for_levels(levels))
+    return status
+
+
 def _detail_context(request, application):
     user = request.user
     can_edit = perms.can_edit_application(user, application)
@@ -119,7 +128,7 @@ def _detail_context(request, application):
     levels_qs = application.access_levels.order_by("sort_order", "name")
 
     # The filter searches the columns the table actually shows, so a hit is always visible:
-    # the level name, its description, and the Target cell for AD-group and ticket levels.
+    # the level name, its description, and the Target cell for group and ticket levels.
     levels_q = request.GET.get("levels_q", "").strip()
     shown = levels_qs
     if levels_q:
@@ -127,6 +136,7 @@ def _detail_context(request, application):
             Q(name__icontains=levels_q)
             | Q(description__icontains=levels_q)
             | Q(ad_group_name__icontains=levels_q)
+            | Q(entra_group_name__icontains=levels_q)
             | Q(ticket_assignment_team__icontains=levels_q)
         )
     levels_source = request.GET.get("levels_source", "")
@@ -149,12 +159,16 @@ def _detail_context(request, application):
     # is not a trade worth making. The page's own rows still get their badges; the tab's
     # count goes quiet rather than wrong, and the broken-reference report has the whole
     # picture either way.
-    ad_levels_qs = levels_qs.filter(access_model=AccessLevel.AccessModel.AD_GROUP)
-    if ad_levels_qs.count() <= LEVEL_STATUS_CAP:
-        level_reference_status = references.status_for_levels(list(ad_levels_qs))
+    #
+    # Cloud-group levels are judged by `apps.entra.references` the same way.
+    group_levels_qs = levels_qs.filter(
+        access_model__in=[AccessLevel.AccessModel.AD_GROUP, AccessLevel.AccessModel.ENTRA_GROUP]
+    )
+    if group_levels_qs.count() <= LEVEL_STATUS_CAP:
+        level_reference_status = _reference_status(list(group_levels_qs))
         broken_level_count = sum(1 for r in level_reference_status.values() if r.is_broken)
     else:
-        level_reference_status = references.status_for_levels(list(levels_page.object_list))
+        level_reference_status = _reference_status(list(levels_page.object_list))
         broken_level_count = None
     route_level_count = levels_qs.filter(source=AccessLevel.Source.ROUTE).count()
     return {

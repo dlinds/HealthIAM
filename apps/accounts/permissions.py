@@ -268,3 +268,8 @@ def can_edit_person(user, person) -> bool:
 def can_link_accounts(user) -> bool:
     """Link a directory account to a person, or unlink one."""
     return is_admin(user)
+
+
+def can_manage_entra(user) -> bool:
+    """Entra ID sync: run it, see run history, test the connection."""
+    return is_admin(user)

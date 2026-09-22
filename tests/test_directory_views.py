@@ -154,7 +154,9 @@ def test_access_level_form_carries_picker_attributes_and_free_text_saves(
     assert AccessLevel.objects.get(application=app, name="Custom").ad_group_name == "SG-Custom Team"
 
 
-@override_settings(AD_ENABLED=False)
+# Entra ID is off too: its cloud-group picker carries the same htmx attributes, and this test
+# is about the form with no directory to pick from.
+@override_settings(AD_ENABLED=False, ENTRA_ENABLED=False)
 def test_access_level_form_is_plain_when_ad_is_disabled(as_user, analyst_user, app):
     client = as_user(analyst_user)
     resp = client.get(reverse("catalog:access_level_add", args=[app.pk]), HTTP_HX_REQUEST="true")

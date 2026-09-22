@@ -53,6 +53,16 @@ def fake_directory(monkeypatch):
 
 
 @pytest.fixture
+def fake_tenant(monkeypatch):
+    """An in-memory Entra ID tenant wired in as the client every Entra sync and view builds."""
+    from .fake_graph import build_default_world as build_default_tenant
+
+    fake = build_default_tenant()
+    monkeypatch.setattr("apps.entra.sync.build_client", lambda: fake)
+    return fake
+
+
+@pytest.fixture
 def person_types(db):
     """The default person types, as `bootstrap_person_types` creates them, keyed by code."""
     from apps.people.bootstrap import ensure_person_types

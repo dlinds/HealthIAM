@@ -6,8 +6,23 @@
 <li class="nav-item"><a class="nav-link {% if ns == 'people' and 'type' not in url %}active{% endif %}" href="{% url 'people:person_list' %}">People</a></li>
 <li class="nav-item"><a class="nav-link {% if ns == 'orgs' and 'department' in url %}active{% endif %}" href="{% url 'orgs:department_list' %}">Departments</a></li>
 <li class="nav-item"><a class="nav-link {% if ns == 'orgs' and 'job_code' in url %}active{% endif %}" href="{% url 'orgs:job_code_list' %}">Job codes</a></li>
+{% if AD_ENABLED and ENTRA_ENABLED %}
+{# Hybrid: both directories' pages under one menu, so the bar does not wrap. #}
+<li class="nav-item dropdown">
+  <a class="nav-link dropdown-toggle {% if ns == 'directory' or ns == 'entra' %}{% if url == 'group_list' or url == 'account_list' %}active{% endif %}{% endif %}" href="#" role="button" data-bs-toggle="dropdown">Directory</a>
+  <ul class="dropdown-menu">
+    <li><h6 class="dropdown-header">Active Directory</h6></li>
+    <li><a class="dropdown-item" href="{% url 'directory:group_list' %}">AD groups</a></li>
+    {% if AD_ACCOUNTS_ENABLED %}<li><a class="dropdown-item" href="{% url 'directory:account_list' %}">AD accounts</a></li>{% endif %}
+    <li><h6 class="dropdown-header">Entra ID</h6></li>
+    <li><a class="dropdown-item" href="{% url 'entra:group_list' %}">Entra groups</a></li>
+  </ul>
+</li>
+{% else %}
 {% if AD_ENABLED %}<li class="nav-item"><a class="nav-link {% if ns == 'directory' and url == 'group_list' %}active{% endif %}" href="{% url 'directory:group_list' %}">AD groups</a></li>{% endif %}
 {% if AD_ACCOUNTS_ENABLED %}<li class="nav-item"><a class="nav-link {% if ns == 'directory' and url == 'account_list' %}active{% endif %}" href="{% url 'directory:account_list' %}">AD accounts</a></li>{% endif %}
+{% if ENTRA_ENABLED %}<li class="nav-item"><a class="nav-link {% if ns == 'entra' and url == 'group_list' %}active{% endif %}" href="{% url 'entra:group_list' %}">Entra groups</a></li>{% endif %}
+{% endif %}
 <li class="nav-item dropdown">
   <a class="nav-link dropdown-toggle {% if ns == 'catalog' and 'application' not in url %}active{% endif %}" href="#" role="button" data-bs-toggle="dropdown">Vendors &amp; contacts</a>
   <ul class="dropdown-menu">

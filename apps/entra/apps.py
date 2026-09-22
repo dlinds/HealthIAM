@@ -7,5 +7,11 @@ class EntraConfig(AppConfig):
     verbose_name = "Microsoft Entra ID"
 
     def ready(self):
+        from apps.core.auditing import register_for_audit
+
         # Importing is what registers the system checks.
-        from . import checks  # noqa: F401
+        from . import checks, models  # noqa: F401
+
+        # last_seen_at changes on every sync; keeping it out of the audit diff means a quiet
+        # run produces no history entries.
+        register_for_audit(models.EntraGroup, exclude=("last_seen_at",))

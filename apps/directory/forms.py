@@ -4,7 +4,7 @@ from apps.access.forms import ReasonForm
 from apps.catalog.models import Application
 from apps.core.forms import BootstrapForm, BootstrapModelForm
 
-from .config import DirectorySettings
+from .config import describe_passes, full_sync_passes
 from .models import ADGroupRoute, DirectoryAccount, DirectorySyncRun
 
 
@@ -24,14 +24,15 @@ class SyncStartForm(BootstrapForm):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        if not DirectorySettings.from_settings().accounts_enabled:
-            # Without a search base for accounts the pass cannot run; a full sync simply
-            # has no account part, so the choice is not offered.
-            self.fields["scope"].choices = [
-                (value, "Users and groups" if value == DirectorySyncRun.Scope.ALL else label)
-                for value, label in DirectorySyncRun.Scope.choices
-                if value != DirectorySyncRun.Scope.ACCOUNTS
-            ]
+        # A pass that cannot run is not offered, and the full sync is named for what it does:
+        # without a search base for accounts there is no account pass.
+        passes = full_sync_passes()
+        self.fields["scope"].choices = [
+            (value, describe_passes(passes) if value == DirectorySyncRun.Scope.ALL else label)
+            for value, label in DirectorySyncRun.Scope.choices
+            if value in (DirectorySyncRun.Scope.ALL, DirectorySyncRun.Scope.GROUPS)
+            or value in passes
+        ]
 
 
 class AccountLinkForm(ReasonForm):

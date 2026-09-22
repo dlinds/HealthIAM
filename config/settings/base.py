@@ -46,8 +46,11 @@ env = environ.Env(
     ENTRA_GRAPH_ENDPOINT=(str, "https://graph.microsoft.com"),
     ENTRA_VALIDATE_AUTHORITY=(bool, True),
     ENTRA_TIMEOUT=(int, 30),
+    ENTRA_GROUPS_NAME_PATTERNS=(list, []),
+    ENTRA_GROUPS_EXCLUDE_PATTERNS=(list, []),
     ENTRA_EMPLOYEE_ID_ATTRIBUTE=(str, "employeeId"),
     ENTRA_SIGN_IN_ACTIVITY=(bool, True),
+    ENTRA_SYNC_SCHEDULE_COMMAND=(str, ""),
 )
 environ.Env.read_env(BASE_DIR / ".env")
 
@@ -224,10 +227,11 @@ if AD_AUTH_ENABLED:
     AUTHENTICATION_BACKENDS.append("apps.directory.auth.ActiveDirectoryBackend")
 
 # --- Microsoft Entra ID (Microsoft Graph) ------------------------------------------
-# Read-only directory sync over Microsoft Graph, alongside (or instead of) the LDAPS one. It
-# signs in as an application (client credentials) with its own registration, separate from the
-# SSO one above unless you choose to reuse it; see docs/entra-setup.md. ENTRA_TENANT_ID is
-# shared with SSO. Leave ENTRA_SYNC_CLIENT_ID empty to disable the integration entirely.
+# Read-only directory sync over Microsoft Graph, alongside (or instead of) the LDAPS one: the
+# tenant's cloud groups feed the catalog as "Entra group" access levels. It signs in as an
+# application (client credentials) with its own registration, separate from the SSO one above
+# unless you choose to reuse it; see docs/entra-setup.md. ENTRA_TENANT_ID is shared with SSO.
+# Leave ENTRA_SYNC_CLIENT_ID empty to disable the integration entirely.
 ENTRA_SYNC_CLIENT_ID = env("ENTRA_SYNC_CLIENT_ID")
 ENTRA_ENABLED = bool(ENTRA_TENANT_ID and ENTRA_SYNC_CLIENT_ID)
 # One of the two credentials. A certificate is preferred (docs/entra-setup.md): a .pem holding
@@ -244,6 +248,10 @@ ENTRA_GRAPH_ENDPOINT = env("ENTRA_GRAPH_ENDPOINT").rstrip("/")
 # public one, since the check is what stops a mistyped host from receiving the credential.
 ENTRA_VALIDATE_AUTHORITY = env("ENTRA_VALIDATE_AUTHORITY")
 ENTRA_TIMEOUT = env("ENTRA_TIMEOUT")
+# fnmatch globs on the group's display name, the AD_GROUPS_* syntax. Empty = every group;
+# excludes win over includes. Teams-backed Microsoft 365 groups are the usual thing to exclude.
+ENTRA_GROUPS_NAME_PATTERNS = env("ENTRA_GROUPS_NAME_PATTERNS")
+ENTRA_GROUPS_EXCLUDE_PATTERNS = env("ENTRA_GROUPS_EXCLUDE_PATTERNS")
 # Where the HR employee ID lives on a user: employeeId, an on-premises extension attribute
 # (onPremisesExtensionAttributes.extensionAttribute1..15) or a directory schema extension
 # (extension_<appid>_<name>).
@@ -251,6 +259,8 @@ ENTRA_EMPLOYEE_ID_ATTRIBUTE = env("ENTRA_EMPLOYEE_ID_ATTRIBUTE")
 # Last sign-in per account needs Entra ID P1/P2 and AuditLog.Read.All; without them the sync
 # carries on without it. False stops asking.
 ENTRA_SIGN_IN_ACTIVITY = env("ENTRA_SIGN_IN_ACTIVITY")
+# The scheduled-sync line shown on Admin > Entra ID; see SYNC_SCHEDULE_COMMAND.
+ENTRA_SYNC_SCHEDULE_COMMAND = env("ENTRA_SYNC_SCHEDULE_COMMAND")
 
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},

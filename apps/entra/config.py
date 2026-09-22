@@ -73,6 +73,8 @@ class EntraSettings:
     graph_endpoint: str = "https://graph.microsoft.com"
     validate_authority: bool = True
     timeout: int = 30
+    group_name_patterns: tuple[str, ...] = ()
+    group_exclude_patterns: tuple[str, ...] = ()
     employee_id_attribute: str = "employeeId"
     sign_in_activity: bool = True
 
@@ -88,6 +90,8 @@ class EntraSettings:
             graph_endpoint=settings.ENTRA_GRAPH_ENDPOINT,
             validate_authority=bool(getattr(settings, "ENTRA_VALIDATE_AUTHORITY", True)),
             timeout=int(settings.ENTRA_TIMEOUT),
+            group_name_patterns=tuple(settings.ENTRA_GROUPS_NAME_PATTERNS),
+            group_exclude_patterns=tuple(settings.ENTRA_GROUPS_EXCLUDE_PATTERNS),
             employee_id_attribute=(settings.ENTRA_EMPLOYEE_ID_ATTRIBUTE or "").strip(),
             sign_in_activity=bool(settings.ENTRA_SIGN_IN_ACTIVITY),
         )
@@ -131,7 +135,19 @@ class EntraSettings:
             "graph_endpoint": self.graph_endpoint,
             "validate_authority": self.validate_authority,
             "timeout": self.timeout,
+            "group_name_patterns": list(self.group_name_patterns),
+            "group_exclude_patterns": list(self.group_exclude_patterns),
             "employee_id_attribute": self.employee_id_attribute,
             "employee_id_readable": bool(self.employee_id_select),
             "sign_in_activity": self.sign_in_activity,
         }
+
+
+#: The passes a full sync can have, by their key in `EntraSyncRun.summary`, and what a scope
+#: label calls them.
+PASSES = {"groups": "groups"}
+
+
+def full_sync_passes() -> list[str]:
+    """The passes a full sync runs in this deployment, by key."""
+    return list(PASSES)
