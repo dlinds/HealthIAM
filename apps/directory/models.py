@@ -157,7 +157,8 @@ class ADGroupRoute(TimeStampedModel):
 class DirectoryAccount(TimeStampedModel):
     """One user account in Active Directory, mirrored by the sync and linked to the person it
     belongs to. Keyed by objectGUID like `ADGroup`; deactivated, never deleted, when a run
-    stops returning it. The link is made by employee ID, or by hand."""
+    stops returning it. The link is made by the keys the account carries (see
+    `apps.people.linking`), or by hand."""
 
     class Kind(models.TextChoices):
         USER = "user", "User"
@@ -167,7 +168,13 @@ class DirectoryAccount(TimeStampedModel):
         UNKNOWN = "unknown", "Unknown"
 
     class LinkMethod(models.TextChoices):
+        # The automatic values are `apps.people.linking`'s method names.
+        PERSON_NUMBER = "person_number", "By person number"
         EMPLOYEE_ID = "employee_id", "By employee ID"
+        FORMER_ID = "former_id", "By former employee ID"
+        USERNAME = "username", "By username"
+        PAIRED = "paired", "Through its Entra ID account"
+        EMAIL = "email", "By e-mail"
         MANUAL = "manual", "By hand"
 
     object_guid = models.UUIDField("objectGUID", unique=True)
@@ -205,7 +212,7 @@ class DirectoryAccount(TimeStampedModel):
         on_delete=models.SET_NULL,
         related_name="directory_accounts",
     )
-    link_method = models.CharField(max_length=12, choices=LinkMethod.choices, blank=True)
+    link_method = models.CharField(max_length=20, choices=LinkMethod.choices, blank=True)
     linked_at = models.DateTimeField(null=True, blank=True)
     first_seen_at = models.DateTimeField()
     last_seen_at = models.DateTimeField()

@@ -1,5 +1,5 @@
 """Sync engine for Active Directory: IAM-Users membership -> logins, group listing -> `ADGroup`,
-account listing -> `DirectoryAccount` linked to people by employee ID.
+account listing -> `DirectoryAccount` linked to people by the keys each account carries.
 
 `run_sync()` drives one `DirectorySyncRun`: it reads everything from the directory first
 (outside any transaction), applies guards, then writes inside a single transaction that a dry
@@ -29,7 +29,7 @@ from django.views.decorators.debug import sensitive_variables
 from apps.accounts import login_source, roles
 from apps.accounts.models import User
 from apps.orgs.importers import ImportResult
-from apps.people.models import Person
+from apps.people.linking import AccountKeys, PeopleIndex, apply_match
 
 from .config import DirectorySettings
 from .ldap_client import DirectoryClient, DirectoryError, DirectoryGroup, DirectoryUser
@@ -100,10 +100,12 @@ class SyncResult(ImportResult):
 @dataclass
 class AccountSyncResult(SyncResult):
     """`SyncResult` plus the link pass: accounts linked to and unlinked from people this
-    run, and how many active accounts carry an employee ID that matches nobody."""
+    run, how many active accounts carry a key that matches nobody, and the accounts whose
+    keys name different people. Shared by the Entra ID sync."""
 
     linked: list[str] = field(default_factory=list)
     unlinked: list[str] = field(default_factory=list)
+    conflict: list[str] = field(default_factory=list)
     unmatched: int = 0
 
     @property
@@ -112,6 +114,7 @@ class AccountSyncResult(SyncResult):
         data["linked"] = len(self.linked)
         data["unlinked"] = len(self.unlinked)
         data["unmatched"] = self.unmatched
+        data["conflicts"] = len(self.conflict)
         return data
 
 
@@ -862,59 +865,48 @@ def _sync_account(account: DirectoryUser, existing: dict, now) -> tuple[str, str
 
 
 def link_accounts(result: AccountSyncResult | None = None, *, now=None) -> tuple[int, int, int]:
-    """Link every active, unlinked account to the person whose employee ID it carries, and
-    unlink an employee-ID link whose ID no longer matches. Returns `(linked, unlinked,
-    unmatched)`.
+    """Link every active account the sync may link to the person its keys name, and unlink an
+    automatic link whose basis has gone. Returns `(linked, unlinked, unmatched)`.
 
-    A link made or removed by hand is never touched: `link_method=manual` with a person
-    means "this is theirs, whatever the attribute says", and with no person "leave it
-    unlinked". Also used by the demo seed, so the demo world links the way a sync would.
+    The keys are the employee ID, then the account's sAMAccountName and UPN against people's
+    network usernames; the rules are `apps.people.linking`'s. A link made or removed by hand
+    is never touched: `link_method=manual` with a person means "this is theirs, whatever the
+    attributes say", and with no person "leave it unlinked". Also used by the demo seed, so
+    the demo world links the way a sync would.
     """
     now = now or timezone.now()
-    people = {p.employee_id: p for p in Person.objects.exclude(employee_id="")}
-    linked = unlinked = unmatched = 0
+    index = PeopleIndex.build()
+    counts = dict.fromkeys(("linked", "unlinked", "unmatched"), 0)
     accounts = DirectoryAccount.objects.filter(is_active=True).exclude(
         link_method=DirectoryAccount.LinkMethod.MANUAL
     )
-    for account in accounts.select_related("person"):
-        person = people.get(account.employee_id) if account.employee_id else None
-        if person is not None and account.person_id != person.pk:
-            previous = account.person
-            account.person = person
-            account.link_method = DirectoryAccount.LinkMethod.EMPLOYEE_ID
-            account.linked_at = now
-            account._audit_reason = f"Employee ID {account.employee_id} matches"
-            account.save(update_fields=["person", "link_method", "linked_at", "updated_at"])
-            linked += 1
-            if result is not None:
-                message = f"linked to {person.display_name} by employee ID"
-                if previous is not None:
-                    message = f"re-{message} (was {previous.display_name})"
-                result.record(
-                    0, account.sam_account_name, "linked", message, dn=account.distinguished_name
-                )
-        elif person is None and account.person_id is not None:
-            previous = account.person
-            account.person = None
-            account.link_method = ""
-            account.linked_at = None
-            account._audit_reason = "Employee ID no longer matches a person"
-            account.save(update_fields=["person", "link_method", "linked_at", "updated_at"])
-            unlinked += 1
-            if result is not None:
-                result.record(
-                    0,
-                    account.sam_account_name,
-                    "unlinked",
-                    f"unlinked from {previous.display_name}: employee ID "
-                    f"{account.employee_id or '-'} matches nobody",
-                    dn=account.distinguished_name,
-                )
-        elif person is None and account.employee_id:
-            unmatched += 1
+    for account in accounts.select_related("person").order_by("sam_account_name", "pk"):
+        keys = AccountKeys(
+            employee_id=account.employee_id,
+            usernames=(account.sam_account_name, account.upn),
+            created_at=account.when_created,
+        )
+        outcome = apply_match(
+            account,
+            index.match(keys),
+            now=now,
+            lost=_lost_basis(account),
+            result=result,
+            code=account.sam_account_name,
+            dn=account.distinguished_name,
+        )
+        if outcome in counts:
+            counts[outcome] += 1
     if result is not None:
-        result.unmatched = unmatched
-    return linked, unlinked, unmatched
+        result.unmatched = counts["unmatched"]
+    return counts["linked"], counts["unlinked"], counts["unmatched"]
+
+
+def _lost_basis(account: DirectoryAccount) -> str:
+    """Why an automatic link went away, for the run log, when nothing more specific is known."""
+    if account.link_method == DirectoryAccount.LinkMethod.USERNAME:
+        return f"username {account.sam_account_name} matches nobody"
+    return f"employee ID {account.employee_id or '-'} matches nobody"
 
 
 def sync_accounts(

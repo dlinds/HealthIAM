@@ -21,6 +21,7 @@ from apps.directory.sync import AccountSyncResult, SyncResult
 from apps.entra import sync
 from apps.entra.graph import GraphGroup, GraphUser, Identity, SignInActivity
 from apps.entra.models import EntraAccount, EntraGroup, EntraSyncRun
+from apps.people import linking
 from apps.people.models import Person
 
 from . import data, entra_data
@@ -264,8 +265,7 @@ def describe_account(spec: entra_data.AccountSpec, *, now, enabled=None) -> str:
 
 def link_note(account: EntraAccount) -> str:
     """The run-log note `link_accounts` writes for a link it made."""
-    how = sync.lower_first(EntraAccount.LinkMethod(account.link_method).label)
-    return f"linked to {account.person.display_name} {how}"
+    return linking.link_message(account)
 
 
 # --- Guards ------------------------------------------------------------------------------

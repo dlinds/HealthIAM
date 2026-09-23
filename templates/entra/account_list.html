@@ -12,8 +12,8 @@
 <div class="alert alert-light border small"><i class="bi bi-info-circle me-1"></i>The account mirror is off: <span class="text-mono">ENTRA_ACCOUNTS_ENABLED</span> is false. See docs/entra-setup.md.</div>
 {% endif %}
 <p class="text-body-secondary small">
-  Every user in the tenant: members synchronized from AD, cloud members, guests and external members, each linked to the person it belongs to &mdash; by employee ID,
-  by e-mail for guests, or by hand. A guest is worth tracking because its engagement ends and the account does not: the worklists below find those.
+  Every user in the tenant: members synchronized from AD, cloud members, guests and external members, each linked to the person it belongs to &mdash; by employee ID
+  or username, by e-mail for guests, or by hand. A guest is worth tracking because its engagement ends and the account does not: the worklists below find those.
 </p>
 <form class="row g-2 mb-3 js-autosubmit" method="get">
   <div class="col-md-3"><input class="form-control" type="search" name="q" value="{{ q }}" placeholder="UPN, name, e-mail, company, employee ID"></div>

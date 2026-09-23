@@ -192,8 +192,9 @@ def check_employee_id_attribute(app_configs, **kwargs):
             Warning(
                 "ENTRA_EMPLOYEE_ID_ATTRIBUTE is empty.",
                 hint=(
-                    "Accounts are mirrored, but only guests link to people (by e-mail); members "
-                    "are linked by hand. Set it to employeeId, an extension attribute such as "
+                    "Accounts are mirrored, but members link to people only by network "
+                    "username or by hand, and guests by e-mail. Set it to employeeId, an "
+                    "extension attribute such as "
                     "onPremisesExtensionAttributes.extensionAttribute1, or a schema extension."
                 ),
                 id="entra.W007",

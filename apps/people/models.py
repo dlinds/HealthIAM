@@ -31,6 +31,8 @@ from django.utils import timezone
 from apps.core.models import TimeStampedModel
 from apps.orgs.models import ActivatableModel, Position, Source
 
+from .keys import normalize_username
+
 
 class DateRange(Func):
     """`daterange(start, end, '[]')` for the exclusion constraints below.
@@ -185,7 +187,8 @@ class ExternalOrganization(ActivatableModel):
 
 class PersonQuerySet(models.QuerySet):
     def search(self, q: str):
-        """Match current and former names, employee ID, e-mail and identifiers."""
+        """Match current and former names, employee ID, network username, e-mail and
+        identifiers."""
         q = (q or "").strip()
         if not q:
             return self
@@ -199,6 +202,9 @@ class PersonQuerySet(models.QuerySet):
             | Q(former_names__last_name__icontains=q)
             | Q(identifiers__value__iexact=q)
         )
+        username = normalize_username(q)
+        if username:  # never `network_username=""`, which every person without one matches
+            cond |= Q(network_username=username)
         parts = q.split()
         if len(parts) >= 2:
             first, last = parts[0], parts[-1]
@@ -232,6 +238,15 @@ class Person(ActivatableModel):
         blank=True,
         db_index=True,
         help_text="The HR key. Empty for people HR does not employ.",
+    )
+    network_username = models.CharField(
+        "Network username",
+        max_length=256,
+        blank=True,
+        help_text=(
+            "The AD account name (sAMAccountName) or UPN. Links the person's directory "
+            "accounts when their employee ID cannot."
+        ),
     )
     email = models.EmailField(blank=True)
     phone = models.CharField(max_length=50, blank=True)
@@ -281,7 +296,16 @@ class Person(ActivatableModel):
                 condition=~Q(employee_id=""),
                 name="unique_person_employee_id",
                 violation_error_message="Another person already has this employee ID.",
-            )
+            ),
+            # Stored normalized (lower-case), so a plain unique index is a case-insensitive
+            # one; the "unique" code puts a violation on the field rather than the form.
+            models.UniqueConstraint(
+                fields=["network_username"],
+                condition=~Q(network_username=""),
+                name="unique_person_network_username",
+                violation_error_code="unique",
+                violation_error_message="Another person already has this network username.",
+            ),
         ]
 
     def __str__(self):
@@ -289,6 +313,29 @@ class Person(ActivatableModel):
 
     def get_absolute_url(self):
         return reverse("people:person_detail", args=[self.pk])
+
+    def clean(self):
+        # Normalized here, before the constraint checks `full_clean` runs next: `CORP\JDoe`
+        # has to meet another person's `jdoe` as the duplicate it is.
+        super().clean()
+        self.network_username = normalize_username(self.network_username)
+        if self.network_username:
+            holder = (
+                Person.objects.filter(network_username=self.network_username)
+                .exclude(pk=self.pk)
+                .first()
+            )
+            if holder is not None:
+                raise ValidationError(
+                    {
+                        "network_username": f"Network username {self.network_username} "
+                        f"already belongs to {holder.display_name}."
+                    }
+                )
+
+    def save(self, *args, **kwargs):
+        self.network_username = normalize_username(self.network_username)
+        super().save(*args, **kwargs)
 
     @property
     def display_name(self) -> str:

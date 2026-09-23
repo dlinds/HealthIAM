@@ -93,6 +93,7 @@ def account_summary(**overrides) -> dict:
         "linked": 0,
         "unlinked": 0,
         "unmatched": 0,
+        "conflicts": 0,
     }
     data.update(overrides)
     if "read" not in overrides:
@@ -514,6 +515,147 @@ def test_link_accounts_helper_can_run_outside_a_sync(people):
     gone.refresh_from_db()
     assert gone.person is None, "accounts no longer in AD are left alone"
     assert sync.link_accounts() == (0, 0, 1)
+
+
+# --- Linking by network username, and keys that disagree -----------------------------------
+
+
+def account_log(acct) -> list[LogEntry]:
+    return list(
+        LogEntry.objects.filter(
+            content_type=ContentType.objects.get_for_model(DirectoryAccount),
+            object_pk=str(acct.pk),
+        ).order_by("pk")
+    )
+
+
+def test_an_account_without_an_employee_id_links_by_network_username(people):
+    people["alice"].network_username = "CORP\\AAnders"
+    people["alice"].save()
+    acct = factories.DirectoryAccountFactory(sam_account_name="aanders")
+    result = AccountSyncResult(kind="accounts", dry_run=False)
+    assert sync.link_accounts(result) == (1, 0, 0)
+    acct.refresh_from_db()
+    assert acct.person == people["alice"]
+    assert acct.link_method == DirectoryAccount.LinkMethod.USERNAME
+    assert [e["message"] for e in result.log] == ["linked to Alice Anders by username"]
+    assert account_log(acct)[-1].additional_data["reason"] == "Username aanders matches"
+    assert sync.link_accounts() == (0, 0, 0), "a link that still holds is left alone"
+
+
+def test_a_username_given_as_a_upn_is_compared_with_the_upn(people):
+    people["bob"].network_username = "Bob.Baker@Corp.Example.org"
+    people["bob"].save()
+    acct = factories.DirectoryAccountFactory(
+        sam_account_name="bbaker", upn="bob.baker@corp.example.org"
+    )
+    sync.link_accounts()
+    acct.refresh_from_db()
+    assert acct.person == people["bob"]
+    assert acct.link_method == DirectoryAccount.LinkMethod.USERNAME
+
+
+def test_a_reused_username_never_links_to_the_person_who_left(people):
+    alice = people["alice"]
+    alice.network_username = "aanders"
+    alice.separation_date = datetime(2024, 1, 31).date()
+    alice.save()
+    acct = factories.DirectoryAccountFactory(
+        sam_account_name="aanders", when_created=datetime(2025, 3, 1, tzinfo=UTC)
+    )
+    assert sync.link_accounts() == (0, 0, 0)
+    acct.refresh_from_db()
+    assert acct.person is None, "the name was given to someone new after she left"
+    # An account she had before she left is still hers: the orphaned-account worklist needs it.
+    DirectoryAccount.objects.filter(pk=acct.pk).update(
+        when_created=datetime(2023, 6, 1, tzinfo=UTC)
+    )
+    assert sync.link_accounts() == (1, 0, 0)
+
+
+def test_keys_naming_different_people_link_nobody(people):
+    people["bob"].network_username = "shared"
+    people["bob"].save()
+    acct = factories.DirectoryAccountFactory(sam_account_name="shared", employee_id="E100")
+    result = AccountSyncResult(kind="accounts", dry_run=False)
+    assert sync.link_accounts(result) == (0, 0, 0)
+    acct.refresh_from_db()
+    assert acct.person is None
+    assert result.summary["conflicts"] == 1
+    assert [(e["action"], e["message"]) for e in result.log] == [
+        (
+            "conflict",
+            "its keys name different people: employee ID E100 names Alice Anders; "
+            "username shared names Bob Baker",
+        )
+    ]
+
+
+def test_a_conflict_leaves_a_link_to_one_of_the_people_alone(people):
+    acct = factories.DirectoryAccountFactory(sam_account_name="shared", employee_id="E100")
+    assert sync.link_accounts() == (1, 0, 0)
+    people["bob"].network_username = "shared"
+    people["bob"].save()
+    logs = len(account_log(acct))
+    result = AccountSyncResult(kind="accounts", dry_run=False)
+    assert sync.link_accounts(result) == (0, 0, 0)
+    acct.refresh_from_db()
+    assert acct.person == people["alice"]
+    assert acct.link_method == DirectoryAccount.LinkMethod.EMPLOYEE_ID
+    assert result.summary["conflicts"] == 1
+    assert len(account_log(acct)) == logs
+
+
+def test_a_conflict_unlinks_a_link_none_of_the_keys_supports(people):
+    carol = factories.PersonFactory(
+        first_name="Carol", last_name="Cortez", employee_id="", network_username="shared"
+    )
+    acct = factories.DirectoryAccountFactory(sam_account_name="shared")
+    sync.link_accounts()
+    acct.refresh_from_db()
+    assert acct.person == carol
+    carol.network_username = ""
+    carol.save()
+    people["bob"].network_username = "shared"
+    people["bob"].save()
+    DirectoryAccount.objects.filter(pk=acct.pk).update(employee_id="E100")
+    result = AccountSyncResult(kind="accounts", dry_run=False)
+    assert sync.link_accounts(result) == (0, 1, 0)
+    acct.refresh_from_db()
+    assert acct.person is None and acct.link_method == ""
+    assert [e["action"] for e in result.log] == ["conflict", "unlinked"]
+    assert result.log[1]["message"].startswith("unlinked from Carol Cortez: its keys name")
+    assert account_log(acct)[-1].additional_data["reason"].startswith("Its keys name")
+
+
+def test_a_link_rests_on_another_key_quietly_when_its_own_goes(people):
+    people["alice"].network_username = "aanders"
+    people["alice"].save()
+    acct = factories.DirectoryAccountFactory(sam_account_name="aanders", employee_id="E100")
+    sync.link_accounts()
+    acct.refresh_from_db()
+    assert acct.link_method == DirectoryAccount.LinkMethod.EMPLOYEE_ID, "the strongest key wins"
+    DirectoryAccount.objects.filter(pk=acct.pk).update(employee_id="")
+    logs = len(account_log(acct))
+    result = AccountSyncResult(kind="accounts", dry_run=False)
+    assert sync.link_accounts(result) == (0, 0, 0)
+    acct.refresh_from_db()
+    assert acct.person == people["alice"]
+    assert acct.link_method == DirectoryAccount.LinkMethod.USERNAME
+    assert result.log == [], "the same person on another key is not news"
+    assert len(account_log(acct)) == logs + 1, "but it is audited"
+
+
+def test_a_username_link_is_undone_when_the_username_goes(people):
+    people["alice"].network_username = "aanders"
+    people["alice"].save()
+    factories.DirectoryAccountFactory(sam_account_name="aanders")
+    sync.link_accounts()
+    people["alice"].network_username = ""
+    people["alice"].save()
+    result = AccountSyncResult(kind="accounts", dry_run=False)
+    assert sync.link_accounts(result) == (0, 1, 0)
+    assert result.log[0]["message"] == "unlinked from Alice Anders: username aanders matches nobody"
 
 
 # --- Services -----------------------------------------------------------------------------

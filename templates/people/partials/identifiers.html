@@ -10,6 +10,7 @@
   </div>
   <ul class="list-group list-group-flush small">
     {% if person.employee_id %}<li class="list-group-item d-flex justify-content-between"><span><span class="text-body-secondary">Employee ID</span> <span class="text-mono">{{ person.employee_id }}</span></span></li>{% endif %}
+    {% if person.network_username %}<li class="list-group-item d-flex justify-content-between"><span><span class="text-body-secondary">Network username</span> <span class="text-mono">{{ person.network_username }}</span></span></li>{% endif %}
     {% for i in identifiers %}
     <li class="list-group-item d-flex justify-content-between align-items-center">
       <span>
@@ -21,7 +22,7 @@
       {% if can_edit %}<button class="btn btn-sm btn-link text-danger p-0" type="button" hx-post="{% url 'people:identifier_remove' person.pk i.pk %}" hx-target="#identifiers" hx-swap="outerHTML" hx-prompt="Reason for removing {{ i }}:">Remove</button>{% endif %}
     </li>
     {% empty %}
-    {% if not person.employee_id %}<li class="list-group-item text-body-secondary">None recorded.</li>{% endif %}
+    {% if not person.employee_id and not person.network_username %}<li class="list-group-item text-body-secondary">None recorded.</li>{% endif %}
     {% endfor %}
   </ul>
 </div>

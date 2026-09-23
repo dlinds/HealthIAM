@@ -12,7 +12,7 @@
         <h1 class="h4">Link <span class="text-mono">{{ account.sam_account_name }}</span> to a person</h1>
         <p class="text-body-secondary small">
           {{ account.display_name|default:account.upn }}{% if account.employee_id %} · employee ID <span class="text-mono">{{ account.employee_id }}</span>{% endif %}{% if account.title %} · {{ account.title }}{% endif %}.
-          A link made here survives every later sync; the employee ID on the account no longer decides.
+          A link made here survives every later sync; the employee ID and username on the account no longer decide.
         </p>
         <form method="post">
           {% csrf_token %}

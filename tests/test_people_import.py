@@ -279,6 +279,52 @@ def test_unknown_manager_and_alternate_are_warnings(positions, person_types):
     assert any("Alternate: Unknown position" in m for m in messages)
 
 
+USERNAMES = "employee_id,first_name,last_name,position_code,sAMAccountName"
+
+
+def test_network_username_is_normalized_and_a_reimport_writes_nothing(positions, person_types):
+    text = "\n".join([USERNAMES, "E1001,Maria,Alvarez,0100-7002,CORP\\MAlvarez"])
+    assert run(text).summary["created"] == 1
+    maria = Person.objects.get(employee_id="E1001")
+    assert maria.network_username == "malvarez"
+    before = LogEntry.objects.count()
+    assert run(text).summary["unchanged"] == 1
+    assert LogEntry.objects.count() == before
+    # An empty cell leaves the username alone, like every other optional column.
+    run("\n".join([USERNAMES, "E1001,Maria,Alvarez,0100-7002,"]))
+    maria.refresh_from_db()
+    assert maria.network_username == "malvarez"
+
+
+def test_a_reused_username_moves_from_a_person_who_left(positions, person_types, admin_user):
+    gone = factories.PersonFactory(first_name="Olive", last_name="Old", network_username="malvarez")
+    services.deactivate_person(gone, actor=admin_user, reason="Left in 2019")
+    result = run("\n".join([USERNAMES, "E1001,Maria,Alvarez,0100-7002,malvarez"]))
+    assert result.summary["created"] == 1 and result.summary["warnings"] == 0
+    (row,) = [e for e in result.entries if e["code"] == "E1001"]
+    assert "network username taken from Olive Old" in row["message"]
+    assert Person.objects.get(employee_id="E1001").network_username == "malvarez"
+    gone.refresh_from_db()
+    assert gone.network_username == ""
+    entry = LogEntry.objects.get_for_object(gone).latest("pk")
+    assert entry.changes_dict["network_username"] == ["malvarez", ""]
+    assert entry.additional_data["reason"] == "HR people import"
+
+
+def test_a_username_an_active_person_holds_is_a_warning_not_a_row_error(positions, person_types):
+    holder = factories.PersonFactory(
+        first_name="Sam", last_name="Still", network_username="malvarez"
+    )
+    result = run("\n".join([USERNAMES, "E1001,Maria,Alvarez,0100-7002,malvarez"]))
+    assert result.summary["created"] == 1 and result.summary["errors"] == 0
+    assert [w["message"] for w in result.warnings] == [
+        "Network username malvarez belongs to Sam Still, who is still active; not set."
+    ]
+    assert Person.objects.get(employee_id="E1001").network_username == ""
+    holder.refresh_from_db()
+    assert holder.network_username == "malvarez"
+
+
 def test_dry_run_writes_nothing(positions, person_types):
     result = run(BASE, dry_run=True)
     assert result.summary["created"] == 3

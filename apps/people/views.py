@@ -441,6 +441,7 @@ def person_create(request):
                         suffix=d["suffix"],
                         preferred_name=d["preferred_name"],
                         employee_id=d["employee_id"],
+                        network_username=d["network_username"],
                         email=d["email"],
                         phone=d["phone"],
                         work_location=d["work_location"],

@@ -27,7 +27,7 @@
       </div>
     </li>
     {% empty %}
-    <li class="list-group-item text-body-secondary">No AD account linked{% if person.employee_id %}; the sync links one whose employee ID is <span class="text-mono">{{ person.employee_id }}</span>{% endif %}.</li>
+    <li class="list-group-item text-body-secondary">No AD account linked{% if person.employee_id or person.network_username %}; the sync links one {% if person.employee_id %}whose employee ID is <span class="text-mono">{{ person.employee_id }}</span>{% endif %}{% if person.employee_id and person.network_username %} or {% endif %}{% if person.network_username %}named <span class="text-mono">{{ person.network_username }}</span>{% endif %}{% endif %}.</li>
     {% endfor %}
   </ul>
 </div>

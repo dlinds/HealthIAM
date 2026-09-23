@@ -85,6 +85,7 @@ class PersonCreateForm(PersonFieldsMixin, AssignmentFieldsMixin, ReasonForm):
         "suffix",
         "preferred_name",
         "employee_id",
+        "network_username",
         "email",
         "phone",
         "work_location",
@@ -103,6 +104,12 @@ class PersonCreateForm(PersonFieldsMixin, AssignmentFieldsMixin, ReasonForm):
     ]
 
     employee_id = forms.CharField(max_length=30, required=False, label="Employee ID")
+    network_username = forms.CharField(
+        max_length=256,
+        required=False,
+        label="Network username",
+        help_text="The AD account name or UPN, when there is no employee ID to link by.",
+    )
     email = forms.EmailField(required=False)
     phone = forms.CharField(max_length=50, required=False)
     work_location = forms.CharField(max_length=150, required=False, help_text="Site or campus.")
@@ -179,6 +186,7 @@ class PersonForm(BootstrapModelForm):
         fields = [
             "preferred_name",
             "employee_id",
+            "network_username",
             "email",
             "phone",
             "work_location",

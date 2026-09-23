@@ -211,7 +211,8 @@ def check_synced_logins_can_be_signed_in_to(app_configs, **kwargs):
 
 @register(TAG)
 def check_account_mirror_can_link(app_configs, **kwargs):
-    """W009: accounts are mirrored, but no attribute names the employee ID, so none links."""
+    """W009: accounts are mirrored, but no attribute names the employee ID, so only network
+    usernames and hand links tie them to people."""
     if not _enabled() or not getattr(settings, "AD_ACCOUNTS_SEARCH_BASES", None):
         return []
     if getattr(settings, "AD_EMPLOYEE_ID_ATTRIBUTE", ""):
@@ -220,10 +221,11 @@ def check_account_mirror_can_link(app_configs, **kwargs):
         Warning(
             "AD_ACCOUNTS_SEARCH_BASES is set but AD_EMPLOYEE_ID_ATTRIBUTE is empty.",
             hint=(
-                "Accounts are mirrored but nothing links them to people: the sync matches an "
-                "account to a person by the employee ID it reads from that attribute. Set "
-                "AD_EMPLOYEE_ID_ATTRIBUTE (usually employeeID, sometimes employeeNumber), or "
-                "link accounts by hand on the AD accounts page."
+                "Accounts are mirrored, but only a person's network username or a hand link "
+                "ties one to them: the sync matches an account to a person first by the "
+                "employee ID it reads from that attribute. Set AD_EMPLOYEE_ID_ATTRIBUTE "
+                "(usually employeeID, sometimes employeeNumber), or link accounts by hand on "
+                "the AD accounts page."
             ),
             id="directory.W009",
         )
