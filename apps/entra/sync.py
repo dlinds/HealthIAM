@@ -384,7 +384,44 @@ def run_sync(
     logger.info(
         "Entra ID sync #%s %s: %s", run.pk, "previewed" if dry_run else "completed", run.summary
     )
+    if groups_scope and not dry_run:
+        _reconcile_after_sync(run)
     return run
+
+
+def _reconcile_after_sync(run: EntraSyncRun) -> None:
+    """Bring route-managed cloud-group levels in line with the mirror this run just wrote.
+
+    As `apps.directory.sync._reconcile_after_sync`: after the mirror is committed and the run
+    row saved, never on a preview, and a failure is recorded on the run rather than raised --
+    the mirror really is up to date by now. A quiet pass leaves the run exactly as a sync
+    without routes would have written it.
+    """
+    # Imported here, not at module scope: the mirror is built without ever consulting a route.
+    from . import reconcile
+
+    try:
+        result = reconcile.reconcile_all(actor=run.created_by, trigger=reconcile.Trigger.SYNC)
+    except Exception as exc:  # noqa: BLE001 - recorded on the run, never fails the sync
+        logger.exception("Entra route reconcile after sync #%s failed", run.pk)
+        run.summary = {**run.summary, "routes": {**reconcile.EMPTY_SUMMARY, "errors": 1}}
+        run.log = [
+            *run.log,
+            {
+                "kind": "routes",
+                "row": 0,
+                "code": "reconcile",
+                "action": "error",
+                "message": redact(f"{type(exc).__name__}: {exc}")[:MAX_ERROR],
+                "dn": "",
+            },
+        ]
+    else:
+        if not (result.changed or result.errors or result.skipped):
+            return
+        run.summary = {**run.summary, "routes": result.summary}
+        run.log = [*run.log, *result.log_entries]
+    run.save(update_fields=["summary", "log", "updated_at"])
 
 
 # --- Groups ---------------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 """Entra ID pages: the cloud group list, picker and adoption flow, the account worklists, the
 broken-reference and conversion lists, and Admin > Entra ID (configuration, architecture,
-connection test, Sync now, run history).
+connection test, Sync now, run history, group routes).
 
 Every view carries its own permission gate. The connection test and the sync views call
 `sync.build_client()` by module attribute so the test-suite's fake tenant replaces Graph
@@ -36,11 +36,17 @@ from apps.people import services as people_services
 from apps.people.forms import PersonCreateForm
 from apps.people.models import Person
 
-from . import checks, references, services, sync, worklists
+from . import checks, reconcile, references, routing, services, sync, worklists
 from .config import EntraSettings
-from .forms import AccountKindForm, AccountLinkForm, ConvertLevelForm, SyncStartForm
+from .forms import (
+    AccountKindForm,
+    AccountLinkForm,
+    ConvertLevelForm,
+    EntraGroupRouteForm,
+    SyncStartForm,
+)
 from .graph import ConnectionInfo
-from .models import EntraAccount, EntraGroup, EntraSyncRun
+from .models import EntraAccount, EntraGroup, EntraGroupRoute, EntraSyncRun, assignable
 
 PICKER_LIMIT = 15
 RECENT_RUNS = 10
@@ -90,6 +96,13 @@ def _errors(exc: ValidationError) -> str:
 def _entra_levels_for(object_id):
     return AccessLevel.objects.filter(
         access_model=AccessLevel.AccessModel.ENTRA_GROUP, entra_group_id=object_id
+    )
+
+
+def _claiming_levels_for(object_id):
+    """Active levels that own the group by hand -- the same rule as `services.claiming_levels`."""
+    return _entra_levels_for(object_id).filter(
+        source__in=AccessLevel.CLAIMING_SOURCES, is_active=True
     )
 
 
@@ -203,9 +216,28 @@ class EntraGroupListView(PermissionCheckMixin, ListView):
         self.unreferenced = g.get("unreferenced") == "1"
         if self.unreferenced:
             qs = qs.filter(~Exists(_entra_levels_for(OuterRef("object_id"))))
+        # Narrower than `unreferenced`: a group a route holds *is* in the catalog, but nobody
+        # has said which system it belongs to. That is the adoption worklist.
+        self.unclaimed = g.get("unclaimed") == "1"
+        if self.unclaimed:
+            qs = qs.filter(~Exists(_claiming_levels_for(OuterRef("object_id"))))
         self.assignable = g.get("assignable") == "1"
         if self.assignable:
             qs = assignable(qs)
+        # A synced group is an AD group, which AD group routes place: no Entra route ever
+        # matches it, so it counts as unrouted here.
+        self.unrouted = g.get("unrouted") == "1"
+        if self.unrouted:
+            routes = routing.active_routes()
+            if routes:
+                routed = [
+                    pk
+                    for pk, name in qs.exclude(source=EntraGroup.Source.SYNCED).values_list(
+                        "pk", "display_name"
+                    )
+                    if routing.match_in(name, routes) is not None
+                ]
+                qs = qs.exclude(pk__in=routed)
         return qs.order_by("display_name", "pk")
 
     def get_context_data(self, **kwargs):
@@ -214,8 +246,12 @@ class EntraGroupListView(PermissionCheckMixin, ListView):
         levels = _levels_by_group(groups)
         originals = _ad_groups_by_name(groups)
         copies = _ad_copies(groups)
+        matches = routing.routes_for(
+            {g.display_name for g in groups if g.source != EntraGroup.Source.SYNCED}
+        )
         for group in groups:
             group.referencing_levels = levels.get(group.pk, [])
+            group.route_match = matches.get(group.display_name)
             key = (group.on_premises_sam_account_name or "").lower()
             group.ad_original = originals.get(key) if key else None
             group.ad_copy = copies.get(group.object_id)
@@ -227,6 +263,9 @@ class EntraGroupListView(PermissionCheckMixin, ListView):
             source=self.source,
             membership=self.membership,
             unreferenced=self.unreferenced,
+            unclaimed=self.unclaimed,
+            unrouted=self.unrouted,
+            has_routes=EntraGroupRoute.objects.exists(),
             assignable=self.assignable,
             kinds=EntraGroup.Kind.choices,
             sources=EntraGroup.Source.choices,
@@ -237,15 +276,6 @@ class EntraGroupListView(PermissionCheckMixin, ListView):
 
 
 group_list = EntraGroupListView.as_view()
-
-
-def assignable(qs):
-    """Groups that can back an `entra_group` access level (see `EntraGroup.unsuitable_reason`)."""
-    return qs.filter(
-        kind__in=EntraGroup.ACCESS_KINDS,
-        membership=EntraGroup.Membership.ASSIGNED,
-        is_assignable_to_role=False,
-    ).exclude(source=EntraGroup.Source.SYNCED)
 
 
 @role_required("can_view")
@@ -290,7 +320,12 @@ def _adopt_targets(user):
 
 @role_required("can_edit_any_access_levels")
 def group_adopt(request):
-    """Turn cloud groups nobody references into access levels: preview, then apply."""
+    """Turn cloud groups nobody owns by hand into access levels: preview, then apply.
+
+    GET lists the candidates with the target each route suggests. A group a dynamic
+    application holds by route is still a candidate -- adopting it is exactly how it stops
+    being held by a route. Nothing is created from a route alone.
+    """
     targets = list(_adopt_targets(request.user))
     by_pk = {a.pk: a for a in targets}
     q = request.GET.get("q", "").strip()
@@ -314,8 +349,20 @@ def group_adopt(request):
             rows.append((group, application, request.POST.get(f"level-{key}", "").strip()))
         result = services.adopt_groups(rows, actor=request.user)
         added, skipped = result.counts
-        if added:
-            messages.success(request, f"Added {added} access level{'s' if added != 1 else ''}.")
+        # A group a route was already holding is taken over rather than added: the level is
+        # the same row, it just stops being the reconciler's.
+        taken = sum(1 for level in result.added if getattr(level, "adopted_from_route", False))
+        if added - taken:
+            new_levels = added - taken
+            messages.success(
+                request, f"Added {new_levels} access level{'s' if new_levels != 1 else ''}."
+            )
+        if taken:
+            messages.success(
+                request,
+                f"Took {taken} group{'s' if taken != 1 else ''} over from a route; "
+                f"{'they are' if taken != 1 else 'it is'} now yours to edit.",
+            )
         for message in result.skipped:
             messages.warning(request, message)
         if not added and not skipped and not ids:
@@ -326,12 +373,30 @@ def group_adopt(request):
     # A group an AD-group level still names is on the conversion worklist instead.
     groups = (
         assignable(EntraGroup.objects.filter(is_active=True))
-        .filter(~Exists(_entra_levels_for(OuterRef("object_id")).filter(is_active=True)))
+        .filter(~Exists(_claiming_levels_for(OuterRef("object_id"))))
         .exclude(object_id__in=list(services.pending_conversions()))
     )
     if q:
         groups = groups.filter(Q(display_name__icontains=q) | Q(description__icontains=q))
     groups = list(groups.order_by("display_name", "pk")[:ADOPT_LIMIT])
+    matches = routing.routes_for({g.display_name for g in groups})
+    # Which of these a route is already holding, so the page can name the application the
+    # group would be leaving.
+    held_by = {
+        level.entra_group_id: level.application
+        for level in AccessLevel.objects.filter(
+            source=AccessLevel.Source.ROUTE,
+            access_model=AccessLevel.AccessModel.ENTRA_GROUP,
+            entra_group_id__in=[g.object_id for g in groups],
+        ).select_related("application")
+    }
+    for group in groups:
+        group.route_match = matches.get(group.display_name)
+        suggested = group.route_match.application if group.route_match else None
+        # Only a target this person can pick: pre-ticking a row whose select falls back to
+        # the first option would adopt the group somewhere nobody chose.
+        group.suggested = suggested if suggested is not None and suggested.pk in by_pk else None
+        group.held_by = held_by.get(group.object_id)
     return render(
         request,
         "entra/group_adopt.html",
@@ -536,7 +601,91 @@ def admin_index(request):
         "ad_pairing": settings.AD_ACCOUNTS_ENABLED,
     }
     ctx.update(_status_context(runs))
+    ctx.update(reconcile.counts_for_display())
     return render(request, "entra/admin_index.html", ctx)
+
+
+@require_POST
+@role_required("can_manage_entra")
+def reconcile_now(request):
+    """Bring route-managed cloud-group levels in line without waiting for a sync."""
+    try:
+        result = reconcile.reconcile_all(actor=request.user, trigger=reconcile.Trigger.ADMIN)
+    except reconcile.ReconcileRefused as exc:
+        messages.error(request, str(exc))
+        return redirect("entra:admin_index")
+    if not result.changed:
+        messages.info(request, "Route-managed cloud-group levels were already up to date.")
+    else:
+        s = result.summary
+        messages.success(
+            request,
+            f"Reconciled route-managed cloud-group levels \u2014 {s['created']} added, "
+            f"{s['converted']} taken over, {s['deactivated']} deactivated, "
+            f"{s['deleted']} removed, {s['defaults_moved']} position default(s) moved.",
+        )
+    for message in result.skipped:
+        messages.warning(request, message)
+    for message in result.errors:
+        messages.error(request, message)
+    return redirect("entra:admin_index")
+
+
+# --- Routes -----------------------------------------------------------------------------------
+
+
+@role_required("can_manage_entra")
+def route_list(request):
+    """Admin > Entra ID > Routes: the naming conventions that say where a cloud group belongs.
+    GET renders the list plus an empty form; POST adds a route."""
+    form = EntraGroupRouteForm(request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        route = form.save(commit=False)
+        route.created_by = request.user
+        route.save()
+        messages.success(request, f"Route {route.pattern} \u2192 {route.application.name} added.")
+        return redirect("entra:route_list")
+    return render(
+        request,
+        "entra/route_list.html",
+        {
+            "form": form,
+            # Resolution order -- applications ahead of services, then priority -- with the
+            # inactive routes at the end, as on the AD routes page.
+            "routes": sorted(
+                EntraGroupRoute.objects.select_related("application", "created_by"),
+                key=lambda r: (
+                    not r.is_active,
+                    0 if r.application.kind == Application.Kind.APPLICATION else 1,
+                    r.priority,
+                    r.pk,
+                ),
+            ),
+            **reconcile.counts_for_display(),
+        },
+    )
+
+
+@role_required("can_manage_entra")
+def route_update(request, pk):
+    route = get_object_or_404(EntraGroupRoute, pk=pk)
+    form = EntraGroupRouteForm(request.POST or None, instance=route)
+    if request.method == "POST" and form.is_valid():
+        form.save()
+        messages.success(request, f"Route {route.pattern} saved.")
+        return redirect("entra:route_list")
+    return render(request, "entra/route_form.html", {"form": form, "route": route})
+
+
+@require_POST
+@role_required("can_manage_entra")
+def route_delete(request, pk):
+    """Routes are real-deleted: nothing points at one, and the audit log keeps the record."""
+    route = get_object_or_404(EntraGroupRoute, pk=pk)
+    label = str(route)
+    route.delete()
+    messages.success(request, f"Route {label} removed.")
+    return redirect("entra:route_list")
 
 
 @require_POST

@@ -2,7 +2,9 @@
 
 An application with `dynamic_ad_groups` on holds one access level for every active AD
 group its routes claim and nobody owns by hand. This module is what makes that true, and
-it is the only place that creates or retires a `source=route` level.
+it is the only place that creates or retires a `source=route` *AD-group* level; its sibling
+`apps.entra.reconcile` does the same for cloud groups, reusing the result type, the
+re-entrancy guard and the hand-over helpers defined here.
 
 Three rules decide everything here:
 
@@ -290,7 +292,7 @@ def _cause(plan: _Plan, old: AccessLevel, trigger: str) -> str:
     return f"{old.application.name} stopped holding {plan.name}"
 
 
-def _reason(old: AccessLevel, new: AccessLevel, cause: str) -> str:
+def move_reason(old: AccessLevel, new: AccessLevel, cause: str) -> str:
     return (
         f"Moved from {old.application.name} · {old.name} "
         f"to {new.application.name} · {new.name} when {cause}"
@@ -341,21 +343,13 @@ def _apply(plan: _Plan, *, actor, trigger: str, result: ReconcileResult) -> None
                 continue
             if level.source != AccessLevel.Source.ROUTE and level.is_active:
                 continue
-            reason = _reason(level, target, _cause(plan, level, trigger))
-            moved, merged = access_services.move_defaults(level, target, actor=actor, reason=reason)
-            result.defaults_moved += moved
-            result.defaults_merged += merged
-            # What a person was granted on the old level follows the group the same way.
-            moved, merged = people_services.move_person_access(
-                level, target, actor=actor, reason=reason
-            )
-            result.grants_moved += moved
-            result.grants_merged += merged
+            reason = move_reason(level, target, _cause(plan, level, trigger))
+            hand_over(level, target, actor=actor, reason=reason, result=result)
 
     for level in routed:
         if home_level is not None and level.pk == home_level.pk:
             continue
-        _retire(level, result)
+        retire(level, result)
 
     # Sealed last: `unique_route_level_per_group` will not have two route-managed levels for
     # one group even for the length of this transaction.
@@ -427,9 +421,20 @@ def _adapt(level: AccessLevel, plan: _Plan, result: ReconcileResult) -> None:
         result.converted.append(f"{plan.name}: {level.application.name} now holds it by route")
 
 
-def _retire(level: AccessLevel, result: ReconcileResult) -> None:
+def hand_over(level: AccessLevel, target: AccessLevel, *, actor, reason, result) -> None:
+    """Move a level's position defaults, and what people were granted on it, to `target`."""
+    moved, merged = access_services.move_defaults(level, target, actor=actor, reason=reason)
+    result.defaults_moved += moved
+    result.defaults_merged += merged
+    # What a person was granted on the old level follows the group the same way.
+    moved, merged = people_services.move_person_access(level, target, actor=actor, reason=reason)
+    result.grants_moved += moved
+    result.grants_merged += merged
+
+
+def retire(level: AccessLevel, result: ReconcileResult) -> None:
     """Release a route-managed level that no longer has a claim on its group."""
-    label = f"{level.ad_group_name}: released from {level.application.name}"
+    label = f"{level.access_target}: released from {level.application.name}"
     if not level.position_defaults.exists() and not level.person_grants.exists():
         try:
             level.delete()
@@ -451,11 +456,16 @@ def _retire(level: AccessLevel, result: ReconcileResult) -> None:
 # --- Entry points ------------------------------------------------------------------------
 
 
-def _in_use() -> bool:
-    return (
-        Application.objects.filter(dynamic_ad_groups=True).exists()
-        or AccessLevel.objects.filter(source=AccessLevel.Source.ROUTE).exists()
+def _route_levels():
+    """Route-managed AD-group levels. Cloud-group levels share the source value and are
+    `apps.entra.reconcile`'s business, so every count here leaves them out."""
+    return AccessLevel.objects.filter(
+        source=AccessLevel.Source.ROUTE, access_model=AccessLevel.AccessModel.AD_GROUP
     )
+
+
+def _in_use() -> bool:
+    return Application.objects.filter(dynamic_ad_groups=True).exists() or _route_levels().exists()
 
 
 def reconcile_names(
@@ -567,9 +577,7 @@ def _all_keys() -> set[str]:
         .values_list("lname", flat=True)
     )
     keys |= set(
-        AccessLevel.objects.filter(source=AccessLevel.Source.ROUTE)
-        .annotate(lname=Lower("ad_group_name"))
-        .values_list("lname", flat=True)
+        _route_levels().annotate(lname=Lower("ad_group_name")).values_list("lname", flat=True)
     )
     return {key for key in keys if key}
 
@@ -641,7 +649,7 @@ def _guard(keys, routes, *, force: bool) -> None:
     """Refuse a full pass that would retire most of the route-managed levels at once."""
     if force:
         return
-    held = AccessLevel.objects.filter(source=AccessLevel.Source.ROUTE).count()
+    held = _route_levels().count()
     if not held:
         return
     live = ADGroup.objects.filter(is_active=True).count()
@@ -705,5 +713,5 @@ def counts_for_display() -> dict:
         "dynamic_application_count": Application.objects.filter(dynamic_ad_groups=True)
         .exclude(lifecycle_status=Application.Lifecycle.RETIRED)
         .count(),
-        "route_level_count": AccessLevel.objects.filter(source=AccessLevel.Source.ROUTE).count(),
+        "route_level_count": _route_levels().count(),
     }

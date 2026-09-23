@@ -330,8 +330,9 @@ fills from the mirror.
 - **One at a time:** on an application's **Access levels** tab, **Add level** → *Entra ID
   group membership*, then search the mirror by name, nickname or object ID, or paste an object
   ID from the portal.
-- **Many at once:** **Entra groups → Add to catalog** lists the groups no level references
-  yet, each with an application to put it under.
+- **Many at once:** **Entra groups → Add to catalog** lists the groups nobody has adopted by
+  hand yet, each with an application to put it under -- pre-selected, and the row pre-ticked,
+  when a route (below) suggests one you can edit.
 
 Only groups that can be granted by request qualify: **assigned-membership security groups
 (mail-enabled or not) and Microsoft 365 groups, mastered in the cloud.** The others are
@@ -359,6 +360,66 @@ Broken references are counted on the dashboard and listed under **Reports → Br
 references**, with CSV and Excel export. Keep `ENTRA_GROUPS_NAME_PATTERNS` empty for the reason
 section 5 of `docs/ad-setup.md` gives; exclude what should never be a level instead -- the
 login group, Teams-backed Microsoft 365 groups nobody requests, all-company groups.
+
+### Routes
+
+A cloud group carries no pointer to the system it belongs to; its display name is the only
+convention there is. **Admin → Entra ID → Routes** records those conventions, as the AD group
+routes do on-premises (`docs/ad-setup.md` section 9): a route is a case-insensitive glob on the
+**display name** (`SG-Epic-*`, `Teams-*`, `LIC_*`) and the application or service that should
+hold matching groups. The two route tables are independent -- `LIC_*` can point one way for AD
+groups and another for cloud groups.
+
+- **Resolution:** an application-kind target outranks every service whatever the numbers say;
+  then the lowest priority wins; then the older route.
+- **Only groups that can back a level are routed.** A group synced from AD is an AD group, and
+  the AD group routes place it; the Entra groups page shows *Routes to* as a dash for it.
+- **Advisory by default.** For an ordinary application a route only pre-fills *Add to catalog*;
+  nothing is created until somebody ticks the row. The Entra groups page gains a *Routes to*
+  column and a **No route matches** filter -- the worklist of what is still unsorted.
+
+### Route-managed levels
+
+Tick **Dynamic Entra groups** on an application (its edit form, under *Group routes*) and its
+routes also **create and retire its access levels by themselves**: it holds one `entra_group`
+level for every active cloud group its routes claim, that can back a level, and that nobody has
+adopted by hand. The rules are those of AD route-managed levels (`docs/ad-setup.md` section 9):
+
+- **Claim.** An active level *added by hand* or *taken over* speaks for its group, and no route
+  may hold it. A level a route holds never blocks anyone -- **Add to catalog** still offers the
+  group, marked *held by …*, and adopting it is how it leaves the route: into the application
+  that holds it, the same row is taken over in place; into another, the defaults follow it.
+- **Locked.** A routed level shows a *Routed* badge and cannot be edited or inactivated by hand.
+- **Defaults follow the group.** Position defaults and person grants move with a group whenever
+  it changes hands. A level a route releases is deleted when nothing is on it, and otherwise
+  deactivated (and unlocked) so its defaults keep their history.
+- **Qualifying groups only.** A held group that becomes dynamic, role-assignable or synced from
+  AD, or disappears from the tenant, is released. *Leave these alone:* a cloud group an AD-group
+  level still names -- one on the conversion worklist (section 13) -- is never held by a route;
+  convert that level instead, which keeps its defaults. The AD side never holds such a group
+  either, so the two kinds of route cannot grant one group twice.
+- **Renames** need nothing: the level keys on the object ID, and takes the new display name as
+  its label on the next pass.
+
+Every applied sync that includes groups brings these levels in step (a `routes` part in the
+run's counts, only when something changed); a preview never does. Editing a route, the flag, or
+a level reconciles straight away. **Reconcile now** on Admin → Entra ID, or the command, does it
+on demand:
+
+```bash
+python manage.py reconcile_entra_levels --dry-run          # what would change
+python manage.py reconcile_entra_levels                    # every group in the mirror
+python manage.py reconcile_entra_levels --group SG-Epic-Nurse --group <object-id>
+python manage.py reconcile_entra_levels --application "Cloud Groups" [--force] [--no-audit]
+```
+
+A full pass refuses to retire more than half of at least 20 route-managed levels at once, or any
+when the mirror holds no active group -- a collapsed mirror or a tenant-wide change is far more
+often a mistake than a real one. `--force` goes ahead anyway.
+
+**Caveat:** a held cloud group that later becomes *synced from AD* is released as above, but its
+position defaults stay on the deactivated level: an Entra-group level cannot become an AD-group
+level by itself. Point those defaults at the AD group's level by hand.
 
 ## 13. Hybrid tenants
 
@@ -587,6 +648,7 @@ tenant that does not exist.
 |---|---|
 | **Groups** | the copies of the `demo.local` groups Entra Connect synchronizes (not the Infrastructure OU); `LIC_M365_E3`, whose source of authority moved to the cloud; cloud security, mail-enabled security and Microsoft 365 groups; a dynamic, a role-assignable and a distribution group; `FS_NURSING_EDUCATION`, written back to AD; `LIC_TEAMS_PHONE_PILOT`, deleted after its pilot |
 | **Levels** | *Microsoft 365*: Copilot (with a position default), Teams Phone (deleted group, still a default), Power BI Pro (never returned), All nursing staff (group made dynamic since); *File Shares*: the nursing education share, a default for nurses |
+| **Routes** | `Teams-*` → Microsoft 365, advisory: *Add to catalog* suggests it for Teams-Pharmacy-Informatics, while MESG-Pharmacy-Alerts matches no route. No demo application holds cloud groups automatically; tick *Dynamic Entra groups* on one to watch a route fill it |
 | **Accounts** | the synchronized staff, one of them disabled, one whose person left and one linked by network username (no employee ID); a converted member; a contractor linked by hand; an emergency-access account and a shared mailbox; guests from another Entra tenant, Google, a Microsoft account, one-time passcode and a SAML partner; an external member |
 | **Runs** | three: the first import, a scheduled run that failed on an expired client secret, and last night's |
 

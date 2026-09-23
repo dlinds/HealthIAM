@@ -26,7 +26,7 @@ from apps.core.demo import entra_data
 from apps.directory import writeback
 from apps.directory.models import ADGroup, DirectoryAccount
 from apps.entra import references, worklists
-from apps.entra.models import EntraAccount, EntraGroup, EntraSyncRun
+from apps.entra.models import EntraAccount, EntraGroup, EntraGroupRoute, EntraSyncRun
 from apps.people.models import Person
 
 from . import factories
@@ -67,6 +67,7 @@ def tenant_snapshot():
         rows(AccessLevel.objects.filter(access_model=AccessLevel.AccessModel.ENTRA_GROUP)),
         rows(PositionDefault.objects.all()),
         rows(ADGroup.objects.all()),
+        rows(EntraGroupRoute.objects.all()),
     )
 
 
@@ -296,6 +297,14 @@ def test_demo_tenant_pages_render(as_user):
         "Teams-Pharmacy-Informatics",
         "MESG-Pharmacy-Alerts",
     }
+    # The advisory Teams-* route suggests a home for one; the other is left to pick by hand.
+    suggested = {g.display_name: g.suggested for g in adoptable}
+    assert suggested["Teams-Pharmacy-Informatics"].name == "Microsoft 365"
+    assert suggested["MESG-Pharmacy-Alerts"] is None
+    assert EntraGroupRoute.objects.count() == len(entra_data.ROUTES)
+    assert not AccessLevel.objects.filter(
+        source=AccessLevel.Source.ROUTE, access_model="entra_group"
+    ).exists()
     conversions = client.get(reverse("entra:conversions"))
     assert [row["level"].name for row in conversions.context["rows"]] == ["Standard user (E3)"]
     broken = client.get(reverse("entra:broken_references"))

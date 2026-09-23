@@ -276,7 +276,9 @@ def group_adopt(request):
     held_by = {
         level.lname: level.application
         for level in (
-            AccessLevel.objects.filter(source=AccessLevel.Source.ROUTE)
+            AccessLevel.objects.filter(
+                source=AccessLevel.Source.ROUTE, access_model=AccessLevel.AccessModel.AD_GROUP
+            )
             .annotate(lname=Lower("ad_group_name"))
             .filter(lname__in={group.name.lower() for group in groups})
             .select_related("application")

@@ -20,6 +20,7 @@ retires levels by itself only for an application whose `dynamic_ad_groups` is on
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from django.db.models import Case, IntegerField, When
 
@@ -28,12 +29,16 @@ from apps.catalog.models import Application
 from .matching import matches_patterns
 from .models import ADGroupRoute
 
+if TYPE_CHECKING:
+    from apps.entra.models import EntraGroupRoute
+
 
 @dataclass(frozen=True)
 class Match:
-    """The route that claimed a name, and the application it points at."""
+    """The route that claimed a name, and the application it points at. Shared with
+    `apps.entra.routing`: everything here reads only a route's `pattern` and `application`."""
 
-    route: ADGroupRoute
+    route: ADGroupRoute | EntraGroupRoute
     application: Application
 
     @property
@@ -41,11 +46,10 @@ class Match:
         return self.route.pattern
 
 
-def active_routes() -> list[ADGroupRoute]:
-    """Active routes in resolution order, with their target loaded."""
+def in_resolution_order(routes) -> list:
+    """`routes` (a queryset of either route model) in resolution order, target loaded."""
     return list(
-        ADGroupRoute.objects.filter(is_active=True)
-        .select_related("application")
+        routes.select_related("application")
         # Ranked explicitly rather than by ordering on `application__kind`, which happens
         # to sort "application" before "service" alphabetically -- luck, not a rule. A
         # future third kind lands after applications through the `default` arm, which is
@@ -61,7 +65,12 @@ def active_routes() -> list[ADGroupRoute]:
     )
 
 
-def matches_in(name: str, routes: list[ADGroupRoute]) -> list[Match]:
+def active_routes() -> list[ADGroupRoute]:
+    """Active routes in resolution order, with their target loaded."""
+    return in_resolution_order(ADGroupRoute.objects.filter(is_active=True))
+
+
+def matches_in(name: str, routes: list) -> list[Match]:
     """Every route in `routes` claiming `name`, in resolution order.
 
     Callers that already hold the route list use this to avoid a query per name. It is a
@@ -80,7 +89,7 @@ def matches_in(name: str, routes: list[ADGroupRoute]) -> list[Match]:
     ]
 
 
-def match_in(name: str, routes: list[ADGroupRoute]) -> Match | None:
+def match_in(name: str, routes: list) -> Match | None:
     """The top route in `routes` claiming `name`: what the catalog suggests as its home."""
     if not name:
         return None

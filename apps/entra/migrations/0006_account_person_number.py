@@ -6,7 +6,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("entra", "0004_account_link_methods"),
+        ("entra", "0005_account_link_methods"),
     ]
 
     operations = [

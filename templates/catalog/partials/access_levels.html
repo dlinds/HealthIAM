@@ -11,8 +11,9 @@
   {% if route_level_count %}
   <p class="text-body-secondary small mb-2">
     <i class="bi bi-signpost-split me-1"></i>{{ route_level_count }} of these
-    {{ route_level_count|pluralize:"level is,levels are" }} held automatically by an
-    <a href="{% url 'directory:route_list' %}">AD group route</a>. Adopt the group to take one over.
+    {{ route_level_count|pluralize:"level is,levels are" }} held automatically by
+    {% if ad_route_level_count %}{% if AD_ENABLED %}<a href="{% url 'directory:route_list' %}">AD group routes</a>{% else %}AD group routes{% endif %}{% endif %}{% if ad_route_level_count and entra_route_level_count %} and {% endif %}{% if entra_route_level_count %}{% if ENTRA_ENABLED %}<a href="{% url 'entra:route_list' %}">Entra group routes</a>{% else %}Entra group routes{% endif %}{% endif %}.
+    Adopt the group to take one over.
   </p>
   {% endif %}
   {% if show_level_filter or show_level_source_filter %}

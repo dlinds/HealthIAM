@@ -8,8 +8,8 @@
     {% for level in levels %}
       <tr class="{% if not level.is_active %}text-body-tertiary{% endif %}">
         <td class="fw-semibold">{{ level.name }}
-          {% if level.source == 'route' %}<span class="badge text-bg-info" title="Held automatically because an AD group route points {{ level.ad_group_name }} at this application. Adopt the group from AD groups &rarr; Add to catalog to take it over.">Routed</span>
-          {% elif level.source == 'adopted' %}<span class="badge text-bg-light border" title="Taken over from an AD group route by hand.">Taken over</span>{% endif %}
+          {% if level.source == 'route' %}{% if level.access_model == 'entra_group' %}<span class="badge text-bg-info" title="Held automatically because an Entra group route points {{ level.access_target }} at this application. Adopt the group from Entra groups &rarr; Add to catalog to take it over.">Routed</span>{% else %}<span class="badge text-bg-info" title="Held automatically because an AD group route points {{ level.ad_group_name }} at this application. Adopt the group from AD groups &rarr; Add to catalog to take it over.">Routed</span>{% endif %}
+          {% elif level.source == 'adopted' %}<span class="badge text-bg-light border" title="Taken over from a group route by hand.">Taken over</span>{% endif %}
         </td>
         <td><span class="badge text-bg-light border">{{ level.get_access_model_display }}</span></td>
         <td class="small">
