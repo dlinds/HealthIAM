@@ -31,7 +31,7 @@ from django.utils import timezone
 from apps.core.models import TimeStampedModel
 from apps.orgs.models import ActivatableModel, Position, Source
 
-from .keys import normalize_username
+from .keys import format_person_number, normalize_username, parse_person_number
 
 
 class DateRange(Func):
@@ -187,8 +187,8 @@ class ExternalOrganization(ActivatableModel):
 
 class PersonQuerySet(models.QuerySet):
     def search(self, q: str):
-        """Match current and former names, employee ID, network username, e-mail and
-        identifiers."""
+        """Match current and former names, employee ID, person number, network username,
+        e-mail and identifiers."""
         q = (q or "").strip()
         if not q:
             return self
@@ -205,6 +205,9 @@ class PersonQuerySet(models.QuerySet):
         username = normalize_username(q)
         if username:  # never `network_username=""`, which every person without one matches
             cond |= Q(network_username=username)
+        pk = parse_person_number(q, settings.PERSON_NUMBER_PREFIX)
+        if pk is not None:
+            cond |= Q(pk=pk)
         parts = q.split()
         if len(parts) >= 2:
             first, last = parts[0], parts[-1]
@@ -340,6 +343,16 @@ class Person(ActivatableModel):
     @property
     def display_name(self) -> str:
         return f"{self.preferred_name or self.first_name} {self.last_name}".strip()
+
+    @property
+    def person_number(self) -> str:
+        """The key HealthIAM gives everybody -- HR's employees and the externals HR never
+        numbers alike -- to write into a custom attribute of their directory accounts. Made of
+        the primary key, so it never changes and nothing has to store it, with a check digit,
+        so a typo in it names nobody rather than somebody else."""
+        if self.pk is None:
+            return ""
+        return format_person_number(self.pk, settings.PERSON_NUMBER_PREFIX)
 
     @property
     def legal_name(self) -> str:

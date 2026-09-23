@@ -4,9 +4,10 @@ Both account mirrors -- `apps.directory` for Active Directory, `apps.entra` for 
 link their accounts through `PeopleIndex.match` and `apply_match`, so one set of rules
 decides on both sides:
 
-1. **Strong keys** name a person outright: the employee ID (or, when it matches nobody's
-   current one, a former employee ID a person carries as an identifier -- a rehire, a traveler
-   hired on), then the network username (the account's sAMAccountName or UPN against
+1. **Strong keys** name a person outright: the person number HealthIAM issues (for the
+   people HR never numbers), the employee ID (or, when it matches nobody's current one, a
+   former employee ID a person carries as an identifier -- a rehire, a traveler hired on),
+   then the network username (the account's sAMAccountName or UPN against
    `Person.network_username`). A username does not count for a person who left before the
    account was created: names get reused, and a new account must never be tied to somebody
    who has gone.
@@ -32,13 +33,15 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime
 
+from django.conf import settings
 from django.utils import timezone
 
-from .keys import normalize_username
+from .keys import format_person_number, normalize_username, parse_person_number
 from .models import Person, PersonIdentifier
 
 #: Automatic link methods, strongest first: the values `DirectoryAccount.LinkMethod` and
 #: `EntraAccount.LinkMethod` store, beside `MANUAL` for a link made by hand.
+PERSON_NUMBER = "person_number"
 EMPLOYEE_ID = "employee_id"
 FORMER_ID = "former_id"
 USERNAME = "username"
@@ -49,7 +52,7 @@ MANUAL = "manual"
 #: The links a mirror copies from the other one's copy of an account: made by hand or by a
 #: strong key. Never an e-mail link, which would get round the mirror's own e-mail setting, nor
 #: a paired one, which would let the two mirrors keep each other's links alive forever.
-PAIRABLE = (MANUAL, EMPLOYEE_ID, FORMER_ID, USERNAME)
+PAIRABLE = (MANUAL, PERSON_NUMBER, EMPLOYEE_ID, FORMER_ID, USERNAME)
 
 #: What a link or an unlink writes on an account row.
 LINK_FIELDS = ["person", "link_method", "linked_at", "updated_at"]
@@ -61,6 +64,7 @@ class AccountKeys:
     network username takes (sAMAccountName, UPN); `emails` are tried only when no strong key
     names anybody, and only when the mirror passes them."""
 
+    person_number: str = ""
     employee_id: str = ""
     usernames: tuple[str, ...] = ()
     emails: tuple[str, ...] = ()
@@ -119,14 +123,21 @@ def left_before(person: Person, created_at: datetime | None) -> bool:
 class PeopleIndex:
     """Every person by each key an account can carry, built once per link pass."""
 
-    def __init__(self, people: Iterable[Person], former_ids: Iterable[tuple[str, int]] = ()):
-        by_pk: dict[int, Person] = {}
+    def __init__(
+        self,
+        people: Iterable[Person],
+        former_ids: Iterable[tuple[str, int]] = (),
+        *,
+        prefix: str = "P",
+    ):
+        self.prefix = prefix
+        self.by_pk: dict[int, Person] = {}
         self.by_employee_id: dict[str, Person] = {}
         self.by_former_id: dict[str, Person] = {}
         self.by_username: dict[str, Person] = {}
         self.by_email: dict[str, list[Person]] = {}
         for person in people:
-            by_pk[person.pk] = person
+            self.by_pk[person.pk] = person
             if person.employee_id:
                 self.by_employee_id[person.employee_id] = person
             if person.network_username:
@@ -136,15 +147,15 @@ class PeopleIndex:
                 self.by_email.setdefault(email, []).append(person)
         # Unique per kind case-insensitively (`unique_identifier_value_per_kind`).
         for value, person_id in former_ids:
-            if person_id in by_pk:
-                self.by_former_id[value.strip().lower()] = by_pk[person_id]
+            if person_id in self.by_pk:
+                self.by_former_id[value.strip().lower()] = self.by_pk[person_id]
 
     @classmethod
     def build(cls) -> PeopleIndex:
         former_ids = PersonIdentifier.objects.filter(
             kind=PersonIdentifier.Kind.FORMER_EMPLOYEE_ID
         ).values_list("value", "person_id")
-        return cls(Person.objects.all(), former_ids)
+        return cls(Person.objects.all(), former_ids, prefix=settings.PERSON_NUMBER_PREFIX)
 
     def match(self, keys: AccountKeys, *, pair: Pair | None = None) -> Match:
         hits = self._strong_hits(keys)
@@ -173,12 +184,21 @@ class PeopleIndex:
             if len(found) > 1:
                 note = f"{len(found)} people have the e-mail {email}"
                 break
-        return Match(note=note, unmatched=bool((keys.employee_id or "").strip() or note))
+        number = (keys.person_number or "").strip()
+        if number and parse_person_number(number, self.prefix) is None:
+            note = f"{number} is not a person number (a typo?)"
+        carried = (keys.employee_id or "").strip() or number
+        return Match(note=note, unmatched=bool(carried or note))
 
     def _strong_hits(self, keys: AccountKeys) -> list[tuple[str, Person, str, str]]:
         """`(method, person, audit reason, the key in words)` for every strong key that names
         somebody, strongest first."""
         hits = []
+        pk = parse_person_number(keys.person_number, self.prefix) if keys.person_number else None
+        if pk is not None and (person := self.by_pk.get(pk)) is not None:
+            number = format_person_number(pk, self.prefix)
+            reason = f"Person number {number} matches"
+            hits.append((PERSON_NUMBER, person, reason, f"person number {number}"))
         employee_id = (keys.employee_id or "").strip()
         if employee_id:
             person = self.by_employee_id.get(employee_id)

@@ -189,6 +189,13 @@ class DirectoryAccount(TimeStampedModel):
     department = models.CharField(max_length=150, blank=True)
     manager_dn = models.CharField("Manager DN", max_length=1024, blank=True)
     employee_id = models.CharField("Employee ID", max_length=64, blank=True, db_index=True)
+    person_number = models.CharField(
+        "Person number",
+        max_length=64,
+        blank=True,
+        db_index=True,
+        help_text="As AD_PERSON_NUMBER_ATTRIBUTE holds it, typos included.",
+    )
     enabled = models.BooleanField(default=True, help_text="Not disabled in AD.")
     account_expires = models.DateTimeField(null=True, blank=True)
     when_created = models.DateTimeField(null=True, blank=True)

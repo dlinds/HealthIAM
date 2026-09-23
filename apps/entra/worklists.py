@@ -12,7 +12,7 @@ three never disagree about what counts:
 - **stale** -- guests and external members with no sign-in for `ENTRA_GUEST_STALE_DAYS`, or
   never signed in although created that long ago. Only accounts whose sign-in activity the last
   sync could read count: without the licence the data is absent, which is not the same as old.
-- **unmatched** -- an employee ID that matches no person.
+- **unmatched** -- an employee ID or a person number that matches no person.
 - **disabled** -- still in the tenant, sign-in blocked.
 """
 
@@ -63,7 +63,7 @@ def unmatched(qs):
     # Unlinked by hand is somebody's decision, not a missing person.
     return (
         qs.filter(is_active=True, person__isnull=True)
-        .exclude(employee_id="")
+        .exclude(employee_id="", person_number="")
         .exclude(link_method=EntraAccount.LinkMethod.MANUAL)
     )
 
@@ -105,7 +105,7 @@ SHOW_CHOICES = [
     ("unlinked", "Members linked to nobody"),
     ("pending", "Invitations pending too long"),
     ("stale", "Guests not signed in lately"),
-    ("unmatched", "Employee ID matches nobody"),
+    ("unmatched", "Employee ID or person number matches nobody"),
     ("disabled", "Sign-in blocked"),
 ]
 

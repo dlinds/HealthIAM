@@ -210,6 +210,13 @@ class EntraAccount(_Mirrored):
     department = models.CharField(max_length=150, blank=True)
     company_name = models.CharField(max_length=150, blank=True)
     employee_id = models.CharField("Employee ID", max_length=64, blank=True, db_index=True)
+    person_number = models.CharField(
+        "Person number",
+        max_length=64,
+        blank=True,
+        db_index=True,
+        help_text="As ENTRA_PERSON_NUMBER_ATTRIBUTE holds it, typos included.",
+    )
     user_type = models.CharField(max_length=20, default="Member")
     creation_type = models.CharField(max_length=40, blank=True)
     source = models.CharField(

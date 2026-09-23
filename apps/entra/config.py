@@ -26,7 +26,8 @@ PLAIN_ATTRIBUTES = ("employeeId",)
 
 
 def employee_id_select(attribute: str) -> str:
-    """The `$select` term that brings `attribute` back, or "" when it is not one we can read.
+    """The `$select` term that brings `attribute` back, or "" when it is not one we can read:
+    the employee ID's attribute, or the person number's, which takes the same forms.
 
     An extension attribute lives inside the `onPremisesExtensionAttributes` complex property,
     so that is what has to be selected; a schema extension and a plain property are selected
@@ -46,7 +47,8 @@ def employee_id_select(attribute: str) -> str:
 
 
 def read_employee_id(payload: dict, attribute: str) -> str:
-    """The employee ID out of one Graph user object, per `attribute`; "" when absent."""
+    """The employee ID -- or the person number -- out of one Graph user object, per
+    `attribute`; "" when absent."""
     attribute = (attribute or "").strip()
     if not attribute:
         return ""
@@ -78,6 +80,7 @@ class EntraSettings:
     accounts_enabled: bool = True
     account_exclude_patterns: tuple[str, ...] = ()
     employee_id_attribute: str = "employeeId"
+    person_number_attribute: str = ""
     link_members_by_email: bool = False
     sign_in_activity: bool = True
     user_group: str = ""
@@ -105,6 +108,9 @@ class EntraSettings:
             accounts_enabled=bool(settings.ENTRA_ENABLED and settings.ENTRA_ACCOUNTS_ENABLED),
             account_exclude_patterns=tuple(settings.ENTRA_ACCOUNTS_EXCLUDE_PATTERNS),
             employee_id_attribute=(settings.ENTRA_EMPLOYEE_ID_ATTRIBUTE or "").strip(),
+            person_number_attribute=(
+                getattr(settings, "ENTRA_PERSON_NUMBER_ATTRIBUTE", "") or ""
+            ).strip(),
             link_members_by_email=bool(getattr(settings, "ENTRA_LINK_MEMBERS_BY_EMAIL", False)),
             sign_in_activity=bool(settings.ENTRA_SIGN_IN_ACTIVITY),
             user_group=settings.ENTRA_USER_GROUP,
@@ -140,6 +146,10 @@ class EntraSettings:
     def employee_id_select(self) -> str:
         return employee_id_select(self.employee_id_attribute)
 
+    @property
+    def person_number_select(self) -> str:
+        return employee_id_select(self.person_number_attribute)
+
     def public_dict(self) -> dict:
         """Everything an administrator may see. Never includes a secret or a password."""
         return {
@@ -159,6 +169,8 @@ class EntraSettings:
             "account_exclude_patterns": list(self.account_exclude_patterns),
             "employee_id_attribute": self.employee_id_attribute,
             "employee_id_readable": bool(self.employee_id_select),
+            "person_number_attribute": self.person_number_attribute,
+            "person_number_readable": bool(self.person_number_select),
             "link_members_by_email": self.link_members_by_email,
             "sign_in_activity": self.sign_in_activity,
             "user_group": self.user_group,

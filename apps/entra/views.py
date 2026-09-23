@@ -645,6 +645,7 @@ ACCOUNT_COLUMNS = [
     "identity_provider",
     "invitation",
     "employee_id",
+    "person_number",
     "enabled",
     "created",
     "last_sign_in",
@@ -667,6 +668,7 @@ def account_rows(accounts):
             a.identity_provider_label,
             a.external_user_state,
             a.employee_id,
+            a.person_number,
             "yes" if a.account_enabled else "no",
             a.created_in_entra_at.date().isoformat() if a.created_in_entra_at else "",
             (a.last_activity_at.date().isoformat() if a.last_activity_at else "")
@@ -701,6 +703,7 @@ class EntraAccountListView(PermissionCheckMixin, ListView):
                 | Q(surname__icontains=self.q)
                 | Q(mail__icontains=self.q)
                 | Q(employee_id__iexact=self.q)
+                | Q(person_number__iexact=self.q)
                 | Q(company_name__icontains=self.q)
             )
         self.active = g.get("active", "1")

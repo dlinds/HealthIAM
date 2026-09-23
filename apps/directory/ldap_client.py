@@ -70,7 +70,7 @@ GROUP_ATTRIBUTES = [
 GROUP_FILTER = "(objectCategory=group)"
 ACCOUNT_FILTER = "(&(objectCategory=person)(objectClass=user))"
 # The extra attributes the account mirror reads on top of USER_ATTRIBUTES; the employee-ID
-# attribute is configurable and appended by `account_attributes`.
+# and person-number attributes are configurable and appended by `account_attributes`.
 ACCOUNT_EXTRA_ATTRIBUTES = [
     "displayName",
     "manager",
@@ -85,10 +85,11 @@ FILETIME_EPOCH = datetime(1601, 1, 1, tzinfo=UTC)
 FILETIME_NEVER = 0x7FFFFFFFFFFFFFFF
 
 
-def account_attributes(employee_id_attribute: str) -> list[str]:
+def account_attributes(employee_id_attribute: str, person_number_attribute: str = "") -> list[str]:
     attrs = [*USER_ATTRIBUTES, *ACCOUNT_EXTRA_ATTRIBUTES]
-    if employee_id_attribute and employee_id_attribute not in attrs:
-        attrs.append(employee_id_attribute)
+    for attribute in (employee_id_attribute, person_number_attribute):
+        if attribute and attribute.lower() not in {a.lower() for a in attrs}:
+            attrs.append(attribute)
     return attrs
 
 
@@ -162,6 +163,7 @@ class DirectoryUser:
     department: str = ""
     uac: int = 0
     employee_id: str = ""
+    person_number: str = ""
     display_name: str = ""
     manager_dn: str = ""
     account_expires: datetime | None = None
@@ -349,7 +351,9 @@ def parse_filetime(value) -> datetime | None:
         return None
 
 
-def parse_user_entry(entry: dict, *, employee_id_attribute: str = "employeeID") -> DirectoryUser:
+def parse_user_entry(
+    entry: dict, *, employee_id_attribute: str = "employeeID", person_number_attribute: str = ""
+) -> DirectoryUser:
     raw = _raw(entry)
     dn = _text(raw, "distinguishedName", MAX_DN) or str(entry.get("dn") or "")[:MAX_DN]
     return DirectoryUser(
@@ -365,6 +369,9 @@ def parse_user_entry(entry: dict, *, employee_id_attribute: str = "employeeID") 
         uac=_int(raw, "userAccountControl"),
         employee_id=(
             _text(raw, employee_id_attribute, MAX_EMPLOYEE_ID) if employee_id_attribute else ""
+        ),
+        person_number=(
+            _text(raw, person_number_attribute, MAX_EMPLOYEE_ID) if person_number_attribute else ""
         ),
         display_name=_text(raw, "displayName", MAX_SAM),
         manager_dn=_text(raw, "manager", MAX_DN),
@@ -668,9 +675,13 @@ class Ldap3Client(DirectoryClient):
             yield parse_group_entry(entry)
 
     def iter_accounts(self, base_dn: str) -> Iterator[DirectoryUser]:
-        attribute = self._settings.employee_id_attribute
-        for entry in self._paged(base_dn, ACCOUNT_FILTER, account_attributes(attribute)):
-            yield parse_user_entry(entry, employee_id_attribute=attribute)
+        employee_id = self._settings.employee_id_attribute
+        person_number = self._settings.person_number_attribute
+        attributes = account_attributes(employee_id, person_number)
+        for entry in self._paged(base_dn, ACCOUNT_FILTER, attributes):
+            yield parse_user_entry(
+                entry, employee_id_attribute=employee_id, person_number_attribute=person_number
+            )
 
     @sensitive_variables()
     def check_password(self, upn: str, password: str, *, expect_sam: str) -> bool:

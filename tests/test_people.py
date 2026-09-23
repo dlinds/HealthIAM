@@ -802,6 +802,22 @@ def test_edit_form_sets_a_network_username_and_names_a_duplicates_holder(as_user
     assert list(resp.context["object_list"]) == [], "an empty username must not match everyone"
 
 
+def test_everybody_has_a_person_number_and_search_finds_it(as_user, admin_user, jane, settings):
+    from apps.people.keys import format_person_number
+
+    assert jane.person_number == format_person_number(jane.pk)
+    client = as_user(admin_user)
+    assert jane.person_number in client.get(jane.get_absolute_url()).content.decode()
+    resp = client.get(reverse("people:person_list"), {"q": jane.person_number.lower()})
+    assert list(resp.context["object_list"]) == [jane]
+    # A typo in it finds nobody, rather than somebody else.
+    typo = jane.person_number[:-1] + str((int(jane.person_number[-1]) + 1) % 10)
+    resp = client.get(reverse("people:person_list"), {"q": typo})
+    assert list(resp.context["object_list"]) == []
+    settings.PERSON_NUMBER_PREFIX = "HI"
+    assert jane.person_number.startswith("HI")
+
+
 def test_pickers(as_user, admin_user, jane, position):
     client = as_user(admin_user)
     resp = client.get(reverse("people:person_picker"), {"q": "smith", "field": "sponsor"})

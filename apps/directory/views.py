@@ -618,6 +618,7 @@ ACCOUNT_COLUMNS = [
     "upn",
     "display_name",
     "employee_id",
+    "person_number",
     "enabled",
     "expires",
     "last_logon",
@@ -632,7 +633,7 @@ ACCOUNT_COLUMNS = [
 SHOW_CHOICES = [
     ("", "All accounts"),
     ("unlinked", "Unlinked user accounts"),
-    ("unmatched", "Employee ID matches nobody"),
+    ("unmatched", "Employee ID or person number matches nobody"),
     ("orphaned", "Enabled, person inactive"),
     ("disabled", "Disabled in AD"),
     ("expired", "Expired"),
@@ -646,6 +647,7 @@ def account_rows(accounts):
             a.upn,
             a.display_name,
             a.employee_id,
+            a.person_number,
             "yes" if a.enabled else "no",
             a.account_expires.date().isoformat() if a.account_expires else "",
             a.last_logon_at.date().isoformat() if a.last_logon_at else "",
@@ -679,6 +681,7 @@ class DirectoryAccountListView(PermissionCheckMixin, ListView):
                 | Q(surname__icontains=self.q)
                 | Q(mail__icontains=self.q)
                 | Q(employee_id__iexact=self.q)
+                | Q(person_number__iexact=self.q)
             )
         self.active = g.get("active", "1")
         if self.active == "1":
@@ -689,7 +692,7 @@ class DirectoryAccountListView(PermissionCheckMixin, ListView):
         if self.show == "unlinked":
             qs = _unlinked(qs)
         elif self.show == "unmatched":
-            qs = qs.filter(person__isnull=True).exclude(employee_id="")
+            qs = qs.filter(person__isnull=True).exclude(employee_id="", person_number="")
         elif self.show == "orphaned":
             qs = _orphaned(qs)
         elif self.show == "disabled":

@@ -12,7 +12,7 @@
 <div class="alert alert-light border small"><i class="bi bi-info-circle me-1"></i>The account mirror is off: set <span class="text-mono">AD_ACCOUNTS_SEARCH_BASES</span> to the OUs that hold user accounts and run a sync. See docs/ad-setup.md.</div>
 {% endif %}
 <form class="row g-2 mb-3 js-autosubmit" method="get">
-  <div class="col-md-3"><input class="form-control" type="search" name="q" value="{{ q }}" placeholder="Account, name, e-mail, employee ID"></div>
+  <div class="col-md-3"><input class="form-control" type="search" name="q" value="{{ q }}" placeholder="Account, name, e-mail, employee ID, person number"></div>
   <div class="col-md-3">
     <select class="form-select" name="show">
       {% for value, label in show_choices %}<option value="{{ value }}" {% if show == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
@@ -36,7 +36,7 @@
     <tr class="{% if not a.is_active %}text-body-tertiary{% endif %}">
       <td><span class="text-mono">{{ a.sam_account_name }}</span><div class="small text-body-secondary">{{ a.upn }}</div></td>
       <td>{{ a.display_name|default:a.given_name }}{% if not a.display_name %} {{ a.surname }}{% endif %}<div class="small text-body-secondary">{{ a.title }}{% if a.department %} · {{ a.department }}{% endif %}</div></td>
-      <td class="text-mono">{{ a.employee_id }}</td>
+      <td class="text-mono">{{ a.employee_id }}{% if a.person_number %}<div class="small text-body-secondary" title="Person number">{{ a.person_number }}</div>{% endif %}</td>
       <td>
         {% if not a.is_active %}<span class="badge text-bg-secondary">not in AD</span>
         {% elif not a.enabled %}<span class="badge text-bg-secondary">disabled</span>
@@ -49,6 +49,7 @@
         {% if a.person %}<a href="{{ a.person.get_absolute_url }}">{{ a.person.sort_name }}</a>{% if not a.person.is_active %} <span class="badge text-bg-danger">person inactive</span>{% endif %}<div class="small text-body-secondary">{{ a.get_link_method_display|lower }}</div>
         {% elif a.unlinked_by_hand %}<span class="text-body-secondary">unlinked by hand</span>
         {% elif a.employee_id %}<span class="badge text-bg-warning">no person with this employee ID</span>
+        {% elif a.person_number %}<span class="badge text-bg-warning">no person with this person number</span>
         {% else %}<span class="text-body-tertiary">—</span>{% endif %}
       </td>
       <td><span class="badge text-bg-light border">{{ a.get_kind_display }}</span></td>

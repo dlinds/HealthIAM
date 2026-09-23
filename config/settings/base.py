@@ -34,6 +34,7 @@ env = environ.Env(
     AD_ACCOUNTS_EXCLUDE_PATTERNS=(list, []),
     AD_EMPLOYEE_ID_ATTRIBUTE=(str, "employeeID"),
     AD_LINK_BY_EMAIL=(bool, False),
+    AD_PERSON_NUMBER_ATTRIBUTE=(str, ""),
     AD_AUTH_ENABLED=(bool, False),
     AD_AUTH_TIMEOUT=(int, 60),
     AD_AUTH_MAX_FAILURES=(int, 3),
@@ -53,6 +54,7 @@ env = environ.Env(
     ENTRA_ACCOUNTS_EXCLUDE_PATTERNS=(list, []),
     ENTRA_EMPLOYEE_ID_ATTRIBUTE=(str, "employeeId"),
     ENTRA_LINK_MEMBERS_BY_EMAIL=(bool, False),
+    ENTRA_PERSON_NUMBER_ATTRIBUTE=(str, ""),
     ENTRA_SIGN_IN_ACTIVITY=(bool, True),
     ENTRA_GUEST_STALE_DAYS=(int, 90),
     ENTRA_GUEST_PENDING_DAYS=(int, 30),
@@ -60,6 +62,7 @@ env = environ.Env(
     ENTRA_BASELINE_ROLE=(str, "Help Desk"),
     ENTRA_SYNC_SCHEDULE_COMMAND=(str, ""),
     DIRECTORY_LOGIN_SOURCE=(str, ""),
+    PERSON_NUMBER_PREFIX=(str, "P"),
 )
 environ.Env.read_env(BASE_DIR / ".env")
 
@@ -218,6 +221,10 @@ AD_EMPLOYEE_ID_ATTRIBUTE = env("AD_EMPLOYEE_ID_ATTRIBUTE")
 # Also link an account no stronger key links by its mail, then its UPN, when exactly one person
 # has that address. Off by default: only safe where people's e-mail comes from IT, not typed in.
 AD_LINK_BY_EMAIL = env("AD_LINK_BY_EMAIL")
+# The attribute an account carries its HealthIAM person number in (`P0001230`, on every person
+# page), for the people HR never numbers: usually a free extensionAttribute1..15, which Entra
+# Connect also synchronizes. Empty = accounts are not linked by person number.
+AD_PERSON_NUMBER_ATTRIBUTE = env("AD_PERSON_NUMBER_ATTRIBUTE")
 AD_ACCOUNTS_ENABLED = AD_ENABLED and bool(AD_ACCOUNTS_SEARCH_BASES)
 
 # --- Active Directory sign-in ------------------------------------------------------
@@ -281,6 +288,10 @@ ENTRA_EMPLOYEE_ID_ATTRIBUTE = env("ENTRA_EMPLOYEE_ID_ATTRIBUTE")
 # Guests and external members always link by e-mail; this links members by it too, when no
 # stronger key does and exactly one person has the address. Off by default, like the AD one.
 ENTRA_LINK_MEMBERS_BY_EMAIL = env("ENTRA_LINK_MEMBERS_BY_EMAIL")
+# Where a user carries the HealthIAM person number: the same forms as the employee ID, usually
+# onPremisesExtensionAttributes.extensionAttributeN when AD_PERSON_NUMBER_ATTRIBUTE is
+# extensionAttributeN. Empty = accounts are not linked by person number.
+ENTRA_PERSON_NUMBER_ATTRIBUTE = env("ENTRA_PERSON_NUMBER_ATTRIBUTE")
 # Last sign-in per account needs Entra ID P1/P2 and AuditLog.Read.All; without them the sync
 # carries on without it. False stops asking.
 ENTRA_SIGN_IN_ACTIVITY = env("ENTRA_SIGN_IN_ACTIVITY")
@@ -299,6 +310,12 @@ ENTRA_SYNC_SCHEDULE_COMMAND = env("ENTRA_SYNC_SCHEDULE_COMMAND")
 DIRECTORY_LOGIN_SOURCE = env("DIRECTORY_LOGIN_SOURCE").strip().lower()
 ENTRA_USER_GROUP = env("ENTRA_USER_GROUP").strip()
 ENTRA_BASELINE_ROLE = env("ENTRA_BASELINE_ROLE")
+
+# --- People ---------------------------------------------------------------------------
+# The letters in front of every person number (P0001230), the key AD_PERSON_NUMBER_ATTRIBUTE
+# and ENTRA_PERSON_NUMBER_ATTRIBUTE read. One to four letters; pick one before numbers go
+# into the directory, since a number read back is only recognized with the current prefix.
+PERSON_NUMBER_PREFIX = env("PERSON_NUMBER_PREFIX")
 
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},

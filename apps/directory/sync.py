@@ -790,6 +790,7 @@ ACCOUNT_FIELDS = (
     "department",
     "manager_dn",
     "employee_id",
+    "person_number",
     "enabled",
     "account_expires",
     "when_created",
@@ -812,6 +813,7 @@ def _account_values(account: DirectoryUser) -> dict:
         "department": account.department,
         "manager_dn": account.manager_dn,
         "employee_id": account.employee_id,
+        "person_number": account.person_number,
         "enabled": account.enabled,
         "account_expires": account.account_expires,
         "when_created": account.when_created,
@@ -841,6 +843,8 @@ def _sync_account(account: DirectoryUser, existing: dict, now) -> tuple[str, str
                 notes.append("enabled in AD" if values[name] else "disabled in AD")
             elif name == "employee_id":
                 notes.append(f"employee ID: {obj.employee_id or '-'} -> {values[name] or '-'}")
+            elif name == "person_number":
+                notes.append(f"person number: {obj.person_number or '-'} -> {values[name] or '-'}")
             setattr(obj, name, values[name])
             changed.append(name)
     reactivated = False
@@ -868,12 +872,13 @@ def link_accounts(result: AccountSyncResult | None = None, *, now=None) -> tuple
     """Link every active account the sync may link to the person its keys name, and unlink an
     automatic link whose basis has gone. Returns `(linked, unlinked, unmatched)`.
 
-    The keys are the employee ID (or a former one), then the account's sAMAccountName and UPN
-    against people's network usernames, then its Entra ID copy's link, then -- with
-    `AD_LINK_BY_EMAIL` -- its mail and UPN; the rules are `apps.people.linking`'s. A link made
-    or removed by hand is never touched: `link_method=manual` with a person means "this is
-    theirs, whatever the attributes say", and with no person "leave it unlinked". Also used by
-    the demo seed, so the demo world links the way a sync would.
+    The keys are the person number (from `AD_PERSON_NUMBER_ATTRIBUTE`), the employee ID (or a
+    former one), then the account's sAMAccountName and UPN against people's network
+    usernames, then its Entra ID copy's link, then -- with `AD_LINK_BY_EMAIL` -- its mail and
+    UPN; the rules are `apps.people.linking`'s. A link made or removed by hand is never
+    touched: `link_method=manual` with a person means "this is theirs, whatever the attributes
+    say", and with no person "leave it unlinked". Also used by the demo seed, so the demo world
+    links the way a sync would.
     """
     now = now or timezone.now()
     cfg = DirectorySettings.from_settings()
@@ -885,6 +890,7 @@ def link_accounts(result: AccountSyncResult | None = None, *, now=None) -> tuple
     )
     for account in accounts.select_related("person").order_by("sam_account_name", "pk"):
         keys = AccountKeys(
+            person_number=account.person_number,
             employee_id=account.employee_id,
             usernames=(account.sam_account_name, account.upn),
             emails=(account.mail, account.upn) if cfg.link_by_email else (),
@@ -931,6 +937,8 @@ def _entra_copies() -> dict:
 def _lost_basis(account: DirectoryAccount) -> str:
     """Why an automatic link went away, for the run log, when nothing more specific is known."""
     method = account.link_method
+    if method == DirectoryAccount.LinkMethod.PERSON_NUMBER:
+        return f"person number {account.person_number or '-'} matches nobody"
     if method == DirectoryAccount.LinkMethod.USERNAME:
         return f"username {account.sam_account_name} matches nobody"
     if method == DirectoryAccount.LinkMethod.PAIRED:

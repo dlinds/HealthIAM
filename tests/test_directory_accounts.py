@@ -1063,3 +1063,70 @@ def test_email_links_only_with_the_setting_and_only_to_one_person(people, settin
         "unlinked from Alice Anders: 2 people have the e-mail alice.anders@corp.example.org"
     )
     assert sync.link_accounts() == (0, 0, 1), "an ambiguous address counts as unmatched"
+
+
+# --- Linking by person number --------------------------------------------------------------
+
+
+def test_the_parser_reads_the_person_number_attribute():
+    entry = {
+        "dn": "CN=x",
+        "raw_attributes": {"sAMAccountName": [b"x"], "extensionAttribute7": [b" P0001230 "]},
+    }
+    user = parse_user_entry(entry, person_number_attribute="extensionAttribute7")
+    assert user.person_number == "P0001230"
+    assert parse_user_entry(entry).person_number == ""
+    assert "extensionAttribute7" in account_attributes("employeeID", "extensionAttribute7")
+    attrs = account_attributes("employeeID", "EMPLOYEEID")
+    assert attrs.count("employeeID") == 1 and "EMPLOYEEID" not in attrs
+
+
+def test_accounts_link_by_the_person_number_they_carry(fake_directory, accounts_on, people):
+    number = people["alice"].person_number
+    # Carol's E300 matches nobody; the person number HealthIAM gave Alice decides.
+    fake_directory.update_user("carol", person_number=number.lower())
+    run = do_sync()
+    assert run.summary["accounts"]["linked"] == 3
+    assert run.summary["accounts"]["unmatched"] == 0
+    carol = account("carol")
+    assert carol.person == people["alice"]
+    assert carol.link_method == DirectoryAccount.LinkMethod.PERSON_NUMBER
+    assert carol.person_number == number.lower(), "kept as AD holds it"
+    assert "linked to Alice Anders by person number" in [
+        e["message"] for e in log_for(run, "carol")
+    ]
+    assert account_log(carol)[-1].additional_data["reason"] == f"Person number {number} matches"
+    fake_directory.update_user("carol", person_number="")
+    run = do_sync()
+    assert log_for(run, "carol")[0]["message"] == f"person number: {number.lower()} -> -"
+    assert log_for(run, "carol")[1]["message"] == (
+        "unlinked from Alice Anders: person number - matches nobody"
+    )
+
+
+def test_a_mistyped_or_unknown_person_number_is_unmatched(people, as_user, help_desk_user):
+    from apps.people.keys import format_person_number
+
+    number = people["alice"].person_number
+    typo = number[:-1] + str((int(number[-1]) + 1) % 10)
+    factories.DirectoryAccountFactory(sam_account_name="typo", person_number=typo)
+    factories.DirectoryAccountFactory(
+        sam_account_name="unknown", person_number=format_person_number(999999)
+    )
+    assert sync.link_accounts() == (0, 0, 2)
+    resp = as_user(help_desk_user).get(reverse("directory:account_list"), {"show": "unmatched"})
+    assert {a.sam_account_name for a in resp.context["object_list"]} == {"typo", "unknown"}
+    assert "no person with this person number" in resp.content.decode()
+
+
+def test_a_person_number_and_an_employee_id_naming_different_people_conflict(people):
+    number = people["alice"].person_number
+    factories.DirectoryAccountFactory(
+        sam_account_name="x", employee_id="E200", person_number=number
+    )
+    result = AccountSyncResult(kind="accounts", dry_run=False)
+    assert sync.link_accounts(result) == (0, 0, 0)
+    assert result.log[0]["message"] == (
+        f"its keys name different people: person number {number} names Alice Anders; "
+        "employee ID E200 names Bob Baker"
+    )

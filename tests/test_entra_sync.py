@@ -346,6 +346,18 @@ def test_members_link_by_email_when_the_setting_says_so(fake_tenant, people, set
     assert acct.link_method == EntraAccount.LinkMethod.EMAIL
 
 
+def test_accounts_link_by_the_person_number_they_carry(fake_tenant, people):
+    number = people["carol"].person_number
+    frank = fake_tenant.user("frank@test.invalid")
+    fake_tenant.update_user(frank, person_number=number)  # his E300 matches nobody
+    run = do_sync(scope="accounts")
+    acct = account("frank@test.invalid")
+    assert acct.person == people["carol"]
+    assert acct.link_method == EntraAccount.LinkMethod.PERSON_NUMBER
+    assert acct.person_number == number
+    assert run.summary["accounts"]["unmatched"] == 0
+
+
 def test_an_address_two_people_share_links_nobody(fake_tenant, people):
     factories.PersonFactory(
         first_name="Carol", last_name="Cho-Twin", employee_id="", email="carol@partner.example"

@@ -571,3 +571,20 @@ def test_authority_validation_can_be_switched_off(settings, monkeypatch):
     seen.clear()
     MsalGraphClient(EntraSettings.from_settings())._msal_app()
     assert seen["instance_discovery"] is False
+
+
+def test_the_person_number_is_read_and_selected_beside_the_employee_id(settings):
+    settings.ENTRA_EMPLOYEE_ID_ATTRIBUTE = "onPremisesExtensionAttributes.extensionAttribute1"
+    settings.ENTRA_PERSON_NUMBER_ATTRIBUTE = "onPremisesExtensionAttributes.extensionAttribute7"
+    cfg = EntraSettings.from_settings()
+    assert cfg.public_dict()["person_number_readable"] is True
+    select = MsalGraphClient(cfg)._user_select(sign_in=False).split(",")
+    assert select.count("onPremisesExtensionAttributes") == 1
+    extensions = {"extensionAttribute1": "E100", "extensionAttribute7": " P0001230 "}
+    user = parse_user(
+        user_payload(onPremisesExtensionAttributes=extensions),
+        employee_id_attribute=cfg.employee_id_attribute,
+        person_number_attribute=cfg.person_number_attribute,
+    )
+    assert user.employee_id == "E100" and user.person_number == "P0001230"
+    assert parse_user(user_payload(onPremisesExtensionAttributes=extensions)).person_number == ""

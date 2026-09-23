@@ -193,8 +193,8 @@ def check_employee_id_attribute(app_configs, **kwargs):
                 "ENTRA_EMPLOYEE_ID_ATTRIBUTE is empty.",
                 hint=(
                     "Accounts are mirrored, but members link to people only by network "
-                    "username or by hand, and guests by e-mail. Set it to employeeId, an "
-                    "extension attribute such as "
+                    "username, person number or by hand, and guests by e-mail. Set it to "
+                    "employeeId, an extension attribute such as "
                     "onPremisesExtensionAttributes.extensionAttribute1, or a schema extension."
                 ),
                 id="entra.W007",
@@ -210,5 +210,28 @@ def check_employee_id_attribute(app_configs, **kwargs):
                 "directory schema extension named extension_<appid>_<name>."
             ),
             id="entra.W007",
+        )
+    ]
+
+
+@register(TAG)
+def check_person_number_attribute(app_configs, **kwargs):
+    """W008: a person-number attribute is set that the account mirror cannot read, so it
+    would link nothing without saying so."""
+    if not (_enabled() and getattr(settings, "ENTRA_ACCOUNTS_ENABLED", False)):
+        return []
+    attribute = (getattr(settings, "ENTRA_PERSON_NUMBER_ATTRIBUTE", "") or "").strip()
+    if not attribute or employee_id_select(attribute):
+        return []
+    return [
+        Warning(
+            f"ENTRA_PERSON_NUMBER_ATTRIBUTE {attribute!r} is not an attribute the sync can read.",
+            hint=(
+                "Use the Entra ID side of AD_PERSON_NUMBER_ATTRIBUTE: "
+                "onPremisesExtensionAttributes.extensionAttributeN (1-15) for AD's "
+                "extensionAttributeN, a directory schema extension named "
+                "extension_<appid>_<name>, or employeeId."
+            ),
+            id="entra.W008",
         )
     ]

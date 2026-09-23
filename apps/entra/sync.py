@@ -573,6 +573,7 @@ ACCOUNT_FIELDS = (
     "department",
     "company_name",
     "employee_id",
+    "person_number",
     "user_type",
     "creation_type",
     "source",
@@ -615,6 +616,7 @@ def account_values(
         "department": user.department,
         "company_name": user.company_name,
         "employee_id": user.employee_id,
+        "person_number": user.person_number,
         "user_type": user.user_type,
         "creation_type": user.creation_type,
         "identity_provider": identity_issuer(user, own_domains),
@@ -685,6 +687,8 @@ def _sync_account(
                 notes.append("enabled in Entra ID" if values[name] else "disabled in Entra ID")
             elif name == "employee_id":
                 notes.append(f"employee ID: {obj.employee_id or '-'} -> {values[name] or '-'}")
+            elif name == "person_number":
+                notes.append(f"person number: {obj.person_number or '-'} -> {values[name] or '-'}")
             elif name == "external_user_state" and values[name] == "Accepted":
                 notes.append("invitation accepted")
             elif name == "source":
@@ -716,8 +720,9 @@ def link_accounts(result: AccountSyncResult | None = None, *, now=None) -> tuple
     """Link every active account the sync may link to the person its keys name, and unlink an
     automatic link whose basis has gone. Returns `(linked, unlinked, unmatched)`.
 
-    The keys are the employee ID (or a former one), then the on-premises account name and the
-    UPN against people's network usernames, then the link of the AD account a synchronized
+    The keys are the person number (from `ENTRA_PERSON_NUMBER_ATTRIBUTE`), the employee ID (or
+    a former one), then the on-premises account name and the UPN against people's network
+    usernames, then the link of the AD account a synchronized
     account copies, then e-mail: always for guests and external members, who rarely carry an
     employee ID of ours, and for members too with `ENTRA_LINK_MEMBERS_BY_EMAIL`. The rules are
     `apps.people.linking`'s. A link made or removed by hand is never touched:
@@ -736,6 +741,7 @@ def link_accounts(result: AccountSyncResult | None = None, *, now=None) -> tuple
     for account in accounts.select_related("person").order_by("upn", "pk"):
         by_email = account.is_external or cfg.link_members_by_email
         keys = AccountKeys(
+            person_number=account.person_number,
             employee_id=account.employee_id,
             usernames=(account.on_premises_sam_account_name, account.upn),
             emails=tuple(account.email_candidates()) if by_email else (),
@@ -775,6 +781,8 @@ def _ad_originals() -> dict:
 
 def _lost_basis(account: EntraAccount) -> str:
     """Why an automatic link went away, for the run log, when nothing more specific is known."""
+    if account.link_method == EntraAccount.LinkMethod.PERSON_NUMBER:
+        return f"person number {account.person_number or '-'} matches nobody"
     if account.link_method == EntraAccount.LinkMethod.USERNAME:
         name = account.on_premises_sam_account_name or account.upn
         return f"username {name} matches nobody"
