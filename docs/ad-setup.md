@@ -174,6 +174,8 @@ AD_GROUPS_EXCLUDE_PATTERNS=Domain *,Enterprise *,DnsAdmins,Protected Users,Key A
 | `AD_ACCOUNTS_SEARCH_BASES` | empty (off) | Semicolon-separated OU DNs holding user accounts to mirror and link to people. No fallback to the base DN. Section 13. |
 | `AD_ACCOUNTS_EXCLUDE_PATTERNS` | empty (none) | Comma-separated globs on the account name kept out of the mirror. |
 | `AD_EMPLOYEE_ID_ATTRIBUTE` | `employeeID` | The attribute carrying the HR employee ID that links an account to a person. `W009` warns when empty while accounts are mirrored. |
+| `AD_PERSON_NUMBER_ATTRIBUTE` | empty (off) | The attribute carrying the HealthIAM person number, for people HR never numbers: usually a free `extensionAttributeN`. Section 13. |
+| `AD_LINK_BY_EMAIL` | `false` | Also link an account no stronger key links by its mail, then UPN, when exactly one person has the address. Section 13. |
 
 Then run `python manage.py check`. The `directory.W00x` warnings are the AD configuration
 checks; they never stop the app from starting, so read them. **Admin → Active Directory**
@@ -500,6 +502,7 @@ end of the Active Directory section of `.env.example` to browse it there.
 | **Services** | *Network Access* (dynamic AD groups on), *File Shares*, *Printing*, *Physical Access* |
 | **Routes** | eight, including two that claim `FS_RADIOLOGY_TEACHING` — the application-kind target wins over the service, whatever the priorities say — and one inactive |
 | **Logins** | seven AD-managed logins named after their UPN, one of them disabled in AD, plus `helpdesk`, a local login the sync adopted (and so the only managed login you can sign in as) |
+| **Accounts** | the staff's accounts, linked by employee ID; one whose person left last month (orphaned), one whose employee ID matches nobody, a service account, and `hweiss`, made without an employee ID and linked by the network username the HR feed carries |
 | **Runs** | four: the first import, a preview nobody applied, a failure, and last night's successful run |
 
 All four reference badges are reachable from a plain seed:
@@ -562,16 +565,18 @@ back to `OU=Cloud Groups`; see `docs/entra-setup.md` section 17.
 ## 13. Account mirror
 
 With `AD_ACCOUNTS_SEARCH_BASES` set, every sync (or `sync_ad --accounts-only`) also mirrors
-the user accounts under those OUs and links each one to the person whose employee ID it
-carries. That is what turns the people database into an audit tool: the **AD accounts** page
-lists enabled accounts of people who have left, accounts nobody has been identified for, and
-accounts whose employee ID matches no person, and every person page shows their accounts.
-Membership is still not imported; the mirror is about accounts, not what they can reach.
+the user accounts under those OUs and links each one to the person it belongs to, by the keys
+the account carries: its employee ID, its name, a person number HealthIAM issued. That is what
+turns the people database into an audit tool: the **AD accounts** page lists enabled accounts
+of people who have left, accounts nobody has been identified for, and accounts whose key
+matches no person, and every person page shows their accounts. Membership is still not
+imported; the mirror is about accounts, not what they can reach.
 
 ```
 AD_ACCOUNTS_SEARCH_BASES=OU=Staff,DC=corp,DC=example,DC=org;OU=Contractors,DC=corp,DC=example,DC=org
 AD_ACCOUNTS_EXCLUDE_PATTERNS=svc-*,*-adm
 AD_EMPLOYEE_ID_ATTRIBUTE=employeeID
+AD_PERSON_NUMBER_ATTRIBUTE=extensionAttribute7
 ```
 
 There is deliberately no fallback to the base DN: mirroring every account in the domain,
@@ -585,7 +590,8 @@ which takes them off the *unlinked* worklist.
 The search is `(&(objectCategory=person)(objectClass=user))` under each base, paged like the
 group search, deduplicated by objectGUID across overlapping bases. Per account: the names
 (sAMAccountName, UPN, DN, given name, surname, display name), mail, title, department,
-manager DN, the employee ID from `AD_EMPLOYEE_ID_ATTRIBUTE`, the enabled flag from
+manager DN, the employee ID from `AD_EMPLOYEE_ID_ATTRIBUTE`, the person number from
+`AD_PERSON_NUMBER_ATTRIBUTE` (as the attribute holds it, typos included), the enabled flag from
 `userAccountControl`, `accountExpires`, `whenCreated`, `whenChanged` and
 `lastLogonTimestamp`. Rows are keyed by objectGUID, so a rename or a move updates the same
 row; an account that stops being returned is marked *no longer in AD* (never deleted) and
@@ -595,21 +601,67 @@ of a mirror of twenty or more.
 
 ### Linking rules
 
-1. After the upsert, every active account that is not linked *by hand* is matched by employee
-   ID against the people database (`Person.employee_id`, unique when set, active or inactive).
-   A match links the account (*by employee ID*, with the ID as the audit reason); an
-   employee-ID link whose ID changed or vanished is unlinked and the run page says so.
-2. A link made on the accounts page (**Link…**, with a reason) is *by hand* and survives every
-   later sync, whatever the attribute says. Unlinking by hand also sticks: the sync will not
-   re-link that account by employee ID until it is linked again.
-3. Two accounts may belong to one person (an admin account beside the daily one). One account
-   never belongs to two people.
-4. An account whose employee ID matches nobody is counted as *unmatched* on the run and listed
-   under **AD accounts → Employee ID matches nobody**: usually a person the HR feed has not
-   delivered yet, or an ID typed differently in the two systems.
+After the upsert, every active account that is not linked *by hand* is matched against the
+people database, active and inactive people alike. The rules are the same ones the Entra ID
+mirror applies (`docs/data-model.md`, *Linking accounts to people*):
+
+1. **The person number** in `AD_PERSON_NUMBER_ATTRIBUTE`, when set (below).
+2. **The employee ID** against `Person.employee_id`, compared exactly after trimming; failing
+   that, against the *former employee ID* identifiers people carry -- a rehire, or a traveler
+   hired on whose account kept the old number.
+3. **The network username**: the sAMAccountName, and the UPN, against `Person.network_username`,
+   which the HR feed can carry (`docs/import-format.md`) and anyone who may edit a person can
+   set. A username never links to a person who left before the account was created: the name
+   has been reused.
+4. When none of those names anybody: **the Entra ID copy** of the account (section 13 of
+   `docs/entra-setup.md`), when the Entra sync is on and that copy is linked by hand or by one
+   of the keys above. A hand link made on either side is then made once.
+5. Then, with `AD_LINK_BY_EMAIL=true`, **e-mail**: `mail`, then the UPN, against people's
+   e-mail addresses, when exactly one person has the address. Off by default: turn it on only
+   where the e-mail HealthIAM holds comes from IT, not from someone typing it in.
+
+A link records the key that made it (*by person number*, *by employee ID*, *by username*...,
+with the value as the audit reason); an automatic link whose basis goes is removed and the
+run page says so. And:
+
+- **Keys that disagree link nobody.** When two keys name different people -- the employee ID
+  says Alice, the username says Bob -- the run records a *conflict* naming both, a link to one
+  of them stays as it is, and nothing new is linked: one of the two systems is wrong, and a
+  person has to decide which.
+- **By hand wins.** A link made on the accounts page (**Link…**, with a reason) survives every
+  later sync, whatever the attributes say. Unlinking by hand also sticks: the sync will not
+  re-link that account until it is linked again.
+- **Two accounts may belong to one person** (an admin account beside the daily one). One
+  account never belongs to two people.
+- An account whose employee ID or person number matches nobody (or an address several people
+  share) is counted as *unmatched* on the run and listed under **AD accounts → Employee ID or
+  person number matches nobody**: usually a person the HR feed has not delivered yet, or a
+  value typed differently in the two systems.
 
 Run the HR people import before the first account sync, or link afterwards: a person created
 later is linked by the next run.
+
+### Person numbers for people HR does not number
+
+Students, travelers, contractors and volunteers often have no employee ID at all, so nothing
+in their account can say whose it is. HealthIAM gives every person a **person number** --
+shown on the person page, `P0001230` -- made of their record's key and a check digit. It never
+changes, and a number typed with one digit wrong or two neighbouring digits swapped names
+nobody rather than somebody else.
+
+1. Pick a free attribute: an `extensionAttribute1`..`15` nothing else uses (count with the LDAP
+   filter `(extensionAttribute7=*)`). Entra Connect synchronizes those to Entra ID by default,
+   so the Entra mirror can read the same value (`ENTRA_PERSON_NUMBER_ATTRIBUTE`). Keep it off
+   `employeeID`, which stays HR's.
+2. Grant the account team write access to that one attribute on the OUs where these accounts
+   live, and add it to the account-creation script or form.
+3. Set `AD_PERSON_NUMBER_ATTRIBUTE` and make the person number part of the account request for
+   people without an employee ID. `PERSON_NUMBER_PREFIX` (default `P`) sets the letters; choose
+   them before numbers go into AD.
+
+When an external is later hired, HR's number goes into `employeeID` and the person number
+stays: both keys name the same person. A value that is not a valid person number, or names
+nobody, is *unmatched* and shows as such on the account row.
 
 ### Worklists
 
@@ -618,8 +670,12 @@ later is linked by the next run.
   hand) while the account is still enabled.
 - **Accounts linked to nobody** (`?show=unlinked`): enabled user accounts (kind *user*) with no
   person. Classify the ones that are not people, link the rest.
-- **Employee ID matches nobody** (`?show=unmatched`), **Disabled** and **Expired** (an
-  `accountExpires` in the past while still enabled).
+- **Employee ID or person number matches nobody** (`?show=unmatched`), **Disabled** and
+  **Expired** (an `accountExpires` in the past while still enabled).
+
+The run page counts, beside what it created and updated, the accounts it linked, unlinked and
+left unmatched, and the *conflicts* -- accounts whose keys name different people -- each with
+a row naming the keys.
 
 All lists export as CSV/XLSX. Every link and unlink lands in the person's History with the
 actor and reason.
@@ -633,9 +689,12 @@ actor and reason.
   account is still *enabled* in the `userAccountControl` sense; the page shows it as expired.
 - **Employee IDs are compared exactly** (after trimming). Leading zeros or a prefix present in
   one system and not the other prevent the match; fix the attribute or link by hand.
-- **The employee ID attribute can be edited by AD operators.** A changed ID re-links the
-  account on the next run and the run page records it; links that must not move are made by
-  hand.
+- **The attributes can be edited by AD operators.** A changed employee ID, person number or
+  account name re-links the account on the next run and the run page records it; links that
+  must not move are made by hand.
+- **Usernames are reused.** HealthIAM will not link a new account to someone who left before it
+  was created, but it cannot tell who the new holder is either: clear or update a departed
+  person's username when the name is given out again (the HR feed does it by itself).
 - **Disabled and inactive are different things.** *Disabled* is AD's flag on the account;
   *no longer in AD* means the sync stopped seeing it (deleted, or moved outside the search
   bases). Both keep the row and its link.

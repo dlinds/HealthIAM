@@ -800,6 +800,15 @@ class Command(BaseCommand):
             people_services.update_person(
                 hannah, actor=actor, reason="Leave of absence per HR", on_leave=True
             )
+        # Her AD account was made without the employee ID; the username the HR feed carries
+        # links it (and its Entra ID copy) all the same.
+        if hannah.network_username != demo.USERNAME_ONLY_ACCOUNT:
+            people_services.update_person(
+                hannah,
+                actor=actor,
+                reason="Network username per HR feed",
+                network_username=demo.USERNAME_ONLY_ACCOUNT,
+            )
         emily = person("Emily", "Brooks", "E1004", hire_date=day(-400), manager=maria)
         assign(emily, "0100-7000", "employee", -400)
         if not emily.former_names.exists():

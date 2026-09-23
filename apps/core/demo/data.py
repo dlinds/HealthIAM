@@ -462,6 +462,14 @@ ACCOUNTS: tuple[AccountSpec, ...] = (
         demonstrates="an employee ID that matches nobody on record",
     ),
     AccountSpec(
+        "hweiss",
+        "Hannah",
+        "Weiss",
+        title="Registered Nurse",
+        department="Nursing",
+        demonstrates="no employee ID in AD: linked by the network username HR carries",
+    ),
+    AccountSpec(
         "svc-scanner",
         "",
         "",
@@ -472,6 +480,10 @@ ACCOUNTS: tuple[AccountSpec, ...] = (
 )
 
 STAFF_BY_SAM = {spec.sam: spec for spec in STAFF}
+
+#: The account nothing but a network username links: Hannah Weiss's, created without her
+#: employee ID -- the process gap the username exists for.
+USERNAME_ONLY_ACCOUNT = "hweiss"
 
 #: The pre-existing local login the seed links to AD. Unlike the accounts above it keeps its
 #: password, so it is the one managed login a demo can actually sign in as.

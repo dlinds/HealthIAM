@@ -212,6 +212,7 @@ e-mail and phone, `is_active`.
 |---|---|
 | `first_name`, `middle_name`, `last_name`, `suffix`, `preferred_name` | The current legal name and a preferred first name. `display_name` is preferred-or-first + last; `sort_name` is "Last, First". Names change only through `services.change_name`, which keeps the old one (below). |
 | `employee_id` | The HR key; empty for people HR does not employ; unique when set. |
+| `network_username` | The AD account name or UPN (`jdoe`, `jdoe@corp.example.org`), stored without a `DOMAIN\` prefix and in lower case; unique when set, a duplicate refused naming its holder. From the HR feed when it carries one, editable by hand otherwise. Links the person's directory accounts (*Linking accounts to people*, below). |
 | `email`, `phone`, `work_location` | |
 | `hire_date`, `separation_date` | From HR; empty for externals. |
 | `on_leave` | Leave of absence: expected access is suspended while set. |
@@ -219,9 +220,15 @@ e-mail and phone, `is_active`.
 | `user` | The HealthIAM login of this person, if any (`SET_NULL`). |
 | `is_active`, `inactivated_at`, `source`, `notes`, `created_by` | Inactive = left: every assignment ended. `source` is `hr` for people the feed maintains (their HR-owned fields are read-only in the UI) or `manual`. |
 
+`person_number` is not a column: it is the primary key behind `PERSON_NUMBER_PREFIX` with a
+Luhn check digit (`P0001230` for pk 123), so it never changes and needs no storing. It is the
+key HealthIAM hands out for the people HR never numbers, to be written into a custom attribute
+of their directory accounts; the check digit makes a number typed with one digit wrong, or two
+neighbouring digits swapped, name nobody rather than somebody else.
+
 No date of birth and no SSN, on purpose: neither is needed to track access and both are a
-liability to hold. Search matches current names, former names, employee ID, e-mail and
-identifiers.
+liability to hold. Search matches current names, former names, employee ID, person number,
+network username, e-mail and identifiers.
 
 ### PersonName
 A name the person was known by before: the five name parts, `used_from` (empty when unknown),
@@ -233,7 +240,9 @@ alone snapshots nothing.
 `kind` (NPI, state license, student ID, badge, vendor/agency ID, former employee ID, other),
 `value`, `issued_by`, `valid_from`, `valid_to`, `notes`. Unique per kind and value except for
 `other`; a duplicate is refused naming the person who already has it, which is the signal that
-two records are one person.
+two records are one person. A *former employee ID* also links an account whose employee ID
+matches nobody's current one: a rehire, or a traveler hired on whose account kept the old
+number.
 
 ### PositionAssignment
 A person holds a position from a start date to an optional end date, as their **primary**
@@ -299,6 +308,34 @@ terminated people inactive. HR-sourced assignments are the feed's; assignments a
 are never touched, and a manual person with the feed's employee ID is adopted rather than
 duplicated. `apps/people/importers.py` registers the kind with `apps.orgs.importers` from
 `AppConfig.ready`, so the upload page, the batch pages and `import_hr` need no change.
+
+### Linking accounts to people (`apps/people/linking.py`)
+Both account mirrors -- `DirectoryAccount` and `EntraAccount` -- link through the same matcher,
+so an account links the same way whichever directory it came from. Per account, in order:
+
+1. **Strong keys**, most specific first: the person number read from
+   `AD_PERSON_NUMBER_ATTRIBUTE` / `ENTRA_PERSON_NUMBER_ATTRIBUTE`; the employee ID (or, when it
+   matches nobody's current one, a *former employee ID* identifier); the network username,
+   against the account's sAMAccountName (Entra: its on-premises account name) and its UPN. A
+   username never links to a person whose `separation_date` is before the account was created:
+   the name was reused.
+2. Strong keys naming **two or more people** are a *conflict*: nothing is linked on them, a link
+   to one of those people stays as it is, any other automatic link is removed, and the run log
+   records a `conflict` row naming which key names whom.
+3. Strong keys naming **one person** link to them. `link_method` records the strongest key that
+   agreed, and the link is left alone while that key still agrees; if it stops but another
+   still names the same person, the method changes quietly (audited, not logged as a link).
+4. With no strong key: the **paired account** -- an Entra ID account synchronized from an AD
+   one, and the other way round (`on_premises_object_guid` = `object_guid`) -- when that copy is
+   linked by hand or by a strong key; never from an e-mail or a paired link, so a pairing can
+   neither get round the e-mail settings nor keep itself alive.
+5. Then **e-mail** where it applies (always for Entra guests and external members; for AD
+   accounts with `AD_LINK_BY_EMAIL`, Entra members with `ENTRA_LINK_MEMBERS_BY_EMAIL`): an
+   address exactly one person has.
+
+An automatic link whose basis has gone is removed. `manual` rows are never part of the pass.
+An account is *unmatched* when it carries an employee ID or a person number (a malformed one
+included), or an address several people share, and nobody matched.
 
 ### Coordinators and permissions
 `can_manage_people` (create people and organizations) is any coordinator or an Admin;
@@ -366,8 +403,8 @@ Audited excluding `last_seen_at`, so a quiet run writes no history.
 ### DirectoryAccount
 One AD user account under `AD_ACCOUNTS_SEARCH_BASES` (empty = the mirror is off; there is no
 fallback to the base DN). The lifecycle of `ADGroup`: keyed by objectGUID, deactivated and
-never deleted. Linked to a `Person` by employee ID or by hand; `docs/ad-setup.md` section 13
-has the linking rules.
+never deleted. Linked to a `Person` by the keys it carries or by hand (*Linking accounts to
+people*, above); `docs/ad-setup.md` section 13 has the details.
 
 | Field | Notes |
 |---|---|
@@ -375,17 +412,19 @@ has the linking rules.
 | `sam_account_name` (indexed, also by `Lower`), `upn`, `distinguished_name` | Names. |
 | `given_name`, `surname`, `display_name`, `mail`, `title`, `department`, `manager_dn` | Copied from AD. |
 | `employee_id` | From the attribute named by `AD_EMPLOYEE_ID_ATTRIBUTE` (`employeeID`); indexed, not unique. |
+| `person_number` | From the attribute named by `AD_PERSON_NUMBER_ATTRIBUTE` (empty = not read), as AD holds it, typos included; indexed. |
 | `enabled` | From `userAccountControl`. |
 | `account_expires`, `last_logon_at` | Windows FILETIME attributes decoded by the client; 0 and the maximum mean never (null). `lastLogonTimestamp` replicates only every 9-14 days. |
 | `when_created`, `when_changed` | Copied from AD. |
 | `kind` | `user` / `admin` / `service` / `shared` / `unknown`, set by hand (Admin); the directory does not say what an account is for. Only `user` accounts count as *unlinked*. |
 | `person` | `SET_NULL` link to `people.Person` (`related_name="directory_accounts"`): a person is never deleted, but the link is a link, not ownership. |
-| `link_method`, `linked_at` | `employee_id` (the sync) or `manual` (the accounts page). A `manual` row is never touched by the sync: with a person it means "theirs, whatever the attribute says", without one "leave it unlinked". |
+| `link_method`, `linked_at` | `person_number`, `employee_id`, `former_id`, `username`, `paired`, `email` (the sync, by the key that linked it) or `manual` (the accounts page). A `manual` row is never touched by the sync: with a person it means "theirs, whatever the attributes say", without one "leave it unlinked". |
 | `first_seen_at`, `last_seen_at`, `is_active`, `inactivated_at` | As `ADGroup`. |
 
 Audited excluding `last_seen_at`, `last_logon_at` and `when_changed`, so a quiet run writes
 no history; a link or unlink stamps `person_id` and `person`, so it appears on the person's
-History tab with the reason (the employee ID for the sync, the typed reason for a hand link).
+History tab with the reason (the key that matched for the sync, the typed reason for a hand
+link).
 
 ### ADGroupRoute
 An AD group carries no pointer to the system it belongs to; a naming convention is the
@@ -458,7 +497,7 @@ the same row.
 | `created_by` | The admin who started it; empty for scheduled runs. |
 | `started_at`, `finished_at`, `server` | Timing and the domain controller that answered. |
 | `group_dn` | Resolved DN of `AD_USER_GROUP` (users scope). |
-| `summary` | `{"users": {...} or null, "groups": {...} or null}` with `created`, `updated`, `reactivated`, `deactivated`, `unchanged`, `errors`, `rows`, `skipped`, `read`. An `"accounts"` part is present only when the account pass ran, with `linked`, `unlinked` and `unmatched` on top. An applied run that changed route-managed levels adds a `"routes"` part; a quiet one adds nothing. |
+| `summary` | `{"users": {...} or null, "groups": {...} or null}` with `created`, `updated`, `reactivated`, `deactivated`, `unchanged`, `errors`, `rows`, `skipped`, `read`. An `"accounts"` part is present only when the account pass ran, with `linked`, `unlinked`, `unmatched` and `conflicts` on top (runs from before conflicts were counted lack the last). An applied run that changed route-managed levels adds a `"routes"` part; a quiet one adds nothing. |
 | `log` | Rows of `{kind, row, code, action, message, dn}`; `unchanged` rows are omitted. |
 | `error` | Why a failed run failed (the bind password is never included). |
 
@@ -518,6 +557,7 @@ One user in the tenant, members and guests alike (except UPNs matching
 | `object_id` | Unique. |
 | `upn` (indexed, also by `Lower`), `display_name`, `given_name`, `surname`, `mail`, `other_mails`, `job_title`, `department`, `company_name` | Copied from Graph. |
 | `employee_id` | From `ENTRA_EMPLOYEE_ID_ATTRIBUTE` (`employeeId`, an on-premises extension attribute or a schema extension); indexed. |
+| `person_number` | From `ENTRA_PERSON_NUMBER_ATTRIBUTE` (the same forms; empty = not read), as Entra ID holds it; indexed. |
 | `user_type`, `creation_type`, `external_user_state`, `external_user_state_changed_at` | Graph's `userType`, `creationType` and invitation state. |
 | `source` | `synced`, `cloud`, `converted` (cloud member that was synced), `guest`, `external` (a member who signs in with another organization's identity). Indexed. |
 | `identity_provider` | Issuer of the identity an external account signs in with: `ExternalAzureAD`, `MicrosoftAccount`, `mail`, `google.com`, or a SAML/WS-Fed partner's domain. |
@@ -525,7 +565,7 @@ One user in the tenant, members and guests alike (except UPNs matching
 | `last_sign_in_at`, `last_non_interactive_sign_in_at`, `last_successful_sign_in_at`, `last_activity_at` (indexed), `sign_in_activity_known` | From `signInActivity` when the sync could read it (P1/P2 and `AuditLog.Read.All`); `last_activity_at` is the latest of the three. When a run cannot read it the timestamps stay and `sign_in_activity_known` turns false, so the stale-guest worklist stops trusting them. |
 | `on_premises_immutable_id`, `on_premises_object_guid` (indexed), `on_premises_security_identifier`, `on_premises_sam_account_name`, `on_premises_domain_name` | The AD original, kept once seen. `on_premises_object_guid` is decoded from the immutable ID and meets `DirectoryAccount.object_guid`. |
 | `kind` | `user` / `admin` / `service` / `shared` / `unknown`, set by hand, as on `DirectoryAccount`. |
-| `person`, `link_method`, `linked_at` | `SET_NULL` link to `people.Person` (`related_name="entra_accounts"`). `employee_id` or `email` (the sync) or `manual` (the accounts page, or Create person); a `manual` row is never touched by the sync. |
+| `person`, `link_method`, `linked_at` | `SET_NULL` link to `people.Person` (`related_name="entra_accounts"`). `person_number`, `employee_id`, `former_id`, `username`, `paired`, `email` (the sync, by the key that linked it; *Linking accounts to people*) or `manual` (the accounts page, or Create person); a `manual` row is never touched by the sync. |
 | `first_seen_at`, `last_seen_at`, `is_active`, `inactivated_at`, `tenant_id` | As `EntraGroup`. |
 
 Audited excluding `last_seen_at` and the sign-in columns, so a quiet run writes no history; a
