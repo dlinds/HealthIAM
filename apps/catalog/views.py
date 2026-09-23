@@ -175,6 +175,13 @@ def _detail_context(request, application):
         broken_level_count = None
     level_conversions = entra_references.conversions_for_levels(levels_page.object_list)
     route_level_count = levels_qs.filter(source=AccessLevel.Source.ROUTE).count()
+    entra_route_level_count = (
+        levels_qs.filter(
+            source=AccessLevel.Source.ROUTE, access_model=AccessLevel.AccessModel.ENTRA_GROUP
+        ).count()
+        if route_level_count
+        else 0
+    )
     return {
         "application": application,
         "object": application,
@@ -189,6 +196,9 @@ def _detail_context(request, application):
         "levels_q": levels_q,
         "levels_source": levels_source,
         "route_level_count": route_level_count,
+        # Which route pages the banner links to: AD, Entra ID, or both.
+        "entra_route_level_count": entra_route_level_count,
+        "ad_route_level_count": route_level_count - entra_route_level_count,
         # A list that fits on one page needs no filter; the box would just be clutter.
         "show_level_filter": levels_page.paginator.count > LEVELS_PER_PAGE
         or bool(levels_q)
@@ -321,6 +331,13 @@ def access_levels(request, pk):
     return _section(request, application, "catalog/partials/access_level_rows.html")
 
 
+def _route_words(level) -> tuple[str, str]:
+    """What kind of route holds `level`, and the page its group is adopted from."""
+    if level.access_model == AccessLevel.AccessModel.ENTRA_GROUP:
+        return "an Entra group route", "Entra groups"
+    return "an AD group route", "AD groups"
+
+
 def access_level_form(request, pk, level_id=None):
     application = _app_for(request, pk, perms.can_edit_access_levels)
     level = (
@@ -330,9 +347,10 @@ def access_level_form(request, pk, level_id=None):
         # The buttons are not rendered for a routed level, so reaching here is a forged post.
         # Adopting the group is how you take one over; editing it by hand would only be
         # undone by the next reconcile.
+        kind, page = _route_words(level)
         raise PermissionDenied(
-            f"'{level.name}' is managed by an AD group route. Adopt the group from "
-            f"AD groups \u2192 Add to catalog to take it over."
+            f"'{level.name}' is managed by {kind}. Adopt the group from "
+            f"{page} \u2192 Add to catalog to take it over."
         )
     form_url = (
         reverse("catalog:access_level_edit", args=[pk, level_id])
@@ -378,8 +396,9 @@ def access_level_toggle(request, pk, level_id):
     application = _app_for(request, pk, perms.can_edit_access_levels)
     level = get_object_or_404(AccessLevel, application=application, pk=level_id)
     if level.is_route_managed:
+        kind, _page = _route_words(level)
         raise PermissionDenied(
-            f"'{level.name}' is managed by an AD group route; the route decides whether it is held."
+            f"'{level.name}' is managed by {kind}; the route decides whether it is held."
         )
     level.is_active = not level.is_active
     level.save(update_fields=["is_active", "updated_at"])

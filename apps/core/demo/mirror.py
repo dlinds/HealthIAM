@@ -272,7 +272,9 @@ def disable_login(sam: str) -> User | None:
 # --- Routes -----------------------------------------------------------------------------
 
 
-def upsert_route(spec: data.RouteSpec, *, actor=None) -> tuple[ADGroupRoute | None, bool]:
+def upsert_route(spec: data.RouteSpec, *, actor=None, model=ADGroupRoute):
+    """`(route, created)` for an AD group route, or an Entra group route with
+    `model=EntraGroupRoute`; `(None, False)` when the target application is not seeded."""
     application = Application.objects.filter(name=spec.application).first()
     if application is None:
         return None, False
@@ -282,7 +284,7 @@ def upsert_route(spec: data.RouteSpec, *, actor=None) -> tuple[ADGroupRoute | No
         "notes": spec.notes,
         "is_active": spec.is_active,
     }
-    route, created = ADGroupRoute.objects.get_or_create(
+    route, created = model.objects.get_or_create(
         pattern=spec.pattern, defaults={**values, "created_by": actor}
     )
     if not created:

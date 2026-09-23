@@ -47,7 +47,7 @@ from apps.directory.sync import (
 )
 from apps.entra import sync as entra_sync
 from apps.entra import worklists as entra_worklists
-from apps.entra.models import EntraAccount, EntraGroup, EntraSyncRun
+from apps.entra.models import EntraAccount, EntraGroup, EntraGroupRoute, EntraSyncRun
 from apps.orgs.models import Department, JobCode, Position, Source
 from apps.people import services as people_services
 from apps.people.bootstrap import ensure_person_types
@@ -949,7 +949,9 @@ class Command(BaseCommand):
             "inactive": ADGroup.objects.filter(is_active=False).count(),
             "routes": ADGroupRoute.objects.count(),
             "route_levels": AccessLevel.objects.filter(
-                source=AccessLevel.Source.ROUTE, is_active=True
+                source=AccessLevel.Source.ROUTE,
+                access_model=AccessLevel.AccessModel.AD_GROUP,
+                is_active=True,
             ).count(),
             "logins": User.objects.filter(ad_managed=True).count(),
             "accounts": DirectoryAccount.objects.count(),
@@ -1174,6 +1176,8 @@ class Command(BaseCommand):
         now = timezone.now()
         for spec in entra_demo.GROUPS:
             entra_mirror.upsert_group(spec, now=now)
+        for spec in entra_demo.ROUTES:
+            mirror.upsert_route(spec, actor=users["admin"], model=EntraGroupRoute)
         for spec in entra_demo.ACCOUNTS:
             entra_mirror.upsert_account(spec, now=now)
         for spec in entra_demo.ACCOUNTS:
@@ -1188,6 +1192,7 @@ class Command(BaseCommand):
             "accounts": accounts.count(),
             "external": accounts.filter(source__in=EntraAccount.EXTERNAL_SOURCES).count(),
             "linked": accounts.filter(person__isnull=False).count(),
+            "routes": EntraGroupRoute.objects.count(),
             "runs": EntraSyncRun.objects.count(),
         }
 
@@ -1324,7 +1329,7 @@ class Command(BaseCommand):
         self.stdout.write(
             "Demo tenant: {groups} group(s) ({synced} synced from AD, {inactive} inactive), "
             "{accounts} account(s) ({external} guests and external members, {linked} linked "
-            "to people), {runs} sync run(s).".format(**counts)
+            "to people), {routes} group route(s), {runs} sync run(s).".format(**counts)
         )
         if str(settings.ENTRA_TENANT_ID) == str(entra_demo.TENANT_ID):
             self.stdout.write(

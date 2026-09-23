@@ -157,7 +157,9 @@ All settings are read from the environment (or `.env`); see `.env.example`.
   `ENTRA_SYNC_CLIENT_ID` elsewhere): the **Entra groups** page lists the tenant's groups with
   where each comes from (cloud, synced from AD, converted to cloud) and who references it;
   assigned cloud security and Microsoft 365 groups become **Entra group** access levels through
-  the access-level form's picker or **Add to catalog**, and positions carry them by default
+  the access-level form's picker or **Add to catalog** (whose target **Admin → Entra ID →
+  Routes** suggests by display name, and which an application with *Dynamic Entra groups*
+  holds automatically), and positions carry them by default
   like any other. Each level shows an *In Entra ID* badge or why it is broken, and the
   dashboard and Reports list the broken ones. In a hybrid tenant, groups synced from AD stay
   AD-group levels, **Conversions** turns the level of a group whose source of authority moved
@@ -197,9 +199,10 @@ apps/people      PersonType (+ coordinators), ExternalOrganization, Person, Pers
 apps/directory   ADGroup, ADGroupRoute, DirectoryAccount, DirectorySyncRun, LDAPS client,
                  sync engine (groups, logins, accounts + linking), routing, group writeback
                  pairing, sync_ad, AD pages
-apps/entra       EntraGroup, EntraAccount, EntraSyncRun, Graph client (MSAL), sync engine
-                 (groups, accounts + linking, logins), reference badges and conversions,
-                 guest worklists, sync_entra, Entra pages
+apps/entra       EntraGroup, EntraGroupRoute, EntraAccount, EntraSyncRun, Graph client
+                 (MSAL), sync engine (groups, accounts + linking, logins), routing and
+                 route-managed levels, reference badges and conversions, guest worklists,
+                 sync_entra, reconcile_entra_levels, Entra pages
 apps/core        base layout, dashboard, global search, audit history views,
                  demo/ (the synthetic directory and tenant seed_demo and demo_ad write)
 templates/       Django templates; partials/ for htmx fragments

@@ -56,11 +56,25 @@
       <label class="form-check-label" for="unreferenced">Not referenced by any access level</label>
     </div>
   </div>
+  <div class="col-auto d-flex align-items-center">
+    <div class="form-check">
+      <input class="form-check-input" type="checkbox" id="unclaimed" name="unclaimed" value="1" {% if unclaimed %}checked{% endif %}>
+      <label class="form-check-label" for="unclaimed" title="A group a route holds is in the catalog, but nobody has said which system it belongs to.">Not claimed by hand</label>
+    </div>
+  </div>
+  {% if has_routes %}
+  <div class="col-auto d-flex align-items-center">
+    <div class="form-check">
+      <input class="form-check-input" type="checkbox" id="unrouted" name="unrouted" value="1" {% if unrouted %}checked{% endif %}>
+      <label class="form-check-label" for="unrouted">No route matches</label>
+    </div>
+  </div>
+  {% endif %}
   <div class="col-auto"><button class="btn btn-outline-secondary" type="submit">Filter</button></div>
 </form>
 <div class="table-responsive">
 <table class="table table-hover table-sm align-middle">
-  <thead><tr><th>Group</th><th>Description</th><th>Kind</th><th>Source</th><th>Referenced by</th><th>Last seen</th><th>Status</th></tr></thead>
+  <thead><tr><th>Group</th><th>Description</th><th>Kind</th><th>Source</th>{% if has_routes %}<th>Routes to</th>{% endif %}<th>Referenced by</th><th>Last seen</th><th>Status</th></tr></thead>
   <tbody>
   {% for g in object_list %}
     <tr class="{% if not g.is_active %}text-body-tertiary{% endif %}">
@@ -85,16 +99,25 @@
         {% else %}<span class="text-body-secondary">cloud</span>{% endif %}
         {% if g.ad_copy %}<div title="Group writeback keeps this AD group's membership in step with the cloud group">written back to AD as <a class="text-mono" href="{{ g.ad_copy.get_absolute_url }}">{{ g.ad_copy.name }}</a></div>{% endif %}
       </td>
+      {% if has_routes %}
+      <td class="small">
+        {% if g.source == 'synced' %}<span class="text-body-tertiary" title="An AD group: AD group routes place it">&mdash;</span>
+        {% elif g.route_match %}
+          <a href="{{ g.route_match.application.get_absolute_url }}">{{ g.route_match.application.name }}</a>
+          <div class="text-body-tertiary text-mono" title="Matched by this route">{{ g.route_match.pattern }}</div>
+        {% else %}<span class="text-body-tertiary">no route</span>{% endif %}
+      </td>
+      {% endif %}
       <td class="small">
         {% for level in g.referencing_levels %}
-          <div><a href="{{ level.get_absolute_url }}">{{ level.application.name }} · {{ level.name }}</a>{% if level.access_model == 'ad_group' %} <span class="badge text-bg-light border" title="References the group by its AD name">AD group</span>{% endif %}{% if not level.is_active %} <span class="badge text-bg-secondary">inactive level</span>{% endif %}</div>
+          <div><a href="{{ level.get_absolute_url }}">{{ level.application.name }} · {{ level.name }}</a>{% if level.access_model == 'ad_group' %} <span class="badge text-bg-light border" title="References the group by its AD name">AD group</span>{% endif %}{% if level.source == 'route' %} <span class="badge text-bg-info" title="Held automatically by a route until somebody adopts the group">routed</span>{% elif level.source == 'adopted' %} <span class="badge text-bg-light border" title="Taken over from a route by hand">taken over</span>{% endif %}{% if not level.is_active %} <span class="badge text-bg-secondary">inactive level</span>{% endif %}</div>
         {% empty %}<span class="text-body-tertiary">none</span>{% endfor %}
       </td>
       <td class="small text-nowrap">{{ g.last_seen_at|date:"Y-m-d" }}</td>
       <td>{% if g.is_active %}<span class="badge text-bg-success">Active</span>{% else %}<span class="badge text-bg-secondary" title="Not returned by the sync since {{ g.inactivated_at|date:'Y-m-d' }}">Gone</span>{% endif %}</td>
     </tr>
   {% empty %}
-    <tr><td colspan="7" class="text-body-secondary">No Entra groups found.</td></tr>
+    <tr><td colspan="{% if has_routes %}8{% else %}7{% endif %}" class="text-body-secondary">No Entra groups found.</td></tr>
   {% endfor %}
   </tbody>
 </table>
