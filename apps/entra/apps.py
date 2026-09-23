@@ -9,8 +9,9 @@ class EntraConfig(AppConfig):
     def ready(self):
         from apps.core.auditing import register_for_audit
 
-        # Importing is what registers the system checks.
-        from . import checks, models  # noqa: F401
+        # Importing is what registers the system checks and the receivers that keep
+        # route-managed cloud-group levels current.
+        from . import checks, models, reconcile_signals  # noqa: F401
 
         # last_seen_at changes on every sync; keeping it out of the audit diff means a quiet
         # run produces no history entries.
@@ -28,3 +29,5 @@ class EntraConfig(AppConfig):
                 "sign_in_activity_known",
             ),
         )
+        # Routes decide where a cloud group lands in the catalog, as AD group routes do.
+        register_for_audit(models.EntraGroupRoute)

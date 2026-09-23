@@ -106,6 +106,13 @@ class DynamicServiceFactory(ServiceFactory):
     dynamic_ad_groups = True
 
 
+class DynamicEntraServiceFactory(ServiceFactory):
+    """A service that holds its routed cloud groups automatically."""
+
+    name = factory.Sequence(lambda n: f"Dynamic Entra Service {n}")
+    dynamic_entra_groups = True
+
+
 class AccessLevelFactory(factory.django.DjangoModelFactory):
     class Meta:
         model = "catalog.AccessLevel"
@@ -121,6 +128,14 @@ class ADGroupRouteFactory(factory.django.DjangoModelFactory):
         model = "directory.ADGroupRoute"
 
     pattern = factory.Sequence(lambda n: f"ROUTE_{n}_*")
+    application = factory.SubFactory(ServiceFactory)
+
+
+class EntraGroupRouteFactory(factory.django.DjangoModelFactory):
+    class Meta:
+        model = "entra.EntraGroupRoute"
+
+    pattern = factory.Sequence(lambda n: f"ROUTE-{n}-*")
     application = factory.SubFactory(ServiceFactory)
 
 
@@ -220,3 +235,19 @@ def make_coordinator(person_type, user):
     from apps.people.models import PersonTypeCoordinator
 
     return PersonTypeCoordinator.objects.create(person_type=person_type, user=user)
+
+
+class EntraGroupFactory(factory.django.DjangoModelFactory):
+    """A cloud group as the Entra sync mirrors it: by default one that can back a level."""
+
+    class Meta:
+        model = "entra.EntraGroup"
+
+    object_id = factory.LazyFunction(uuid.uuid4)
+    display_name = factory.Sequence(lambda n: f"SG-Group-{n}")
+    description = ""
+    kind = "security"
+    membership = "assigned"
+    source = "cloud"
+    first_seen_at = factory.LazyFunction(timezone.now)
+    last_seen_at = factory.LazyAttribute(lambda o: o.first_seen_at)

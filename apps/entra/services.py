@@ -4,7 +4,8 @@
   respects (see `sync.link_accounts`), exactly as for Active Directory accounts.
 - Adopting cloud groups into the catalog: an `entra_group` access level per group, under the
   application or service that owns it. Like `apps.catalog.services.adopt_groups` it takes no
-  reason -- recording where a group belongs grants nobody anything.
+  reason -- recording where a group belongs grants nobody anything -- and, like it, takes over
+  a level a route holds (see `apps.entra.reconcile`).
 - Converting an `ad_group` level into an `entra_group` level once its group is mastered in the
   cloud. The same row changes, so its position defaults and person grants stay where they are;
   it takes a reason, because it changes how every one of them is fulfilled.
@@ -89,11 +90,28 @@ def set_account_kind(
 # --- Cloud groups into the catalog ----------------------------------------------------------
 
 
-def claiming_levels(object_id):
-    """Active levels that already hold this cloud group, so nobody else may adopt it."""
+def _levels_for(object_id):
     return AccessLevel.objects.filter(
-        access_model=AccessLevel.AccessModel.ENTRA_GROUP, entra_group_id=object_id, is_active=True
+        access_model=AccessLevel.AccessModel.ENTRA_GROUP, entra_group_id=object_id
     ).select_related("application")
+
+
+def claiming_levels(object_id):
+    """Active levels that own this cloud group by hand, so nobody else may adopt it.
+
+    A route-managed level is deliberately not one of them: it holds the group only until
+    somebody claims it, and treating it as a claim would make the hand-over impossible.
+    """
+    return _levels_for(object_id).filter(source__in=AccessLevel.CLAIMING_SOURCES, is_active=True)
+
+
+def route_held(object_id, application):
+    """The route-managed level `application` holds for this cloud group, if any."""
+    return (
+        _levels_for(object_id)
+        .filter(source=AccessLevel.Source.ROUTE, application=application)
+        .first()
+    )
 
 
 def pending_conversions() -> dict:
@@ -142,7 +160,13 @@ def adopt_group(
     converting: dict | None = None,
 ) -> AccessLevel:
     """Create one `entra_group` access level for `group` under `application`. `converting` is
-    `pending_conversions()`, passed in when adopting many groups at once."""
+    `pending_conversions()`, passed in when adopting many groups at once.
+
+    A group `application` already holds by route is taken over in place rather than added a
+    second time, so its position defaults stay where they are. Adopting a routed group into
+    another application creates a level there, and the reconcile that follows the commit moves
+    the defaults over and releases the routed one.
+    """
     if not perms.can_edit_access_levels(actor, application):
         raise ValidationError({"application": f"You are not an analyst for {application.name}."})
     if application.is_retired:
@@ -164,6 +188,21 @@ def adopt_group(
                 "(Entra ID → Conversions), which keeps its position defaults."
             }
         )
+    held = route_held(group.object_id, application)
+    if held is not None:
+        # `adopted` rather than `manual`: the one source the reconciler will not re-capture,
+        # which is what makes this the way out of a locked level. Its description stays: the
+        # reconciler copied it from the group, and somebody may have reworded it since.
+        held.source = AccessLevel.Source.ADOPTED
+        held.is_active = True
+        if level_name:
+            held.name = level_name.strip()[:MAX_LEVEL_NAME]
+        if description:
+            held.description = description
+        held.clean()
+        held.save()
+        held.adopted_from_route = True
+        return held
     level = AccessLevel(
         application=application,
         name=(level_name or group.display_name).strip()[:MAX_LEVEL_NAME],

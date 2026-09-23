@@ -130,6 +130,16 @@ class Application(TimeStampedModel):
             "application's routes claim and nobody has adopted by hand."
         ),
     )
+    dynamic_entra_groups = models.BooleanField(
+        "Dynamic Entra groups",
+        default=False,
+        db_index=True,
+        help_text=(
+            "Hold an access level automatically for every active cloud group this "
+            "application's Entra group routes claim, can be granted, and nobody has adopted "
+            "by hand."
+        ),
+    )
     name = models.CharField(max_length=200, unique=True)
     description = models.TextField(blank=True)
     vendor = models.ForeignKey(
@@ -314,7 +324,7 @@ class AccessLevel(ApplicationChildAuditMixin, TimeStampedModel):
 
     class Source(models.TextChoices):
         MANUAL = "manual", "Added by hand"
-        ROUTE = "route", "Managed by an AD group route"
+        ROUTE = "route", "Managed by a group route"
         ADOPTED = "adopted", "Taken over from a route"
 
     #: The sources that own a group by hand, so a route may not claim it. `adopted` is
@@ -379,13 +389,24 @@ class AccessLevel(ApplicationChildAuditMixin, TimeStampedModel):
                 violation_error_message="This application already has a level with that name.",
             ),
             # One route-managed level per group, enforced by the database rather than by
-            # the reconciler alone: two applications granting the same AD group without
-            # anyone deciding so is the failure this feature must not have.
+            # the reconciler alone: two applications granting the same group without
+            # anyone deciding so is the failure this feature must not have. One constraint
+            # per kind of group, because each is keyed differently: an AD group by its
+            # name, a cloud group by its object ID (and its `ad_group_name` is blank, so a
+            # constraint on the name alone would allow only one cloud group ever).
             models.UniqueConstraint(
                 Lower("ad_group_name"),
-                condition=models.Q(source="route"),
+                condition=models.Q(source="route", access_model="ad_group"),
                 name="unique_route_level_per_group",
                 violation_error_message="Another application already holds this AD group by route.",
+            ),
+            models.UniqueConstraint(
+                fields=["entra_group_id"],
+                condition=models.Q(source="route", access_model="entra_group"),
+                name="unique_entra_route_level_per_group",
+                violation_error_message=(
+                    "Another application already holds this Entra group by route."
+                ),
             ),
         ]
 

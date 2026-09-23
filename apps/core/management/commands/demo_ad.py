@@ -95,10 +95,11 @@ class Command(BaseCommand):
             f"{ADGroupRoute.objects.filter(is_active=True).count()} active, "
             f"{ADGroupRoute.objects.filter(is_active=False).count()} inactive"
         )
+        ad_levels = AccessLevel.objects.filter(access_model=AccessLevel.AccessModel.AD_GROUP)
         self.stdout.write(
             "Levels        "
-            f"{AccessLevel.objects.filter(source=AccessLevel.Source.ROUTE).count()} route-managed, "
-            f"{AccessLevel.objects.filter(source=AccessLevel.Source.ADOPTED).count()} taken over"
+            f"{ad_levels.filter(source=AccessLevel.Source.ROUTE).count()} route-managed, "
+            f"{ad_levels.filter(source=AccessLevel.Source.ADOPTED).count()} taken over"
         )
         managed = User.objects.filter(ad_managed=True)
         self.stdout.write(

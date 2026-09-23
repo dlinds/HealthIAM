@@ -281,6 +281,10 @@ claim, `--force` overrides the guard that refuses to retire most of the route-ma
 at once, and `--no-audit` skips the audit entries — for a first pass over a large directory
 only, since the audit log is otherwise the only record a reconcile leaves.
 
+Cloud groups have routes of their own, matched on the display name, and a separate **Dynamic
+Entra groups** flag: see `docs/entra-setup.md` section 12. The two never hold the same group --
+a group synced from AD is placed by these routes, a cloud-mastered one by those.
+
 ## 10. Signing in with an AD password
 
 Without this, a synced person has a login but no way to use it unless Entra SSO is configured:

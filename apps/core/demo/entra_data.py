@@ -476,6 +476,18 @@ GUESTS: tuple[AccountSpec, ...] = (
 )
 
 ACCOUNTS: tuple[AccountSpec, ...] = SYNCED_ACCOUNTS + MEMBERS + GUESTS
+
+# --- Routes -----------------------------------------------------------------------------
+
+#: Entra group routes, matched against display names. Advisory only -- Microsoft 365 does not
+#: hold cloud groups automatically -- so the seed creates no level from it: it pre-selects the
+#: target for Teams-Pharmacy-Informatics on Entra groups > Add to catalog, and leaves
+#: MESG-Pharmacy-Alerts as the group no route matches.
+ROUTES: tuple[data.RouteSpec, ...] = (
+    data.RouteSpec(
+        "Teams-*", "Microsoft 365", 100, "Teams belong with the tenant they are created in."
+    ),
+)
 ACCOUNTS_BY_KEY = {spec.key: spec for spec in ACCOUNTS}
 
 #: Blocked in Entra ID since last night's run, which is what that run recorded about it.

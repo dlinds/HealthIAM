@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import EntraAccount, EntraGroup, EntraSyncRun
+from .models import EntraAccount, EntraGroup, EntraGroupRoute, EntraSyncRun
 
 GROUP_SYNC_FIELDS = (
     "tenant_id",
@@ -57,6 +57,15 @@ class EntraAccountAdmin(_MirrorAdmin):
         # Links and kinds change on the accounts page, with a reason; everything else is the
         # sync's. Nothing is editable here.
         return [f.name for f in self.model._meta.fields]
+
+
+@admin.register(EntraGroupRoute)
+class EntraGroupRouteAdmin(admin.ModelAdmin):
+    list_display = ("pattern", "application", "priority", "is_active")
+    list_filter = ("is_active", "application")
+    search_fields = ("pattern", "application__name", "notes")
+    autocomplete_fields = ("application",)
+    ordering = ("priority", "pk")
 
 
 @admin.register(EntraSyncRun)

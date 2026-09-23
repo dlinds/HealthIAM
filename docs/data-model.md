@@ -62,7 +62,7 @@ A person or team that can be named as owner, support tier or vendor contact.
 ### Application
 | Group | Fields |
 |---|---|
-| Identity | `kind` (see below), `dynamic_ad_groups` (see *Route-managed access levels*), `name` (unique), `description`, `vendor`, `website`, `admin_url`, aliases (separate table) |
+| Identity | `kind` (see below), `dynamic_ad_groups` (see *Route-managed access levels*), `dynamic_entra_groups` (see *Route-managed Entra levels*), `name` (unique), `description`, `vendor`, `website`, `admin_url`, aliases (separate table) |
 | Classification | `tier` 1–4 (1 = mission critical), `lifecycle_status` pilot / active / retiring / retired, `go_live_date`, `sunset_date` |
 | Data sensitivity | `holds_phi`, `holds_pii`, `holds_clinical_records`, `holds_pci`, `holds_employee_data`, `holds_research_data`, `data_description` |
 | Hosting | `host_location` onsite / colo / aws / azure / gcp / vendor_hosted / hybrid / other, `host_details` |
@@ -105,13 +105,19 @@ at applications directly.
 | `in_app_instructions` | Required for `in_app`. |
 | `ticket_assignment_team` | Required for `ticket`. |
 | `is_active`, `sort_order` | Inactive levels stay on existing defaults but cannot be added. |
-| `source` | `manual` (added by hand), `route` (created and owned by an AD group route), `adopted` (a routed level somebody took over). See *Route-managed access levels*. |
+| `source` | `manual` (added by hand), `route` (created and owned by a group route: an AD group route for an `ad_group` level, an Entra group route for an `entra_group` one), `adopted` (a routed level somebody took over). See *Route-managed access levels* and *Route-managed Entra levels*. |
 
 Indexed on `Lower(ad_group_name)`: every broken-reference check and the "unreferenced
 groups" filter join this column to `ADGroup.name` case-insensitively. An `entra_group` level
 joins `EntraGroup.object_id` instead, and an `ad_group` level whose group moved to the cloud is
 converted in place (`apps/entra/services.py`, `convert_level`): the same row, so its defaults
 and grants stay put.
+
+At most one route-managed level per group, enforced by two partial unique constraints:
+`unique_route_level_per_group` on `Lower(ad_group_name)` where `source='route'` and
+`access_model='ad_group'`, and `unique_entra_route_level_per_group` on `entra_group_id` where
+`source='route'` and `access_model='entra_group'`. (The AD one was once conditioned on the source
+alone, which a cloud-group level's blank `ad_group_name` would have collided on.)
 
 ### SupportTier
 Ordered escalation: `level` (1 = first line, unique per application), `name` (team),
@@ -171,7 +177,8 @@ group, which is what gets adopted, from **Entra groups → Add to catalog**
 (`apps/entra/services.py`, `adopt_groups`). That path follows the same rules -- per-row
 transactions, no reason, one claiming level per group -- and also refuses a group an
 `ad_group` level still names (its source of authority moved, or it is the original of a
-written-back copy): that level is converted instead, keeping its defaults.
+written-back copy): that level is converted instead, keeping its defaults. Like the AD path, it
+takes a group a route holds over in place when adopted into the holding application.
 
 ## People (`apps/people`)
 
@@ -506,8 +513,35 @@ is **not** imported.
 | `first_seen_at`, `last_seen_at`, `is_active`, `inactivated_at`, `tenant_id` | As `ADGroup`. |
 
 `unsuitable_reason` says why a group cannot back a level: synced from AD (reference the AD
-group), not a security or Microsoft 365 group, dynamic, or role-assignable. Audited excluding
-`last_seen_at`.
+group), not a security or Microsoft 365 group, dynamic, or role-assignable. `models.assignable`
+is the same rule as a queryset filter. Audited excluding `last_seen_at`.
+
+### EntraGroupRoute
+The cloud counterpart of `ADGroupRoute`, and the same fields: `pattern` (a case-insensitive glob,
+unique case-insensitively, matched against the group's **display name**), `application`
+(`PROTECT`, `related_name="entra_group_routes"`), `priority`, `notes`, `is_active`,
+`created_by`. Resolution is the same too -- application-kind targets ahead of services, then
+`priority`, then `pk` (`apps/entra/routing.py`, which reuses `apps/directory/routing.py`). Only
+groups that can back an `entra_group` level are routed: a synced group is an AD group, placed
+by the AD group routes. Advisory for an ordinary application; audited.
+
+### Route-managed Entra levels (`apps/entra/reconcile.py`)
+An application with `dynamic_entra_groups` on holds one `entra_group` level for every active
+cloud group its routes claim, that `assignable` accepts, and that nobody owns by hand. The rules
+are those of *Route-managed access levels* -- claim, home, defaults follow the group, retire by
+deleting or deactivating, a guard on mass retirement -- keyed by object ID instead of name:
+
+- A rename in the tenant only refreshes the held level's `entra_group_name`.
+- A group that stops qualifying (dynamic, role-assignable, synced, gone) is released.
+- A group an `ad_group` level still names (`services.pending_conversions`) is left alone, as the
+  AD reconciler leaves a cloud-mastered name alone: the two never hold one group between them.
+- Nothing runs while Entra ID is disabled.
+
+The two reconcilers share `ReconcileResult`, the re-entrancy guard and the hand-over helpers in
+`apps/directory/reconcile.py`; `apps/entra/reconcile_signals.py` is the sibling of the AD
+receivers. An applied Entra sync that includes groups reconciles afterwards and records a
+`routes` summary part when anything changed; **Reconcile now** on Admin → Entra ID and
+`manage.py reconcile_entra_levels` do it on demand.
 
 ### EntraAccount
 One user in the tenant, members and guests alike (except UPNs matching
@@ -536,7 +570,8 @@ dashboard count.
 ### EntraSyncRun
 One sync against the tenant, the Graph sibling of `DirectorySyncRun`: preview and apply share
 the row, and the same `scope`, `status`, `trigger`, `created_by`, `started_at`, `finished_at`,
-`summary` (`users`, `groups`, `accounts` parts, `null` for a pass that did not run), `log` and
+`summary` (`users`, `groups`, `accounts` parts, `null` for a pass that did not run, plus a
+`routes` part when the reconcile after an applied sync changed anything), `log` and
 `error` fields. `server` is the Graph host. On top, a snapshot of what the run read:
 
 | Field | Notes |

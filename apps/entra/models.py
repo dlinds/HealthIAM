@@ -10,6 +10,10 @@ cloud-only one.
 A group or an account knows where it comes from. A group synced from Active Directory is an AD
 group whose membership can only change on-premises, so the catalog keeps referencing it as an
 `ad_group` level; only groups mastered in the cloud become `entra_group` levels.
+
+`EntraGroupRoute` is the cloud counterpart of `ADGroupRoute`: a naming convention that says which
+application a cloud group belongs to. Advisory for an ordinary application; for one with
+`dynamic_entra_groups` on it also creates and retires access levels -- see `apps.entra.reconcile`.
 """
 
 from __future__ import annotations
@@ -164,6 +168,77 @@ class EntraGroup(_Mirrored):
     @property
     def is_assignable(self) -> bool:
         return not self.unsuitable_reason
+
+
+def assignable(qs):
+    """Groups that can back an `entra_group` access level (see `EntraGroup.unsuitable_reason`)."""
+    return qs.filter(
+        kind__in=EntraGroup.ACCESS_KINDS,
+        membership=EntraGroup.Membership.ASSIGNED,
+        is_assignable_to_role=False,
+    ).exclude(source=EntraGroup.Source.SYNCED)
+
+
+class EntraGroupRoute(TimeStampedModel):
+    """Routes a cloud group, by display name, to the application that should hold it.
+
+    The Entra ID counterpart of `apps.directory.models.ADGroupRoute`, and resolved the same way
+    (application-kind targets first, then `priority`, then pk; see `apps.entra.routing`). A
+    display name is only a convention -- names repeat freely in Entra ID -- but it is the only
+    thing that says which system a group is for, exactly as a sAMAccountName is on-premises.
+
+    For an ordinary application a route is **advisory**: it pre-fills the target on Entra
+    groups > Add to catalog. For one with `dynamic_entra_groups` on, a route also creates and
+    retires that application's `entra_group` levels -- see `apps.entra.reconcile`. Either way it
+    can only ever point at a group that can back a level: a group synced from Active Directory
+    is an AD group, and AD group routes are what decide where it goes.
+    """
+
+    pattern = models.CharField(
+        max_length=200,
+        help_text="Case-insensitive glob matched against the group's display name, e.g. SG-*",
+    )
+    application = models.ForeignKey(
+        "catalog.Application",
+        on_delete=models.PROTECT,
+        related_name="entra_group_routes",
+        help_text="Usually a service; any application is allowed.",
+    )
+    priority = models.PositiveSmallIntegerField(
+        default=100,
+        help_text=(
+            "Lowest number wins among routes to the same kind of target. An application "
+            "always outranks a service, whatever the numbers say."
+        ),
+    )
+    notes = models.CharField(max_length=255, blank=True, help_text="Why this route exists.")
+    is_active = models.BooleanField(default=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="+",
+        editable=False,
+    )
+
+    class Meta:
+        verbose_name = "Entra group route"
+        # `pk` breaks priority ties, as for AD group routes.
+        ordering = ["priority", "pk"]
+        constraints = [
+            models.UniqueConstraint(
+                Lower("pattern"),
+                name="unique_entra_group_route_pattern",
+                violation_error_message="A route for this pattern already exists.",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.pattern} \u2192 {self.application.name}"
+
+    def get_absolute_url(self):
+        return reverse("entra:route_list")
 
 
 class EntraAccount(_Mirrored):
