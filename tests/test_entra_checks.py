@@ -92,6 +92,15 @@ def test_w007_employee_id_attribute(settings):
     assert "entra.W007" not in ids()
 
 
+def test_w008_person_number_attribute(settings):
+    settings.ENTRA_PERSON_NUMBER_ATTRIBUTE = "extensionAttribute7"  # AD's name, not Graph's
+    assert "entra.W008" in ids()
+    settings.ENTRA_PERSON_NUMBER_ATTRIBUTE = "onPremisesExtensionAttributes.extensionAttribute7"
+    assert "entra.W008" not in ids()
+    settings.ENTRA_PERSON_NUMBER_ATTRIBUTE = ""
+    assert "entra.W008" not in ids(), "no person number is not a mistake"
+
+
 def test_the_checks_are_silent_without_entra(settings):
     settings.ENTRA_ENABLED = False
     settings.ENTRA_SYNC_CLIENT_SECRET = ""

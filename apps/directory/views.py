@@ -15,7 +15,7 @@ from django.db.models import Case, Count, Exists, IntegerField, OuterRef, Q, Val
 from django.db.models.functions import Lower
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
-from django.utils.http import urlencode
+from django.utils.http import url_has_allowed_host_and_scheme, urlencode
 from django.views.decorators.debug import sensitive_variables
 from django.views.decorators.http import require_POST
 from django.views.generic import ListView
@@ -425,6 +425,8 @@ def admin_index(request):
         "form": SyncStartForm(),
         "runs": runs,
         "schedule_command": schedule_command(),
+        # An account follows a link on its Entra ID copy while that mirror is on.
+        "entra_pairing": settings.ENTRA_ENABLED and settings.ENTRA_ACCOUNTS_ENABLED,
     }
     ctx.update(_status_context(runs))
     ctx.update(reconcile.counts_for_display())
@@ -618,6 +620,7 @@ ACCOUNT_COLUMNS = [
     "upn",
     "display_name",
     "employee_id",
+    "person_number",
     "enabled",
     "expires",
     "last_logon",
@@ -632,7 +635,7 @@ ACCOUNT_COLUMNS = [
 SHOW_CHOICES = [
     ("", "All accounts"),
     ("unlinked", "Unlinked user accounts"),
-    ("unmatched", "Employee ID matches nobody"),
+    ("unmatched", "Employee ID or person number matches nobody"),
     ("orphaned", "Enabled, person inactive"),
     ("disabled", "Disabled in AD"),
     ("expired", "Expired"),
@@ -646,6 +649,7 @@ def account_rows(accounts):
             a.upn,
             a.display_name,
             a.employee_id,
+            a.person_number,
             "yes" if a.enabled else "no",
             a.account_expires.date().isoformat() if a.account_expires else "",
             a.last_logon_at.date().isoformat() if a.last_logon_at else "",
@@ -679,6 +683,7 @@ class DirectoryAccountListView(PermissionCheckMixin, ListView):
                 | Q(surname__icontains=self.q)
                 | Q(mail__icontains=self.q)
                 | Q(employee_id__iexact=self.q)
+                | Q(person_number__iexact=self.q)
             )
         self.active = g.get("active", "1")
         if self.active == "1":
@@ -689,7 +694,7 @@ class DirectoryAccountListView(PermissionCheckMixin, ListView):
         if self.show == "unlinked":
             qs = _unlinked(qs)
         elif self.show == "unmatched":
-            qs = qs.filter(person__isnull=True).exclude(employee_id="")
+            qs = qs.filter(person__isnull=True).exclude(employee_id="", person_number="")
         elif self.show == "orphaned":
             qs = _orphaned(qs)
         elif self.show == "disabled":
@@ -734,13 +739,22 @@ class DirectoryAccountListView(PermissionCheckMixin, ListView):
 account_list = DirectoryAccountListView.as_view()
 
 
-def _back(request, account):
+def _safe_next(request) -> str:
+    """The `next` a form or link carried, when it stays on this site; "" otherwise. It ends up
+    in a redirect and in the Cancel link, so a `javascript:` or off-site URL -- a
+    protocol-relative `//host/` starts with a slash too -- never gets that far."""
     target = request.POST.get("next") or request.GET.get("next") or ""
-    if not target.startswith("/"):
-        target = (
-            reverse("directory:account_list") + "?" + urlencode({"q": account.sam_account_name})
-        )
-    return target
+    if target and url_has_allowed_host_and_scheme(
+        target, allowed_hosts={request.get_host()}, require_https=request.is_secure()
+    ):
+        return target
+    return ""
+
+
+def _back(request, account):
+    return _safe_next(request) or (
+        reverse("directory:account_list") + "?" + urlencode({"q": account.sam_account_name})
+    )
 
 
 @role_required("can_link_accounts")
@@ -769,7 +783,7 @@ def account_link(request, pk):
     return render(
         request,
         "directory/account_link.html",
-        {"account": account, "form": form, "next": request.GET.get("next", "")},
+        {"account": account, "form": form, "next": _safe_next(request)},
     )
 
 

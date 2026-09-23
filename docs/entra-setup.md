@@ -232,6 +232,8 @@ ENTRA_EMPLOYEE_ID_ATTRIBUTE=employeeId
 | `ENTRA_ACCOUNTS_ENABLED` | `true` | The account mirror (section 14). |
 | `ENTRA_ACCOUNTS_EXCLUDE_PATTERNS` | empty (none) | Globs on the UPN kept out of the mirror. |
 | `ENTRA_EMPLOYEE_ID_ATTRIBUTE` | `employeeId` | Where the HR employee ID lives. `W007`. |
+| `ENTRA_PERSON_NUMBER_ATTRIBUTE` | empty (off) | Where the HealthIAM person number lives, in the same forms: usually `onPremisesExtensionAttributes.extensionAttributeN`, the Entra side of `AD_PERSON_NUMBER_ATTRIBUTE`. Section 14. `W008`. |
+| `ENTRA_LINK_MEMBERS_BY_EMAIL` | `false` | Link members by e-mail too, not only guests, when no stronger key links them. Section 14. |
 | `ENTRA_SIGN_IN_ACTIVITY` | `true` | Read last sign-in (needs `AuditLog.Read.All` and P1/P2). |
 | `ENTRA_GUEST_STALE_DAYS` | `90` | The stale-guest worklist: no sign-in for this long. |
 | `ENTRA_GUEST_PENDING_DAYS` | `30` | The pending worklist: invitation unredeemed for this long. |
@@ -252,6 +254,7 @@ from starting, so read them:
 | `entra.W005` | `ENTRA_BASELINE_ROLE` is also a target of `ENTRA_GROUP_ROLE_MAP` (see `directory.W001` for why that confuses). |
 | `entra.W006` | Logins come from Entra ID, but SSO is off, so nobody the sync creates can sign in. |
 | `entra.W007` | `ENTRA_EMPLOYEE_ID_ATTRIBUTE` is empty or not something the sync can read. |
+| `entra.W008` | `ENTRA_PERSON_NUMBER_ATTRIBUTE` is set to something the sync cannot read (often the AD name, `extensionAttribute7`, where Graph needs `onPremisesExtensionAttributes.extensionAttribute7`). |
 
 **Admin → Entra ID** shows the effective configuration (never a secret), the architecture, the
 same warnings, and **Test connection**, which gets a token, reads the tenant and lists the
@@ -478,8 +481,10 @@ same AD group, that group is the original, not a copy.
 A synchronized account carries `onPremisesImmutableId`, which with Entra Connect's default
 source anchor (`ms-DS-ConsistencyGuid`, seeded from objectGUID) decodes to the AD account's
 objectGUID. The Entra account list links each such account to its row in the AD account
-mirror (`docs/ad-setup.md` section 13) when both are on. A custom source anchor decodes to
-nothing and the pairing is simply not shown.
+mirror (`docs/ad-setup.md` section 13) when both are on, and the pair shares its links: when an
+account has no key of its own that names somebody, it follows the link of its other half, if
+that one was made by hand or by a key (never by e-mail). A hand link is therefore made once,
+on either side. A custom source anchor decodes to nothing and the pairing is simply not shown.
 
 ## 14. Account mirror and guest worklists
 
@@ -501,23 +506,38 @@ partner named by its domain -- and the invitation state.
 
 ### Linking rules
 
-1. **Employee ID first, for every account**, read from `ENTRA_EMPLOYEE_ID_ATTRIBUTE`:
-   `employeeId` (the default), an on-premises extension attribute synchronized by Entra Connect
+The rules are the ones the AD account mirror applies (`docs/data-model.md`, *Linking accounts
+to people*); per account, in order:
+
+1. **The person number** in `ENTRA_PERSON_NUMBER_ATTRIBUTE`, when set: the key HealthIAM issues
+   for people HR does not number (`docs/ad-setup.md` section 13 explains where it comes from).
+2. **The employee ID**, read from `ENTRA_EMPLOYEE_ID_ATTRIBUTE`: `employeeId` (the default), an
+   on-premises extension attribute synchronized by Entra Connect
    (`onPremisesExtensionAttributes.extensionAttribute1` to `15`), or a directory schema
    extension (`extension_<appid>_<name>`). Graph has no `employeeNumber`: when AD keeps the ID
    there, Entra Connect's *directory extension attribute sync* brings it across as a schema
-   extension. It must match one person's `employee_id` exactly.
-2. **Then e-mail, for guests and external members only,** who rarely carry an employee ID of
-   ours: the account's `mail`, then its `otherMails`, then -- as a last resort -- the address
-   encoded in a `#EXT#` UPN, against the people's e-mail addresses. Only an address exactly one
-   person has links; an ambiguous one links nobody, since a wrong link hands one person's
-   worklist entries to another.
-3. **By hand wins.** **Link…** on the accounts page (with a reason) survives every later sync
-   whatever the attributes say, and so does **Unlink**: the sync leaves such an account alone.
-   An automatic link whose basis disappears is removed, and the run page says so.
-4. **Create person…** on an unlinked guest or external member opens the new-person form filled
-   from the account; saving it creates the person with an assignment and links the account in
-   the same step. Every link and unlink lands in the person's History with the actor and reason.
+   extension. It must match one person's `employee_id` exactly, or failing that a *former
+   employee ID* a person carries.
+3. **The network username**: the on-premises account name of a synchronized account, and the
+   UPN, against `Person.network_username`. Not for a person who left before the account was
+   created: the name was reused.
+4. **The AD original** of a synchronized account, when it is linked by hand or by a key and the
+   AD account mirror is on (section 13).
+5. **E-mail, always for guests and external members,** who rarely carry an employee ID of
+   ours, and for members too with `ENTRA_LINK_MEMBERS_BY_EMAIL=true`: the account's `mail`,
+   then its `otherMails`, then -- as a last resort -- the address encoded in a `#EXT#` UPN,
+   against the people's e-mail addresses. Only an address exactly one person has links; an
+   ambiguous one links nobody, since a wrong link hands one person's worklist entries to
+   another.
+
+Keys that name **different people** link nobody: the run records a *conflict* naming both, and
+a link to one of them is left alone for a person to settle. **By hand wins**: **Link…** on the
+accounts page (with a reason) survives every later sync whatever the attributes say, and so
+does **Unlink**: the sync leaves such an account alone. An automatic link whose basis
+disappears is removed, and the run page says so. **Create person…** on an unlinked guest or
+external member opens the new-person form filled from the account; saving it creates the
+person with an assignment and links the account in the same step. Every link and unlink lands
+in the person's History with the actor and reason.
 
 Administrators can link any account; a coordinator can link guests and external members to
 people of the types they coordinate, and create people from them.
@@ -535,7 +555,7 @@ pending and stale):
 | **Members linked to nobody** (`unlinked`) | The same for the organization's own accounts. |
 | **Invitations pending too long** (`pending`) | Invitations nobody redeemed within `ENTRA_GUEST_PENDING_DAYS`. |
 | **Guests not signed in lately** (`stale`) | Guests and external members with no sign-in for `ENTRA_GUEST_STALE_DAYS`, or none at all since being created that long ago. Only accounts whose sign-in activity the last sync could read count. |
-| **Employee ID matches nobody** (`unmatched`) | Usually a person the HR feed has not delivered yet. |
+| **Employee ID or person number matches nobody** (`unmatched`) | Usually a person the HR feed has not delivered yet, or a person number typed wrong: its check digit makes a typo name nobody. |
 | **Sign-in blocked** (`disabled`) | Still in the tenant, sign-in blocked. |
 
 **Kind** on the accounts page (user, admin, service, shared) is set by hand, because the
@@ -629,7 +649,7 @@ tenant that does not exist.
 | **Groups** | the copies of the `demo.local` groups Entra Connect synchronizes (not the Infrastructure OU); `LIC_M365_E3`, whose source of authority moved to the cloud; cloud security, mail-enabled security and Microsoft 365 groups; a dynamic, a role-assignable and a distribution group; `FS_NURSING_EDUCATION`, written back to AD; `LIC_TEAMS_PHONE_PILOT`, deleted after its pilot |
 | **Levels** | *Microsoft 365*: Copilot (with a position default), Teams Phone (deleted group, still a default), Power BI Pro (never returned), All nursing staff (group made dynamic since); *File Shares*: the nursing education share, a default for nurses |
 | **Routes** | `Teams-*` → Microsoft 365, advisory: *Add to catalog* suggests it for Teams-Pharmacy-Informatics, while MESG-Pharmacy-Alerts matches no route. No demo application holds cloud groups automatically; tick *Dynamic Entra groups* on one to watch a route fill it |
-| **Accounts** | the synchronized staff, one of them disabled and one whose person left; a converted member; a contractor linked by hand; an emergency-access account and a shared mailbox; guests from another Entra tenant, Google, a Microsoft account, one-time passcode and a SAML partner; an external member |
+| **Accounts** | the synchronized staff, one of them disabled, one whose person left and one linked by network username (no employee ID); a converted member; a contractor linked by hand; an emergency-access account and a shared mailbox; guests from another Entra tenant, Google, a Microsoft account, one-time passcode and a SAML partner; an external member |
 | **Runs** | three: the first import, a scheduled run that failed on an expired client secret, and last night's |
 
 Every worklist has an entry: Ines Duarte's contract ended three weeks ago (orphaned guest), Kofi

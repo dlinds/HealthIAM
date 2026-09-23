@@ -55,6 +55,16 @@ def _authorize(allowed: bool, message: str, field_name: str = "__all__"):
         raise ValidationError({field_name: message})
 
 
+def _duplicate(exc: IntegrityError) -> ValidationError:
+    """The field a unique violation belongs to. `full_clean` names the holder first; this
+    only catches a concurrent write that got in between."""
+    if "unique_person_network_username" in str(exc):
+        return ValidationError(
+            {"network_username": "Another person already has this network username."}
+        )
+    return ValidationError({"employee_id": "Another person already has this employee ID."})
+
+
 def _span(assignment: PositionAssignment) -> str:
     end = f"{assignment.end_date:%Y-%m-%d}" if assignment.end_date else "open-ended"
     return f"{assignment.start_date:%Y-%m-%d} to {end}"
@@ -74,8 +84,8 @@ def create_person(
     try:
         with set_actor(actor), transaction.atomic():
             person.save()
-    except IntegrityError:
-        raise ValidationError({"employee_id": "Another person already has this employee ID."})
+    except IntegrityError as exc:
+        raise _duplicate(exc)
     return person
 
 
@@ -93,8 +103,8 @@ def update_person(person: Person, *, actor, reason: str, system: bool = False, *
     try:
         with set_actor(actor), transaction.atomic():
             person.save()
-    except IntegrityError:
-        raise ValidationError({"employee_id": "Another person already has this employee ID."})
+    except IntegrityError as exc:
+        raise _duplicate(exc)
     return person
 
 

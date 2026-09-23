@@ -39,9 +39,10 @@
           </div>
           {% endif %}
           <div class="row">
-            <div class="col-md-4">{% include "people/partials/field.html" with field=form.preferred_name %}</div>
-            <div class="col-md-4">{% include "people/partials/field.html" with field=form.employee_id %}</div>
-            <div class="col-md-4">{% include "people/partials/field.html" with field=form.hire_date %}</div>
+            <div class="col-md-3">{% include "people/partials/field.html" with field=form.preferred_name %}</div>
+            <div class="col-md-3">{% include "people/partials/field.html" with field=form.employee_id %}</div>
+            <div class="col-md-3">{% include "people/partials/field.html" with field=form.network_username %}</div>
+            <div class="col-md-3">{% include "people/partials/field.html" with field=form.hire_date %}</div>
           </div>
           <div class="row">
             <div class="col-md-4">{% include "people/partials/field.html" with field=form.email %}</div>

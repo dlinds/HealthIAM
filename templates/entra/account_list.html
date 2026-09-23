@@ -12,11 +12,11 @@
 <div class="alert alert-light border small"><i class="bi bi-info-circle me-1"></i>The account mirror is off: <span class="text-mono">ENTRA_ACCOUNTS_ENABLED</span> is false. See docs/entra-setup.md.</div>
 {% endif %}
 <p class="text-body-secondary small">
-  Every user in the tenant: members synchronized from AD, cloud members, guests and external members, each linked to the person it belongs to &mdash; by employee ID,
-  by e-mail for guests, or by hand. A guest is worth tracking because its engagement ends and the account does not: the worklists below find those.
+  Every user in the tenant: members synchronized from AD, cloud members, guests and external members, each linked to the person it belongs to &mdash; by employee ID
+  or username, by e-mail for guests, or by hand. A guest is worth tracking because its engagement ends and the account does not: the worklists below find those.
 </p>
 <form class="row g-2 mb-3 js-autosubmit" method="get">
-  <div class="col-md-3"><input class="form-control" type="search" name="q" value="{{ q }}" placeholder="UPN, name, e-mail, company, employee ID"></div>
+  <div class="col-md-3"><input class="form-control" type="search" name="q" value="{{ q }}" placeholder="UPN, name, e-mail, company, employee ID, person number"></div>
   <div class="col-md-3">
     <select class="form-select" name="show">
       {% for value, label in show_choices %}<option value="{{ value }}" {% if show == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
@@ -57,6 +57,7 @@
         <span class="badge {% if a.is_external %}text-bg-info{% else %}text-bg-light border{% endif %}">{{ a.get_source_display }}</span>
         {% if a.identity_provider_label %}<div class="text-body-secondary">{{ a.identity_provider_label }}</div>{% endif %}
         {% if a.employee_id %}<div class="text-mono">{{ a.employee_id }}</div>{% endif %}
+        {% if a.person_number %}<div class="text-mono text-body-secondary" title="Person number">{{ a.person_number }}</div>{% endif %}
       </td>
       <td>
         {% if not a.is_active %}<span class="badge text-bg-secondary">not in Entra ID</span>
@@ -73,6 +74,7 @@
         {% if a.person %}<a href="{{ a.person.get_absolute_url }}">{{ a.person.sort_name }}</a>{% if not a.person.is_active %} <span class="badge text-bg-danger">person inactive</span>{% endif %}<div class="small text-body-secondary">{{ a.get_link_method_display|lower }}</div>
         {% elif a.unlinked_by_hand %}<span class="text-body-secondary">unlinked by hand</span>
         {% elif a.employee_id %}<span class="badge text-bg-warning text-wrap">no person with this employee ID</span>
+        {% elif a.person_number %}<span class="badge text-bg-warning text-wrap">no person with this person number</span>
         {% else %}<span class="text-body-tertiary">—</span>{% endif %}
       </td>
       <td>

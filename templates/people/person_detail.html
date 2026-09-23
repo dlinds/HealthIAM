@@ -21,6 +21,8 @@
       {% for a in current %}<span class="badge text-bg-light border">{{ a.person_type.name }}</span>{% endfor %}
       <span class="badge text-bg-light border">{{ person.get_source_display }}</span>
       {% if person.employee_id %}<span class="text-body-secondary">Employee ID <span class="text-mono">{{ person.employee_id }}</span></span>{% endif %}
+      <span class="text-body-secondary" title="Written into a custom attribute of the person's directory accounts, it links them when there is no employee ID">Person number <span class="text-mono">{{ person.person_number }}</span></span>
+      {% if person.network_username %}<span class="text-body-secondary">Username <span class="text-mono">{{ person.network_username }}</span></span>{% endif %}
       {% if person.email %}<a href="mailto:{{ person.email }}">{{ person.email }}</a>{% endif %}
       {% if person.phone %}<span class="text-body-secondary">{{ person.phone }}</span>{% endif %}
       {% if person.work_location %}<span class="text-body-secondary"><i class="bi bi-geo-alt"></i> {{ person.work_location }}</span>{% endif %}

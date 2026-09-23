@@ -390,3 +390,11 @@ def test_demo_ad_guards_report_a_foreign_mirror(db):
     assert mirror.foreign_group_count() == 0
     factories.ADGroupFactory(name="APP_REAL_DIRECTORY_GROUP")
     assert mirror.foreign_group_count() == 1
+
+
+def test_seed_demo_links_an_account_by_network_username(db):
+    seed()
+    account = DirectoryAccount.objects.select_related("person").get(sam_account_name="hweiss")
+    assert account.employee_id == ""
+    assert account.link_method == DirectoryAccount.LinkMethod.USERNAME
+    assert account.person.employee_id == "E1003" and account.person.network_username == "hweiss"

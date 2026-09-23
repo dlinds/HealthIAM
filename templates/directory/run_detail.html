@@ -31,7 +31,7 @@
 {% if run.is_stale %}<div class="alert alert-warning">This run was still pending after {{ run.started_at|date:"Y-m-d H:i" }} and never recorded an outcome: the worker stopped (timeout or restart) while it was reading from AD. Nothing was written. Start a new sync; if it happens again, raise the reverse-proxy and gunicorn timeouts or use the scheduled command.</div>{% endif %}
 
 {% for kind, s in parts %}
-<div class="d-flex align-items-center gap-2 mb-1"><span class="badge text-bg-dark text-capitalize">{{ kind }}</span><span class="small text-body-secondary">{{ s.read }} directory entr{{ s.read|pluralize:"y,ies" }} read</span></div>
+<div class="d-flex align-items-center gap-2 mb-1"><span class="badge text-bg-dark text-capitalize">{{ kind }}</span><span class="small text-body-secondary">{{ s.read }} directory entr{{ s.read|pluralize:"y,ies" }} read{% if s.linked or s.unlinked or s.unmatched or s.conflicts %} · {{ s.linked }} linked · {{ s.unlinked }} unlinked · {{ s.unmatched }} unmatched{% if s.conflicts %} · <span class="text-danger">{{ s.conflicts }} conflict{{ s.conflicts|pluralize }}</span>{% endif %}{% endif %}</span></div>
 <div class="row g-2 mb-3">
   <div class="col-6 col-md-2 col-xl"><div class="card text-center"><div class="card-body py-2"><div class="fs-4">{{ s.created }}</div><div class="small text-body-secondary">Created</div></div></div></div>
   <div class="col-6 col-md-2 col-xl"><div class="card text-center"><div class="card-body py-2"><div class="fs-4">{{ s.updated }}</div><div class="small text-body-secondary">Updated</div></div></div></div>
@@ -61,7 +61,7 @@
     <tbody>
     {% for e in changes %}
       <tr><td class="text-capitalize">{{ e.kind }}</td><td>{{ e.row|default:"—" }}</td><td class="text-mono" title="{{ e.dn }}">{{ e.code }}</td>
-        <td><span class="badge {% if e.action == 'created' %}text-bg-success{% elif e.action == 'deactivated' %}text-bg-warning{% elif e.action == 'skipped' %}text-bg-secondary{% else %}text-bg-info{% endif %}">{{ e.action }}</span></td>
+        <td><span class="badge {% if e.action == 'created' or e.action == 'linked' %}text-bg-success{% elif e.action == 'deactivated' or e.action == 'unlinked' %}text-bg-warning{% elif e.action == 'conflict' %}text-bg-danger{% elif e.action == 'skipped' %}text-bg-secondary{% else %}text-bg-info{% endif %}">{{ e.action }}</span></td>
         <td>{{ e.message }}</td></tr>
     {% empty %}
       <tr><td colspan="5" class="text-body-secondary">No changes.</td></tr>

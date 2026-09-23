@@ -1,5 +1,5 @@
 """Sync engine for Active Directory: IAM-Users membership -> logins, group listing -> `ADGroup`,
-account listing -> `DirectoryAccount` linked to people by employee ID.
+account listing -> `DirectoryAccount` linked to people by the keys each account carries.
 
 `run_sync()` drives one `DirectorySyncRun`: it reads everything from the directory first
 (outside any transaction), applies guards, then writes inside a single transaction that a dry
@@ -29,7 +29,7 @@ from django.views.decorators.debug import sensitive_variables
 from apps.accounts import login_source, roles
 from apps.accounts.models import User
 from apps.orgs.importers import ImportResult
-from apps.people.models import Person
+from apps.people.linking import PAIRABLE, AccountKeys, Pair, PeopleIndex, apply_match
 
 from .config import DirectorySettings
 from .ldap_client import DirectoryClient, DirectoryError, DirectoryGroup, DirectoryUser
@@ -100,10 +100,12 @@ class SyncResult(ImportResult):
 @dataclass
 class AccountSyncResult(SyncResult):
     """`SyncResult` plus the link pass: accounts linked to and unlinked from people this
-    run, and how many active accounts carry an employee ID that matches nobody."""
+    run, how many active accounts carry a key that matches nobody, and the accounts whose
+    keys name different people. Shared by the Entra ID sync."""
 
     linked: list[str] = field(default_factory=list)
     unlinked: list[str] = field(default_factory=list)
+    conflict: list[str] = field(default_factory=list)
     unmatched: int = 0
 
     @property
@@ -112,6 +114,7 @@ class AccountSyncResult(SyncResult):
         data["linked"] = len(self.linked)
         data["unlinked"] = len(self.unlinked)
         data["unmatched"] = self.unmatched
+        data["conflicts"] = len(self.conflict)
         return data
 
 
@@ -787,6 +790,7 @@ ACCOUNT_FIELDS = (
     "department",
     "manager_dn",
     "employee_id",
+    "person_number",
     "enabled",
     "account_expires",
     "when_created",
@@ -809,6 +813,7 @@ def _account_values(account: DirectoryUser) -> dict:
         "department": account.department,
         "manager_dn": account.manager_dn,
         "employee_id": account.employee_id,
+        "person_number": account.person_number,
         "enabled": account.enabled,
         "account_expires": account.account_expires,
         "when_created": account.when_created,
@@ -838,6 +843,8 @@ def _sync_account(account: DirectoryUser, existing: dict, now) -> tuple[str, str
                 notes.append("enabled in AD" if values[name] else "disabled in AD")
             elif name == "employee_id":
                 notes.append(f"employee ID: {obj.employee_id or '-'} -> {values[name] or '-'}")
+            elif name == "person_number":
+                notes.append(f"person number: {obj.person_number or '-'} -> {values[name] or '-'}")
             setattr(obj, name, values[name])
             changed.append(name)
     reactivated = False
@@ -862,59 +869,83 @@ def _sync_account(account: DirectoryUser, existing: dict, now) -> tuple[str, str
 
 
 def link_accounts(result: AccountSyncResult | None = None, *, now=None) -> tuple[int, int, int]:
-    """Link every active, unlinked account to the person whose employee ID it carries, and
-    unlink an employee-ID link whose ID no longer matches. Returns `(linked, unlinked,
-    unmatched)`.
+    """Link every active account the sync may link to the person its keys name, and unlink an
+    automatic link whose basis has gone. Returns `(linked, unlinked, unmatched)`.
 
-    A link made or removed by hand is never touched: `link_method=manual` with a person
-    means "this is theirs, whatever the attribute says", and with no person "leave it
-    unlinked". Also used by the demo seed, so the demo world links the way a sync would.
+    The keys are the person number (from `AD_PERSON_NUMBER_ATTRIBUTE`), the employee ID (or a
+    former one), then the account's sAMAccountName and UPN against people's network
+    usernames, then its Entra ID copy's link, then -- with `AD_LINK_BY_EMAIL` -- its mail and
+    UPN; the rules are `apps.people.linking`'s. A link made or removed by hand is never
+    touched: `link_method=manual` with a person means "this is theirs, whatever the attributes
+    say", and with no person "leave it unlinked". Also used by the demo seed, so the demo world
+    links the way a sync would.
     """
     now = now or timezone.now()
-    people = {p.employee_id: p for p in Person.objects.exclude(employee_id="")}
-    linked = unlinked = unmatched = 0
+    cfg = DirectorySettings.from_settings()
+    index = PeopleIndex.build()
+    pairs = _entra_copies()
+    counts = dict.fromkeys(("linked", "unlinked", "unmatched"), 0)
     accounts = DirectoryAccount.objects.filter(is_active=True).exclude(
         link_method=DirectoryAccount.LinkMethod.MANUAL
     )
-    for account in accounts.select_related("person"):
-        person = people.get(account.employee_id) if account.employee_id else None
-        if person is not None and account.person_id != person.pk:
-            previous = account.person
-            account.person = person
-            account.link_method = DirectoryAccount.LinkMethod.EMPLOYEE_ID
-            account.linked_at = now
-            account._audit_reason = f"Employee ID {account.employee_id} matches"
-            account.save(update_fields=["person", "link_method", "linked_at", "updated_at"])
-            linked += 1
-            if result is not None:
-                message = f"linked to {person.display_name} by employee ID"
-                if previous is not None:
-                    message = f"re-{message} (was {previous.display_name})"
-                result.record(
-                    0, account.sam_account_name, "linked", message, dn=account.distinguished_name
-                )
-        elif person is None and account.person_id is not None:
-            previous = account.person
-            account.person = None
-            account.link_method = ""
-            account.linked_at = None
-            account._audit_reason = "Employee ID no longer matches a person"
-            account.save(update_fields=["person", "link_method", "linked_at", "updated_at"])
-            unlinked += 1
-            if result is not None:
-                result.record(
-                    0,
-                    account.sam_account_name,
-                    "unlinked",
-                    f"unlinked from {previous.display_name}: employee ID "
-                    f"{account.employee_id or '-'} matches nobody",
-                    dn=account.distinguished_name,
-                )
-        elif person is None and account.employee_id:
-            unmatched += 1
+    for account in accounts.select_related("person").order_by("sam_account_name", "pk"):
+        keys = AccountKeys(
+            person_number=account.person_number,
+            employee_id=account.employee_id,
+            usernames=(account.sam_account_name, account.upn),
+            emails=(account.mail, account.upn) if cfg.link_by_email else (),
+            created_at=account.when_created,
+        )
+        outcome = apply_match(
+            account,
+            index.match(keys, pair=pairs.get(account.object_guid)),
+            now=now,
+            lost=_lost_basis(account),
+            result=result,
+            code=account.sam_account_name,
+            dn=account.distinguished_name,
+        )
+        if outcome in counts:
+            counts[outcome] += 1
     if result is not None:
-        result.unmatched = unmatched
-    return linked, unlinked, unmatched
+        result.unmatched = counts["unmatched"]
+    return counts["linked"], counts["unlinked"], counts["unmatched"]
+
+
+def _entra_copies() -> dict:
+    """`{objectGUID: Pair}` for the accounts whose Entra ID copy is linked by hand or by a
+    strong key, while the Entra account mirror is on: a link somebody made on the copy holds
+    for the original too. Imported here, not at the top: the Entra sync imports this module."""
+    if not (settings.ENTRA_ENABLED and settings.ENTRA_ACCOUNTS_ENABLED):
+        return {}
+    from apps.entra.models import EntraAccount
+
+    copies = EntraAccount.objects.filter(
+        is_active=True,
+        person__isnull=False,
+        on_premises_object_guid__isnull=False,
+        link_method__in=PAIRABLE,
+    ).select_related("person")
+    return {
+        copy.on_premises_object_guid: Pair(
+            copy.person, f"Same account as Entra ID account {copy.upn}"
+        )
+        for copy in copies
+    }
+
+
+def _lost_basis(account: DirectoryAccount) -> str:
+    """Why an automatic link went away, for the run log, when nothing more specific is known."""
+    method = account.link_method
+    if method == DirectoryAccount.LinkMethod.PERSON_NUMBER:
+        return f"person number {account.person_number or '-'} matches nobody"
+    if method == DirectoryAccount.LinkMethod.USERNAME:
+        return f"username {account.sam_account_name} matches nobody"
+    if method == DirectoryAccount.LinkMethod.PAIRED:
+        return "its Entra ID account no longer links it"
+    if method == DirectoryAccount.LinkMethod.EMAIL:
+        return "its e-mail address no longer links it"
+    return f"employee ID {account.employee_id or '-'} matches nobody"
 
 
 def sync_accounts(

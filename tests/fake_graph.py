@@ -132,6 +132,7 @@ class FakeTenant(GraphClient):
         mail: str | None = None,
         other_mails: tuple = (),
         employee_id: str = "",
+        person_number: str = "",
         guest: bool = False,
         external_member: bool = False,
         issuer: str = "",
@@ -164,6 +165,7 @@ class FakeTenant(GraphClient):
             job_title=job_title,
             department=department,
             employee_id=employee_id,
+            person_number=person_number,
             user_type="Guest" if guest else "Member",
             creation_type="Invitation" if external else "",
             external_user_state=("PendingAcceptance" if pending else "Accepted")

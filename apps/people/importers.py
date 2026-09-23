@@ -2,10 +2,11 @@
 
 Rows are upserted by employee ID, and everything an HR system knows better than a person
 typing is taken from the file: names (a changed legal name is kept as a former name),
-contact details, leave, hire and separation dates, the manager, the primary position and the
-alternate positions. A changed primary position ends the current one the day before the new
-one starts. Manual assignments -- a student rotation a coordinator added to an employee --
-are never touched, and a person the feed does not know is never created inactive.
+contact details, the network username, leave, hire and separation dates, the manager, the
+primary position and the alternate positions. A changed primary position ends the current
+one the day before the new one starts. Manual assignments -- a student rotation a
+coordinator added to an employee -- are never touched, and a person the feed does not know
+is never created inactive.
 
 Every write goes through `apps.people.services` with `system=True`: the feed is the
 authority, the batch is the reason, and the audit log records both. Each row runs in its own
@@ -28,6 +29,7 @@ from apps.orgs.models import ImportBatch, Position, Source
 
 from . import services
 from .bootstrap import ensure_person_types
+from .keys import normalize_username
 from .models import Person, PersonType, PositionAssignment, today
 
 HEADER_ALIASES = {
@@ -49,6 +51,13 @@ HEADER_ALIASES = {
     "e_mail": "email",
     "mail": "email",
     "work_email": "email",
+    # Specific names only: two columns mapping to one field let the last win, even a blank.
+    "network_id": "network_username",
+    "ad_username": "network_username",
+    "sam_account_name": "network_username",
+    "samaccountname": "network_username",
+    "upn": "network_username",
+    "user_principal_name": "network_username",
     "work_phone": "phone",
     "telephone": "phone",
     "location": "work_location",
@@ -123,6 +132,7 @@ class Row:
     suffix: str
     preferred_name: str | None
     email: str
+    network_username: str
     phone: str
     work_location: str
     status: str
@@ -186,6 +196,7 @@ def _parse(i: int, row: dict, types: dict[str, PersonType]) -> Row:
         suffix=(row.get("suffix") or "").strip(),
         preferred_name=preferred.strip() if preferred is not None else None,
         email=(row.get("email") or "").strip(),
+        network_username=normalize_username(row.get("network_username")),
         phone=(row.get("phone") or "").strip(),
         work_location=(row.get("work_location") or "").strip(),
         status=status,
@@ -226,6 +237,7 @@ class _Importer:
         if person is None:
             if row.status == "terminated":
                 return "skipped", ["terminated and not on record; not created"]
+            username = self._claim_username(None, row, details)
             person = services.create_person(
                 source=Source.HR,
                 first_name=row.first_name,
@@ -235,6 +247,7 @@ class _Importer:
                 preferred_name=row.preferred_name or "",
                 employee_id=row.employee_id,
                 email=row.email,
+                network_username=username,
                 phone=row.phone,
                 work_location=row.work_location,
                 hire_date=row.hire_date,
@@ -289,12 +302,46 @@ class _Importer:
         )
         details.append(f"name {old} → {person.legal_name}" if legal_changed else "preferred name")
 
+    def _claim_username(self, person: Person | None, row: Row, details: list[str]) -> str:
+        """The network username this row may give `person`, "" when there is nothing to set.
+
+        Names get reused: a username an inactive person still holds moves to this row, noted
+        in its details and audited on theirs. One an active person holds stays with them and
+        the row warns, since which of the two the feed has wrong is for a person to decide.
+        """
+        username = row.network_username
+        if not username or (person is not None and person.network_username == username):
+            return ""
+        holder = Person.objects.filter(network_username=username)
+        if person is not None:
+            holder = holder.exclude(pk=person.pk)
+        holder = holder.first()
+        if holder is None:
+            return username
+        if holder.is_active:
+            self.result.record(
+                row.number,
+                row.employee_id,
+                "warning",
+                f"Network username {username} belongs to {holder.display_name}, "
+                "who is still active; not set.",
+            )
+            return ""
+        services.update_person(
+            holder, actor=self.actor, reason=self.reason, system=True, network_username=""
+        )
+        details.append(f"network username taken from {holder.display_name}")
+        return username
+
     def _sync_fields(self, person: Person, row: Row, details: list[str]) -> None:
         updates = {}
         for name in ("email", "phone", "work_location", "hire_date"):
             value = getattr(row, name)
             if value not in ("", None) and getattr(person, name) != value:
                 updates[name] = value
+        username = self._claim_username(person, row, details)
+        if username:
+            updates["network_username"] = username
         on_leave = row.status == "leave"
         if person.on_leave != on_leave:
             updates["on_leave"] = on_leave

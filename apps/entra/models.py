@@ -243,7 +243,8 @@ class EntraGroupRoute(TimeStampedModel):
 
 class EntraAccount(_Mirrored):
     """One user in the tenant: a member synced from AD, a cloud member, a guest or an external
-    member. Linked to the person it belongs to by employee ID, by e-mail (guests) or by hand."""
+    member. Linked to the person it belongs to by the keys it carries -- employee ID,
+    username, e-mail for guests (see `apps.people.linking`) -- or by hand."""
 
     class Source(models.TextChoices):
         SYNCED = "synced", "Synced from AD"
@@ -263,7 +264,12 @@ class EntraAccount(_Mirrored):
         UNKNOWN = "unknown", "Unknown"
 
     class LinkMethod(models.TextChoices):
+        # The automatic values are `apps.people.linking`'s method names.
+        PERSON_NUMBER = "person_number", "By person number"
         EMPLOYEE_ID = "employee_id", "By employee ID"
+        FORMER_ID = "former_id", "By former employee ID"
+        USERNAME = "username", "By username"
+        PAIRED = "paired", "Through its AD account"
         EMAIL = "email", "By e-mail"
         MANUAL = "manual", "By hand"
 
@@ -279,6 +285,13 @@ class EntraAccount(_Mirrored):
     department = models.CharField(max_length=150, blank=True)
     company_name = models.CharField(max_length=150, blank=True)
     employee_id = models.CharField("Employee ID", max_length=64, blank=True, db_index=True)
+    person_number = models.CharField(
+        "Person number",
+        max_length=64,
+        blank=True,
+        db_index=True,
+        help_text="As ENTRA_PERSON_NUMBER_ATTRIBUTE holds it, typos included.",
+    )
     user_type = models.CharField(max_length=20, default="Member")
     creation_type = models.CharField(max_length=40, blank=True)
     source = models.CharField(
@@ -332,7 +345,7 @@ class EntraAccount(_Mirrored):
         on_delete=models.SET_NULL,
         related_name="entra_accounts",
     )
-    link_method = models.CharField(max_length=12, choices=LinkMethod.choices, blank=True)
+    link_method = models.CharField(max_length=20, choices=LinkMethod.choices, blank=True)
     linked_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:

@@ -480,3 +480,95 @@ def test_a_synced_account_is_paired_with_its_ad_account(fake_tenant, as_user, he
     row = resp.context["object_list"][0]
     assert row.ad_account == ad_account
     assert b"AD account alice" in resp.content
+
+
+def copy_of(fake_tenant, ad_account, upn="alice@test.invalid"):
+    """Make `upn` the Entra ID copy of `ad_account`, with no key of its own to link by."""
+    import base64
+
+    return fake_tenant.update_user(
+        fake_tenant.user(upn),
+        employee_id="",
+        on_premises_sam_account_name="",
+        on_premises_immutable_id=base64.b64encode(ad_account.object_guid.bytes_le).decode(),
+    )
+
+
+def test_a_synced_account_follows_a_hand_link_on_its_ad_original(
+    fake_tenant, settings, admin_user, person_types
+):
+    from apps.directory import services as directory_services
+    from apps.entra.models import EntraAccount
+
+    settings.AD_ACCOUNTS_ENABLED = True
+    casey = factories.PersonFactory(first_name="Casey", last_name="Cole", employee_id="")
+    original = factories.DirectoryAccountFactory(sam_account_name="ccole")
+    directory_services.link_account(original, casey, actor=admin_user, reason="Confirmed with IS")
+    copy_of(fake_tenant, original)
+    run = entra_sync("accounts")
+    copy = EntraAccount.objects.get(upn="alice@test.invalid")
+    assert copy.person == casey and copy.link_method == EntraAccount.LinkMethod.PAIRED
+    assert "linked to Casey Cole through its AD account" in [e["message"] for e in run.log]
+    entry = LogEntry.objects.get_for_object(copy).latest("pk")
+    assert entry.additional_data["reason"] == "Same account as AD account ccole"
+
+    # Undoing the hand link on the original takes the copy's link with it.
+    directory_services.unlink_account(original, actor=admin_user, reason="Wrong person")
+    run = entra_sync("accounts")
+    copy.refresh_from_db()
+    assert copy.person is None
+    assert "unlinked from Casey Cole: its AD account no longer links it" in [
+        e["message"] for e in run.log
+    ]
+
+
+def test_an_ad_account_follows_a_hand_link_on_its_entra_copy(fake_tenant, admin_user):
+    from apps.directory import sync as directory_sync
+    from apps.directory.models import DirectoryAccount
+    from apps.entra.models import EntraAccount
+
+    casey = factories.PersonFactory(first_name="Casey", last_name="Cole", employee_id="")
+    original = factories.DirectoryAccountFactory(sam_account_name="ccole")
+    copy_of(fake_tenant, original)
+    entra_sync("accounts")
+    copy = EntraAccount.objects.get(upn="alice@test.invalid")
+    services.link_account(copy, casey, actor=admin_user, reason="Confirmed with IS")
+    assert directory_sync.link_accounts() == (1, 0, 0)
+    original.refresh_from_db()
+    assert original.person == casey
+    assert original.link_method == DirectoryAccount.LinkMethod.PAIRED
+
+
+def test_pairing_copies_neither_email_nor_paired_links(fake_tenant, settings, person_types):
+    from apps.directory import sync as directory_sync
+    from apps.entra.models import EntraAccount
+
+    settings.AD_ACCOUNTS_ENABLED = True
+    settings.ENTRA_LINK_MEMBERS_BY_EMAIL = True
+    casey = factories.PersonFactory(
+        first_name="Casey", last_name="Cole", employee_id="", email="alice@test.invalid"
+    )
+    original = factories.DirectoryAccountFactory(sam_account_name="ccole")
+    copy_of(fake_tenant, original)
+    entra_sync("accounts")
+    copy = EntraAccount.objects.get(upn="alice@test.invalid")
+    assert copy.person == casey and copy.link_method == EntraAccount.LinkMethod.EMAIL
+    # AD_LINK_BY_EMAIL is off: an e-mail link on the copy does not get round it.
+    assert directory_sync.link_accounts() == (0, 0, 0)
+    original.refresh_from_db()
+    assert original.person is None
+
+    # A link each side only copies from the other would outlive its basis forever: it never
+    # counts as a basis. Here the copy links by employee ID, the original pairs from it...
+    casey.employee_id = "E777"
+    casey.email = ""
+    casey.save()
+    fake_tenant.update_user(fake_tenant.user("alice@test.invalid"), employee_id="E777")
+    entra_sync("accounts")
+    assert directory_sync.link_accounts() == (1, 0, 0)
+    # ...and when the employee ID goes, both links go, one pass each.
+    fake_tenant.update_user(fake_tenant.user("alice@test.invalid"), employee_id="")
+    entra_sync("accounts")
+    copy.refresh_from_db()
+    assert copy.person is None
+    assert directory_sync.link_accounts() == (0, 1, 0)

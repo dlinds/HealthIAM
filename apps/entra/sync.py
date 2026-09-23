@@ -29,8 +29,9 @@ from django.views.decorators.debug import sensitive_variables
 from apps.accounts import roles
 from apps.accounts.models import User
 from apps.directory.matching import excluded_by, matches_patterns
+from apps.directory.models import DirectoryAccount
 from apps.directory.sync import AccountSyncResult, RowError, SyncResult
-from apps.people.models import Person
+from apps.people.linking import PAIRABLE, AccountKeys, Pair, PeopleIndex, apply_match
 
 from .config import EntraSettings
 from .graph import GraphClient, GraphError, GraphGroup, GraphUser, TenantInfo, immutable_id_guid
@@ -609,6 +610,7 @@ ACCOUNT_FIELDS = (
     "department",
     "company_name",
     "employee_id",
+    "person_number",
     "user_type",
     "creation_type",
     "source",
@@ -651,6 +653,7 @@ def account_values(
         "department": user.department,
         "company_name": user.company_name,
         "employee_id": user.employee_id,
+        "person_number": user.person_number,
         "user_type": user.user_type,
         "creation_type": user.creation_type,
         "identity_provider": identity_issuer(user, own_domains),
@@ -721,6 +724,8 @@ def _sync_account(
                 notes.append("enabled in Entra ID" if values[name] else "disabled in Entra ID")
             elif name == "employee_id":
                 notes.append(f"employee ID: {obj.employee_id or '-'} -> {values[name] or '-'}")
+            elif name == "person_number":
+                notes.append(f"person number: {obj.person_number or '-'} -> {values[name] or '-'}")
             elif name == "external_user_state" and values[name] == "Accepted":
                 notes.append("invitation accepted")
             elif name == "source":
@@ -748,94 +753,79 @@ def _sync_account(
     return "unchanged", ""
 
 
-def _people_by_email() -> dict[str, list[Person]]:
-    by_email: dict[str, list[Person]] = {}
-    for person in Person.objects.exclude(email=""):
-        by_email.setdefault(person.email.strip().lower(), []).append(person)
-    return by_email
-
-
-def match_person(account: EntraAccount, by_employee_id: dict, by_email: dict):
-    """`(person, method, note)` for one account, by the linking rules.
-
-    Employee ID first, for every account: it is the HR key. Then, for guests and external
-    members only, the account's e-mail addresses against people's, and only an address exactly
-    one person has: an ambiguous address links nobody, since a wrong link would hand one
-    person's worklist entries to another. `note` says why nothing matched when that is useful.
-    """
-    if account.employee_id:
-        person = by_employee_id.get(account.employee_id)
-        if person is not None:
-            return person, EntraAccount.LinkMethod.EMPLOYEE_ID, ""
-    if not account.is_external:
-        return None, "", ""
-    for email in account.email_candidates():
-        hits = by_email.get(email, [])
-        if len(hits) == 1:
-            return hits[0], EntraAccount.LinkMethod.EMAIL, ""
-        if len(hits) > 1:
-            return None, "", f"{len(hits)} people have the e-mail {email}"
-    return None, "", ""
-
-
 def link_accounts(result: AccountSyncResult | None = None, *, now=None) -> tuple[int, int, int]:
-    """Link every active account the sync may link to the person it belongs to, and unlink an
+    """Link every active account the sync may link to the person its keys name, and unlink an
     automatic link whose basis has gone. Returns `(linked, unlinked, unmatched)`.
 
-    A link made or removed by hand is never touched: `link_method=manual` with a person means
-    "theirs, whatever the attributes say", and with no person "leave it unlinked". Also used by
-    the demo seed, so the demo tenant links the way a sync would.
+    The keys are the person number (from `ENTRA_PERSON_NUMBER_ATTRIBUTE`), the employee ID (or
+    a former one), then the on-premises account name and the UPN against people's network
+    usernames, then the link of the AD account a synchronized
+    account copies, then e-mail: always for guests and external members, who rarely carry an
+    employee ID of ours, and for members too with `ENTRA_LINK_MEMBERS_BY_EMAIL`. The rules are
+    `apps.people.linking`'s. A link made or removed by hand is never touched:
+    `link_method=manual` with a person means "theirs, whatever the attributes say", and with no
+    person "leave it unlinked". Also used by the demo seed, so the demo tenant links the way a
+    sync would.
     """
     now = now or timezone.now()
-    by_employee_id = {p.employee_id: p for p in Person.objects.exclude(employee_id="")}
-    by_email = _people_by_email()
-    linked = unlinked = unmatched = 0
+    cfg = EntraSettings.from_settings()
+    index = PeopleIndex.build()
+    pairs = _ad_originals()
+    counts = dict.fromkeys(("linked", "unlinked", "unmatched"), 0)
     accounts = EntraAccount.objects.filter(is_active=True).exclude(
         link_method=EntraAccount.LinkMethod.MANUAL
     )
     for account in accounts.select_related("person").order_by("upn", "pk"):
-        person, method, note = match_person(account, by_employee_id, by_email)
-        if person is not None and (account.person_id != person.pk or account.link_method != method):
-            previous = account.person
-            account.person = person
-            account.link_method = method
-            account.linked_at = now
-            account._audit_reason = (
-                f"Employee ID {account.employee_id} matches"
-                if method == EntraAccount.LinkMethod.EMPLOYEE_ID
-                else "E-mail address matches"
-            )
-            account.save(update_fields=["person", "link_method", "linked_at", "updated_at"])
-            if previous is None or previous.pk != person.pk:
-                linked += 1
-                if result is not None:
-                    how = lower_first(EntraAccount.LinkMethod(method).label)
-                    message = f"linked to {person.display_name} {how}"
-                    if previous is not None:
-                        message = f"re-{message} (was {previous.display_name})"
-                    result.record(0, account.upn, "linked", message, dn=str(account.object_id))
-        elif person is None and account.person_id is not None:
-            previous = account.person
-            account.person = None
-            account.link_method = ""
-            account.linked_at = None
-            account._audit_reason = "Employee ID and e-mail no longer match a person"
-            account.save(update_fields=["person", "link_method", "linked_at", "updated_at"])
-            unlinked += 1
-            if result is not None:
-                result.record(
-                    0,
-                    account.upn,
-                    "unlinked",
-                    f"unlinked from {previous.display_name}: "
-                    + (note or "neither the employee ID nor an e-mail address matches anybody"),
-                    dn=str(account.object_id),
-                )
-        elif person is None and (account.employee_id or note):
-            unmatched += 1
+        by_email = account.is_external or cfg.link_members_by_email
+        keys = AccountKeys(
+            person_number=account.person_number,
+            employee_id=account.employee_id,
+            usernames=(account.on_premises_sam_account_name, account.upn),
+            emails=tuple(account.email_candidates()) if by_email else (),
+            created_at=account.created_in_entra_at,
+        )
+        outcome = apply_match(
+            account,
+            index.match(keys, pair=pairs.get(account.on_premises_object_guid)),
+            now=now,
+            lost=_lost_basis(account),
+            result=result,
+            code=account.upn,
+            dn=str(account.object_id),
+        )
+        if outcome in counts:
+            counts[outcome] += 1
     if result is not None:
-        result.unmatched = unmatched
-    return linked, unlinked, unmatched
+        result.unmatched = counts["unmatched"]
+    return counts["linked"], counts["unlinked"], counts["unmatched"]
+
+
+def _ad_originals() -> dict:
+    """`{objectGUID: Pair}` for the AD accounts linked by hand or by a strong key, while the AD
+    account mirror is on: the copy Entra Connect synchronizes follows its original."""
+    if not settings.AD_ACCOUNTS_ENABLED:
+        return {}
+    originals = DirectoryAccount.objects.filter(
+        is_active=True, person__isnull=False, link_method__in=PAIRABLE
+    ).select_related("person")
+    return {
+        original.object_guid: Pair(
+            original.person, f"Same account as AD account {original.sam_account_name}"
+        )
+        for original in originals
+    }
+
+
+def _lost_basis(account: EntraAccount) -> str:
+    """Why an automatic link went away, for the run log, when nothing more specific is known."""
+    if account.link_method == EntraAccount.LinkMethod.PERSON_NUMBER:
+        return f"person number {account.person_number or '-'} matches nobody"
+    if account.link_method == EntraAccount.LinkMethod.USERNAME:
+        name = account.on_premises_sam_account_name or account.upn
+        return f"username {name} matches nobody"
+    if account.link_method == EntraAccount.LinkMethod.PAIRED:
+        return "its AD account no longer links it"
+    return "neither the employee ID nor an e-mail address matches anybody"
 
 
 def sync_accounts(

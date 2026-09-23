@@ -140,6 +140,10 @@ class Command(BaseCommand):
             people = self._people(users, positions, vendors, apps)
             counts = self._directory(users, positions)
             entra_counts = self._entra(users)
+            # The AD link pass ran before the demo tenant existed. Once more, as the next sync
+            # would: an AD account follows a hand link on its Entra ID copy, and a second seed
+            # finds nothing left to change.
+            link_accounts()
         self.stdout.write(f"People: {people} on record.")
         self.stdout.write(self.style.SUCCESS("Demo data loaded."))
         self.stdout.write(
@@ -795,6 +799,15 @@ class Command(BaseCommand):
         if not hannah.on_leave:
             people_services.update_person(
                 hannah, actor=actor, reason="Leave of absence per HR", on_leave=True
+            )
+        # Her AD account was made without the employee ID; the username the HR feed carries
+        # links it (and its Entra ID copy) all the same.
+        if hannah.network_username != demo.USERNAME_ONLY_ACCOUNT:
+            people_services.update_person(
+                hannah,
+                actor=actor,
+                reason="Network username per HR feed",
+                network_username=demo.USERNAME_ONLY_ACCOUNT,
             )
         emily = person("Emily", "Brooks", "E1004", hire_date=day(-400), manager=maria)
         assign(emily, "0100-7000", "employee", -400)

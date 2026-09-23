@@ -597,6 +597,8 @@ def admin_index(request):
         "form": SyncStartForm(),
         "runs": runs,
         "schedule_command": schedule_command(),
+        # A synchronized account follows a link on its AD original while that mirror is on.
+        "ad_pairing": settings.AD_ACCOUNTS_ENABLED,
     }
     ctx.update(_status_context(runs))
     ctx.update(reconcile.counts_for_display())
@@ -792,6 +794,7 @@ ACCOUNT_COLUMNS = [
     "identity_provider",
     "invitation",
     "employee_id",
+    "person_number",
     "enabled",
     "created",
     "last_sign_in",
@@ -814,6 +817,7 @@ def account_rows(accounts):
             a.identity_provider_label,
             a.external_user_state,
             a.employee_id,
+            a.person_number,
             "yes" if a.account_enabled else "no",
             a.created_in_entra_at.date().isoformat() if a.created_in_entra_at else "",
             (a.last_activity_at.date().isoformat() if a.last_activity_at else "")
@@ -848,6 +852,7 @@ class EntraAccountListView(PermissionCheckMixin, ListView):
                 | Q(surname__icontains=self.q)
                 | Q(mail__icontains=self.q)
                 | Q(employee_id__iexact=self.q)
+                | Q(person_number__iexact=self.q)
                 | Q(company_name__icontains=self.q)
             )
         self.active = g.get("active", "1")
@@ -1056,6 +1061,7 @@ def account_create_person(request, pk):
                         suffix=d["suffix"],
                         preferred_name=d["preferred_name"],
                         employee_id=d["employee_id"],
+                        network_username=d["network_username"],
                         email=d["email"],
                         phone=d["phone"],
                         work_location=d["work_location"],

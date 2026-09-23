@@ -162,6 +162,33 @@ def test_employee_id_is_unique_only_when_set(db):
         factories.PersonFactory(employee_id="E1")
 
 
+def test_network_username_is_normalized_and_unique_only_when_set(admin_user):
+    ann = services.create_person(
+        actor=admin_user,
+        reason="seed",
+        first_name="Ann",
+        last_name="One",
+        network_username=" CORP\\JDoe ",
+    )
+    assert ann.network_username == "jdoe"
+    factories.PersonFactory(network_username="")
+    factories.PersonFactory(network_username="")
+    # The same account in another spelling is the duplicate it is, named for the holder.
+    with pytest.raises(ValidationError) as exc:
+        services.create_person(
+            actor=admin_user,
+            reason="seed",
+            first_name="Jo",
+            last_name="Two",
+            network_username="JDOE",
+        )
+    assert exc.value.message_dict == {
+        "network_username": ["Network username jdoe already belongs to Ann One."]
+    }
+    with pytest.raises(IntegrityError), transaction.atomic():
+        factories.PersonFactory(network_username="CORP\\jdoe")
+
+
 # --- Type rules -----------------------------------------------------------------------------
 
 
@@ -747,6 +774,48 @@ def test_edit_form_disables_hr_owned_fields(as_user, admin_user, jane):
     assert resp.status_code == 302
     jane.refresh_from_db()
     assert jane.employee_id == "E100" and jane.notes == "n"
+
+
+def test_edit_form_sets_a_network_username_and_names_a_duplicates_holder(as_user, admin_user, jane):
+    factories.PersonFactory(first_name="Olga", last_name="Other", network_username="osmith")
+    client = as_user(admin_user)
+    url = reverse("people:person_update", args=[jane.pk])
+    data = {"employee_id": "E100", "network_username": "CORP\\OSmith", "reason": "New account"}
+    resp = client.post(url, data)
+    assert resp.status_code == 200
+    assert resp.context["form"].errors["network_username"] == [
+        "Network username osmith already belongs to Olga Other."
+    ]
+    data["network_username"] = "CORP\\JSmith"
+    assert client.post(url, data).status_code == 302
+    jane.refresh_from_db()
+    assert jane.network_username == "jsmith"
+    # Not one of the fields the feed owns: HR may not carry it yet, so it stays editable.
+    jane.source = "hr"
+    jane.save()
+    assert not client.get(url).context["form"].fields["network_username"].disabled
+    # Search finds her by it, in any case and with or without the domain.
+    for q in ("JSMITH", "corp\\jsmith"):
+        resp = client.get(reverse("people:person_list"), {"q": q})
+        assert list(resp.context["object_list"]) == [jane]
+    resp = client.get(reverse("people:person_list"), {"q": "CORP\\"})
+    assert list(resp.context["object_list"]) == [], "an empty username must not match everyone"
+
+
+def test_everybody_has_a_person_number_and_search_finds_it(as_user, admin_user, jane, settings):
+    from apps.people.keys import format_person_number
+
+    assert jane.person_number == format_person_number(jane.pk)
+    client = as_user(admin_user)
+    assert jane.person_number in client.get(jane.get_absolute_url()).content.decode()
+    resp = client.get(reverse("people:person_list"), {"q": jane.person_number.lower()})
+    assert list(resp.context["object_list"]) == [jane]
+    # A typo in it finds nobody, rather than somebody else.
+    typo = jane.person_number[:-1] + str((int(jane.person_number[-1]) + 1) % 10)
+    resp = client.get(reverse("people:person_list"), {"q": typo})
+    assert list(resp.context["object_list"]) == []
+    settings.PERSON_NUMBER_PREFIX = "HI"
+    assert jane.person_number.startswith("HI")
 
 
 def test_pickers(as_user, admin_user, jane, position):

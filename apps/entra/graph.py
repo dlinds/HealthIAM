@@ -186,6 +186,7 @@ class GraphUser:
     department: str = ""
     company_name: str = ""
     employee_id: str = ""
+    person_number: str = ""
     user_type: str = "Member"
     creation_type: str = ""
     external_user_state: str = ""
@@ -346,7 +347,11 @@ def immutable_id_guid(value: str) -> uuid.UUID | None:
 
 
 def parse_user(
-    payload: dict, *, employee_id_attribute: str = "employeeId", sign_in_requested: bool = False
+    payload: dict,
+    *,
+    employee_id_attribute: str = "employeeId",
+    person_number_attribute: str = "",
+    sign_in_requested: bool = False,
 ) -> GraphUser:
     """One Graph user object.
 
@@ -389,6 +394,7 @@ def parse_user(
         department=_text(payload, "department", MAX_SHORT),
         company_name=_text(payload, "companyName", MAX_SHORT),
         employee_id=read_employee_id(payload, employee_id_attribute)[:MAX_EMPLOYEE_ID],
+        person_number=read_employee_id(payload, person_number_attribute)[:MAX_EMPLOYEE_ID],
         user_type=_text(payload, "userType", 20) or "Member",
         creation_type=_text(payload, "creationType", 40),
         # "PendingAcceptance" in Graph, "Pending Acceptance" in some of Microsoft's own docs.
@@ -714,9 +720,10 @@ class MsalGraphClient(GraphClient):
 
     def _user_select(self, *, sign_in: bool) -> str:
         fields = list(USER_SELECT)
-        extra = self.cfg.employee_id_select
-        if extra and extra not in fields:
-            fields.append(extra)
+        # Two extension attributes are both inside onPremisesExtensionAttributes: selected once.
+        for extra in (self.cfg.employee_id_select, self.cfg.person_number_select):
+            if extra and extra.lower() not in {f.lower() for f in fields}:
+                fields.append(extra)
         if sign_in:
             fields.append("signInActivity")
         return ",".join(fields)
@@ -734,7 +741,10 @@ class MsalGraphClient(GraphClient):
             yield parse_group(item)
 
     def iter_users(self) -> Iterator[GraphUser]:
-        attribute = self.cfg.employee_id_attribute
+        attributes = {
+            "employee_id_attribute": self.cfg.employee_id_attribute,
+            "person_number_attribute": self.cfg.person_number_attribute,
+        }
         sign_in = self.cfg.sign_in_activity
         params = {
             "$select": self._user_select(sign_in=sign_in),
@@ -757,7 +767,7 @@ class MsalGraphClient(GraphClient):
             sign_in = False
             logger.warning("Sign-in activity unavailable, listing users without it: %s", exc)
         for item in self._paged("/users", params, first=first):
-            yield parse_user(item, employee_id_attribute=attribute, sign_in_requested=sign_in)
+            yield parse_user(item, **attributes, sign_in_requested=sign_in)
 
     def get_group(self, group_id: str) -> GraphGroup:
         if _uuid(group_id) is None:
@@ -777,7 +787,11 @@ class MsalGraphClient(GraphClient):
         # accepts an OData cast here as an advanced query: ConsistencyLevel plus $count.
         path = f"/groups/{group_id}/transitiveMembers/microsoft.graph.user"
         for item in self._paged(path, params, headers={"ConsistencyLevel": "eventual"}):
-            yield parse_user(item, employee_id_attribute=self.cfg.employee_id_attribute)
+            yield parse_user(
+                item,
+                employee_id_attribute=self.cfg.employee_id_attribute,
+                person_number_attribute=self.cfg.person_number_attribute,
+            )
 
     def test_connection(self) -> ConnectionInfo:
         info = ConnectionInfo(server=self.cfg.graph_host)

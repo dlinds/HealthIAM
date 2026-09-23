@@ -63,10 +63,25 @@ class AssignmentInline(admin.TabularInline):
 
 @admin.register(Person)
 class PersonAdmin(admin.ModelAdmin):
-    list_display = ("sort_name", "employee_id", "email", "is_active", "on_leave", "source")
+    list_display = (
+        "sort_name",
+        "employee_id",
+        "network_username",
+        "email",
+        "is_active",
+        "on_leave",
+        "source",
+    )
     list_filter = ("is_active", "on_leave", "source")
     # Autocomplete target for the assignment and account admins.
-    search_fields = ("first_name", "last_name", "preferred_name", "employee_id", "email")
+    search_fields = (
+        "first_name",
+        "last_name",
+        "preferred_name",
+        "employee_id",
+        "network_username",
+        "email",
+    )
     autocomplete_fields = ("manager", "user")
     inlines = [AssignmentInline, IdentifierInline, FormerNameInline]
 

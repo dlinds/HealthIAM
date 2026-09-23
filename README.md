@@ -86,7 +86,8 @@ All settings are read from the environment (or `.env`); see `.env.example`.
 | `AD_CA_BUNDLE`, `AD_TIMEOUT` | PEM of the internal CA (empty = system store; verification is always on); connect/receive timeout in seconds (10) |
 | `AD_USER_GROUP`, `AD_BASELINE_ROLE` | Group whose nested members get a login (`IAM-Users`); role they are guaranteed (`Help Desk`) |
 | `AD_GROUPS_SEARCH_BASES`, `AD_GROUPS_NAME_PATTERNS`, `AD_GROUPS_EXCLUDE_PATTERNS` | Semicolon-separated OU DNs, plus comma-separated globs to include and to exclude, selecting the AD groups to import and reference-check |
-| `AD_ACCOUNTS_SEARCH_BASES`, `AD_ACCOUNTS_EXCLUDE_PATTERNS`, `AD_EMPLOYEE_ID_ATTRIBUTE` | OUs whose user accounts are mirrored and linked to people by the employee ID in that attribute (`employeeID`); empty bases = no account mirror |
+| `AD_ACCOUNTS_SEARCH_BASES`, `AD_ACCOUNTS_EXCLUDE_PATTERNS`, `AD_EMPLOYEE_ID_ATTRIBUTE` | OUs whose user accounts are mirrored and linked to people -- by the employee ID in that attribute (`employeeID`), the network username, or the keys below; empty bases = no account mirror |
+| `AD_PERSON_NUMBER_ATTRIBUTE`, `AD_LINK_BY_EMAIL` | The attribute carrying the HealthIAM person number, for people HR does not number (usually a free `extensionAttributeN`; empty = off); also link by e-mail (`false`) |
 | `AD_AUTH_ENABLED`, `AD_AUTH_TIMEOUT` | Let synced people sign in with their AD password (LDAPS bind); seconds to wait for the bind (60, long enough for a step-up approval) |
 | `AD_AUTH_MAX_FAILURES`, `AD_AUTH_FAILURE_WINDOW`, `AD_AUTH_LOCKOUT_SECONDS` | Wrong passwords per login inside the window before attempts stop reaching AD, and for how long. Keep under the domain's own lockout policy; `0` disables |
 | `ENTRA_SYNC_CLIENT_ID` | With `ENTRA_TENANT_ID`, turns on the read-only Entra ID sync over Microsoft Graph, with its own app registration. Development falls back to the seeded demo tenant when neither is set. See `docs/entra-setup.md` Part 2 |
@@ -95,6 +96,8 @@ All settings are read from the environment (or `.env`); see `.env.example`.
 | `ENTRA_AUTHORITY_HOST`, `ENTRA_GRAPH_ENDPOINT`, `ENTRA_VALIDATE_AUTHORITY`, `ENTRA_TIMEOUT` | National clouds; whether MSAL validates an unknown sign-in host (`true`); seconds per request (30) |
 | `ENTRA_GROUPS_NAME_PATTERNS`, `ENTRA_GROUPS_EXCLUDE_PATTERNS` | Comma-separated globs on the display name selecting the groups to mirror and reference-check |
 | `ENTRA_ACCOUNTS_ENABLED`, `ENTRA_ACCOUNTS_EXCLUDE_PATTERNS`, `ENTRA_EMPLOYEE_ID_ATTRIBUTE` | The account mirror (on), UPN globs kept out of it, and where the HR employee ID lives (`employeeId`) |
+| `ENTRA_PERSON_NUMBER_ATTRIBUTE`, `ENTRA_LINK_MEMBERS_BY_EMAIL` | Where the person number lives (usually `onPremisesExtensionAttributes.extensionAttributeN`; empty = off); link members by e-mail too, not only guests (`false`) |
+| `PERSON_NUMBER_PREFIX` | The letters in front of every person number (`P`, as in `P0001230`); choose before numbers go into the directory |
 | `ENTRA_SIGN_IN_ACTIVITY`, `ENTRA_GUEST_STALE_DAYS`, `ENTRA_GUEST_PENDING_DAYS` | Read last sign-in (needs P1/P2 and `AuditLog.Read.All`); days before a guest counts as stale (90) or an invitation as pending too long (30) |
 | `DIRECTORY_LOGIN_SOURCE`, `ENTRA_USER_GROUP`, `ENTRA_BASELINE_ROLE` | Which directory hands out logins (`ad`/`entra`; empty = AD when configured); with `entra`, the object ID of the login group and the role its members are guaranteed (`Help Desk`) |
 | `SUPPORT_CONTACT` | Shown on the no-access page |
@@ -115,7 +118,8 @@ All settings are read from the environment (or `.env`); see `.env.example`.
   applications → pick a level → reason), copy defaults from another position, remove with a
   reason. Help desk uses this page to see expected access, and its People card shows who
   holds the position today.
-- **People**: search by current or former name, employee ID, e-mail or NPI; filter by type,
+- **People**: search by current or former name, employee ID, person number, network username,
+  e-mail or NPI; filter by type,
   status (ending within 30 days, open-ended external, on leave, no current position, inactive),
   department or organization. A person is created together with their first position
   assignment; the type decides whether an end date, a sponsor or an agency/school is required
@@ -145,11 +149,14 @@ All settings are read from the environment (or `.env`); see `.env.example`.
   **broken references** list (CSV/XLSX). **Admin → Active Directory** shows the effective
   configuration, tests the connection, previews and applies a sync, and lists every run;
   `manage.py sync_ad` does the same from a scheduled job. With `AD_ACCOUNTS_SEARCH_BASES`
-  the sync also mirrors the user accounts in those OUs and links each to the person with
-  that employee ID (or an Admin links one by hand, with a reason); the **AD accounts** page
-  is the deprovisioning worklist: enabled accounts of people who have left, accounts linked
-  to nobody, employee IDs matching nobody, disabled and expired accounts, all exportable, and
-  each person page shows their accounts. With `AD_AUTH_ENABLED` those people also
+  the sync also mirrors the user accounts in those OUs and links each to its person by the
+  keys it carries -- the person number HealthIAM issues for people HR does not number, the
+  employee ID (or a former one), the network username, the link on its Entra ID copy,
+  optionally e-mail -- with keys that disagree reported as conflicts rather than guessed at
+  (or an Admin links one by hand, with a reason); the **AD accounts** page is the
+  deprovisioning worklist: enabled accounts of people who have left, accounts linked to
+  nobody, keys matching nobody, disabled and expired accounts, all exportable, and each
+  person page shows their accounts. With `AD_AUTH_ENABLED` those people also
   sign in with their AD password, verified by an LDAPS bind. `manage.py demo_ad` drifts the
   seeded demo directory so a demo can show the catalog noticing a rename, a group that
   disappeared and one that arrived. See `docs/ad-setup.md`.
@@ -166,7 +173,7 @@ All settings are read from the environment (or `.env`); see `.env.example`.
   to the cloud (or an AD copy made by group writeback) into an Entra-group level without
   losing its defaults, and without LDAPS the AD-group levels are checked through Entra ID. The
   **Entra accounts** page mirrors every account in the tenant -- members, guests and external
-  members -- linked to people by employee ID, by e-mail for guests, or by hand, with the guest
+  members -- linked to people by the same keys (e-mail always for guests), or by hand, with the guest
   worklists: enabled for someone who left, linked to nobody (**Create person…**), invitations
   pending too long, not signed in lately. With `DIRECTORY_LOGIN_SOURCE=entra` one Entra group
   hands out logins instead of `IAM-Users`. **Admin → Entra ID** and `manage.py sync_entra`

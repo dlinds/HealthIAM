@@ -202,6 +202,9 @@ def test_demo_tenant_links_accounts_and_fills_every_worklist():
     assert accounts[upn_of("gito")].source == EntraAccount.Source.CONVERTED
     ravi = accounts[upn_of("ravi.menon")]
     assert ravi.source == EntraAccount.Source.CLOUD and ravi.link_method == Method.MANUAL
+    # No employee ID on Hannah's account: the network username HR carries links it.
+    hannah = accounts[upn_of("hweiss")]
+    assert hannah.link_method == Method.USERNAME and hannah.person.last_name == "Weiss"
 
     # Guests and external members link by e-mail, to the people seed_demo gave that address.
     for spec in entra_data.ACCOUNTS:
@@ -278,7 +281,7 @@ def test_demo_tenant_pages_render(as_user):
     assert admin_page.context["architecture"]["label"] == "Hybrid, read from both sides"
     assert admin_page.context["worklists"]["orphaned"] == 2
     body = admin_page.content.decode()
-    assert "9 synced from AD" in body and "7 guests" in body and "1 external member<" in body
+    assert "10 synced from AD" in body and "7 guests" in body and "1 external member<" in body
 
     for show, _label in worklists.SHOW_CHOICES:
         resp = client.get(reverse("entra:account_list"), {"show": show})

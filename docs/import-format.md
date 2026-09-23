@@ -87,6 +87,7 @@ One row per employee, upserted by `employee_id`. Every position named must alrea
 | `first_name`, `last_name` | yes | `first` / `given_name`; `last` / `surname` / `family_name` |
 | `middle_name`, `suffix`, `preferred_name` | no | `middle`; `preferred` / `nickname` |
 | `email`, `phone`, `location` | no | `work_email` / `mail`; `work_phone`; `site` / `campus` |
+| `network_username` | no | `network_id`, `ad_username`, `sam_account_name` / `sAMAccountName`, `upn` / `user_principal_name` — the AD account name, `DOMAIN\name` or a UPN |
 | `position_code` | yes* | `position`, `primary_position` — `DDDD-JJJJ`; or `department_code` + `job_code`. *Not needed on a `terminated` row. |
 | `alternate_positions` | no | `alternates`, `secondary_positions` — semicolon-separated `DDDD-JJJJ` codes |
 | `person_type` | no | `type`, `worker_type` — a person type code (default `employee`) |
@@ -121,6 +122,19 @@ What each row does:
   the person inactive. An inactive person who reappears with `active` is reactivated.
 - **`manager_employee_id`** → linked in a second pass; an unknown ID is a *warning*, not an
   error.
+- **`network_username`** → stored as the directory syncs compare it: without a `DOMAIN\`
+  prefix and in lower case (`CORP\JDoe` becomes `jdoe`; a UPN keeps its domain). It is what
+  links a person's AD and Entra ID accounts when their employee ID is not in the directory
+  (`docs/ad-setup.md` section 13), so it is worth carrying even where the ID is. A username
+  another person still holds is handled by who holds it:
+  - an **inactive** person (they left and the name was reused) → it moves to this row's
+    person; the row says `network username taken from <name>` and their History records it
+    with the batch as the reason;
+  - an **active** person → it stays theirs and the row imports without it, with a *warning*:
+    one of the two records is wrong, and which one is for a person to decide.
+
+  Unlike the other contact fields it is not locked on the edit form for an HR-sourced person, so
+  it can be filled in by hand before the feed carries it; a value in the file then wins.
 - **Empty optional columns** leave the current value alone.
 - A person somebody entered by hand with the same employee ID is adopted by the feed
   (`source` becomes *HR feed*): the employee ID says it is the same person. A primary
