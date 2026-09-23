@@ -29,7 +29,7 @@ from django.views.decorators.debug import sensitive_variables
 from apps.accounts import login_source, roles
 from apps.accounts.models import User
 from apps.orgs.importers import ImportResult
-from apps.people.linking import AccountKeys, PeopleIndex, apply_match
+from apps.people.linking import PAIRABLE, AccountKeys, Pair, PeopleIndex, apply_match
 
 from .config import DirectorySettings
 from .ldap_client import DirectoryClient, DirectoryError, DirectoryGroup, DirectoryUser
@@ -868,14 +868,17 @@ def link_accounts(result: AccountSyncResult | None = None, *, now=None) -> tuple
     """Link every active account the sync may link to the person its keys name, and unlink an
     automatic link whose basis has gone. Returns `(linked, unlinked, unmatched)`.
 
-    The keys are the employee ID, then the account's sAMAccountName and UPN against people's
-    network usernames; the rules are `apps.people.linking`'s. A link made or removed by hand
-    is never touched: `link_method=manual` with a person means "this is theirs, whatever the
-    attributes say", and with no person "leave it unlinked". Also used by the demo seed, so
-    the demo world links the way a sync would.
+    The keys are the employee ID (or a former one), then the account's sAMAccountName and UPN
+    against people's network usernames, then its Entra ID copy's link, then -- with
+    `AD_LINK_BY_EMAIL` -- its mail and UPN; the rules are `apps.people.linking`'s. A link made
+    or removed by hand is never touched: `link_method=manual` with a person means "this is
+    theirs, whatever the attributes say", and with no person "leave it unlinked". Also used by
+    the demo seed, so the demo world links the way a sync would.
     """
     now = now or timezone.now()
+    cfg = DirectorySettings.from_settings()
     index = PeopleIndex.build()
+    pairs = _entra_copies()
     counts = dict.fromkeys(("linked", "unlinked", "unmatched"), 0)
     accounts = DirectoryAccount.objects.filter(is_active=True).exclude(
         link_method=DirectoryAccount.LinkMethod.MANUAL
@@ -884,11 +887,12 @@ def link_accounts(result: AccountSyncResult | None = None, *, now=None) -> tuple
         keys = AccountKeys(
             employee_id=account.employee_id,
             usernames=(account.sam_account_name, account.upn),
+            emails=(account.mail, account.upn) if cfg.link_by_email else (),
             created_at=account.when_created,
         )
         outcome = apply_match(
             account,
-            index.match(keys),
+            index.match(keys, pair=pairs.get(account.object_guid)),
             now=now,
             lost=_lost_basis(account),
             result=result,
@@ -902,10 +906,37 @@ def link_accounts(result: AccountSyncResult | None = None, *, now=None) -> tuple
     return counts["linked"], counts["unlinked"], counts["unmatched"]
 
 
+def _entra_copies() -> dict:
+    """`{objectGUID: Pair}` for the accounts whose Entra ID copy is linked by hand or by a
+    strong key, while the Entra account mirror is on: a link somebody made on the copy holds
+    for the original too. Imported here, not at the top: the Entra sync imports this module."""
+    if not (settings.ENTRA_ENABLED and settings.ENTRA_ACCOUNTS_ENABLED):
+        return {}
+    from apps.entra.models import EntraAccount
+
+    copies = EntraAccount.objects.filter(
+        is_active=True,
+        person__isnull=False,
+        on_premises_object_guid__isnull=False,
+        link_method__in=PAIRABLE,
+    ).select_related("person")
+    return {
+        copy.on_premises_object_guid: Pair(
+            copy.person, f"Same account as Entra ID account {copy.upn}"
+        )
+        for copy in copies
+    }
+
+
 def _lost_basis(account: DirectoryAccount) -> str:
     """Why an automatic link went away, for the run log, when nothing more specific is known."""
-    if account.link_method == DirectoryAccount.LinkMethod.USERNAME:
+    method = account.link_method
+    if method == DirectoryAccount.LinkMethod.USERNAME:
         return f"username {account.sam_account_name} matches nobody"
+    if method == DirectoryAccount.LinkMethod.PAIRED:
+        return "its Entra ID account no longer links it"
+    if method == DirectoryAccount.LinkMethod.EMAIL:
+        return "its e-mail address no longer links it"
     return f"employee ID {account.employee_id or '-'} matches nobody"
 
 

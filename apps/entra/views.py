@@ -532,6 +532,8 @@ def admin_index(request):
         "form": SyncStartForm(),
         "runs": runs,
         "schedule_command": schedule_command(),
+        # A synchronized account follows a link on its AD original while that mirror is on.
+        "ad_pairing": settings.AD_ACCOUNTS_ENABLED,
     }
     ctx.update(_status_context(runs))
     return render(request, "entra/admin_index.html", ctx)

@@ -423,6 +423,8 @@ def admin_index(request):
         "form": SyncStartForm(),
         "runs": runs,
         "schedule_command": schedule_command(),
+        # An account follows a link on its Entra ID copy while that mirror is on.
+        "entra_pairing": settings.ENTRA_ENABLED and settings.ENTRA_ACCOUNTS_ENABLED,
     }
     ctx.update(_status_context(runs))
     ctx.update(reconcile.counts_for_display())

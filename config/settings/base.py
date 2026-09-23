@@ -33,6 +33,7 @@ env = environ.Env(
     AD_ACCOUNTS_SEARCH_BASES=(str, ""),
     AD_ACCOUNTS_EXCLUDE_PATTERNS=(list, []),
     AD_EMPLOYEE_ID_ATTRIBUTE=(str, "employeeID"),
+    AD_LINK_BY_EMAIL=(bool, False),
     AD_AUTH_ENABLED=(bool, False),
     AD_AUTH_TIMEOUT=(int, 60),
     AD_AUTH_MAX_FAILURES=(int, 3),
@@ -51,6 +52,7 @@ env = environ.Env(
     ENTRA_ACCOUNTS_ENABLED=(bool, True),
     ENTRA_ACCOUNTS_EXCLUDE_PATTERNS=(list, []),
     ENTRA_EMPLOYEE_ID_ATTRIBUTE=(str, "employeeId"),
+    ENTRA_LINK_MEMBERS_BY_EMAIL=(bool, False),
     ENTRA_SIGN_IN_ACTIVITY=(bool, True),
     ENTRA_GUEST_STALE_DAYS=(int, 90),
     ENTRA_GUEST_PENDING_DAYS=(int, 30),
@@ -202,8 +204,9 @@ AD_GROUPS_NAME_PATTERNS = env("AD_GROUPS_NAME_PATTERNS")
 # Empty = nothing is excluded. Use for AD built-ins and for IAM's own role groups.
 AD_GROUPS_EXCLUDE_PATTERNS = env("AD_GROUPS_EXCLUDE_PATTERNS")
 # The account mirror: user accounts under these OUs (semicolon-separated) are mirrored as
-# `DirectoryAccount` rows and linked to people by employee ID. Empty = off, with no fallback
-# to the base DN -- mirroring every account in the domain has to be an explicit choice.
+# `DirectoryAccount` rows and linked to people by the keys they carry (apps.people.linking).
+# Empty = off, with no fallback to the base DN -- mirroring every account in the domain has to
+# be an explicit choice.
 AD_ACCOUNTS_SEARCH_BASES = [
     b.strip() for b in env("AD_ACCOUNTS_SEARCH_BASES").split(";") if b.strip()
 ]
@@ -212,6 +215,9 @@ AD_ACCOUNTS_SEARCH_BASES = [
 AD_ACCOUNTS_EXCLUDE_PATTERNS = env("AD_ACCOUNTS_EXCLUDE_PATTERNS")
 # The AD attribute that carries the HR employee ID; the link between an account and a person.
 AD_EMPLOYEE_ID_ATTRIBUTE = env("AD_EMPLOYEE_ID_ATTRIBUTE")
+# Also link an account no stronger key links by its mail, then its UPN, when exactly one person
+# has that address. Off by default: only safe where people's e-mail comes from IT, not typed in.
+AD_LINK_BY_EMAIL = env("AD_LINK_BY_EMAIL")
 AD_ACCOUNTS_ENABLED = AD_ENABLED and bool(AD_ACCOUNTS_SEARCH_BASES)
 
 # --- Active Directory sign-in ------------------------------------------------------
@@ -270,8 +276,11 @@ ENTRA_ACCOUNTS_ENABLED = env("ENTRA_ACCOUNTS_ENABLED")
 ENTRA_ACCOUNTS_EXCLUDE_PATTERNS = env("ENTRA_ACCOUNTS_EXCLUDE_PATTERNS")
 # Where the HR employee ID lives on a user: employeeId, an on-premises extension attribute
 # (onPremisesExtensionAttributes.extensionAttribute1..15) or a directory schema extension
-# (extension_<appid>_<name>). Empty = link by e-mail (guests) and by hand only.
+# (extension_<appid>_<name>). Empty = link by username, e-mail (guests) and by hand only.
 ENTRA_EMPLOYEE_ID_ATTRIBUTE = env("ENTRA_EMPLOYEE_ID_ATTRIBUTE")
+# Guests and external members always link by e-mail; this links members by it too, when no
+# stronger key does and exactly one person has the address. Off by default, like the AD one.
+ENTRA_LINK_MEMBERS_BY_EMAIL = env("ENTRA_LINK_MEMBERS_BY_EMAIL")
 # Last sign-in per account needs Entra ID P1/P2 and AuditLog.Read.All; without them the sync
 # carries on without it. False stops asking.
 ENTRA_SIGN_IN_ACTIVITY = env("ENTRA_SIGN_IN_ACTIVITY")

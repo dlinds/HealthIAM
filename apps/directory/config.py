@@ -32,6 +32,7 @@ class DirectorySettings:
     account_search_bases: tuple[str, ...] = ()
     account_exclude_patterns: tuple[str, ...] = ()
     employee_id_attribute: str = "employeeID"
+    link_by_email: bool = False
 
     @classmethod
     def from_settings(cls) -> DirectorySettings:
@@ -50,6 +51,7 @@ class DirectorySettings:
             account_search_bases=tuple(getattr(settings, "AD_ACCOUNTS_SEARCH_BASES", ())),
             account_exclude_patterns=tuple(getattr(settings, "AD_ACCOUNTS_EXCLUDE_PATTERNS", ())),
             employee_id_attribute=getattr(settings, "AD_EMPLOYEE_ID_ATTRIBUTE", "employeeID") or "",
+            link_by_email=bool(getattr(settings, "AD_LINK_BY_EMAIL", False)),
         )
 
     @property
@@ -82,6 +84,7 @@ class DirectorySettings:
             "account_search_bases": list(self.account_search_bases),
             "account_exclude_patterns": list(self.account_exclude_patterns),
             "employee_id_attribute": self.employee_id_attribute,
+            "link_by_email": self.link_by_email,
             "accounts_enabled": self.accounts_enabled,
         }
 

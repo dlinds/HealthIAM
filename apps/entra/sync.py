@@ -29,8 +29,9 @@ from django.views.decorators.debug import sensitive_variables
 from apps.accounts import roles
 from apps.accounts.models import User
 from apps.directory.matching import excluded_by, matches_patterns
+from apps.directory.models import DirectoryAccount
 from apps.directory.sync import AccountSyncResult, RowError, SyncResult
-from apps.people.linking import AccountKeys, PeopleIndex, apply_match
+from apps.people.linking import PAIRABLE, AccountKeys, Pair, PeopleIndex, apply_match
 
 from .config import EntraSettings
 from .graph import GraphClient, GraphError, GraphGroup, GraphUser, TenantInfo, immutable_id_guid
@@ -715,29 +716,34 @@ def link_accounts(result: AccountSyncResult | None = None, *, now=None) -> tuple
     """Link every active account the sync may link to the person its keys name, and unlink an
     automatic link whose basis has gone. Returns `(linked, unlinked, unmatched)`.
 
-    The keys are the employee ID, then the on-premises account name and the UPN against
-    people's network usernames, then -- for guests and external members only, who rarely carry
-    an employee ID of ours -- their e-mail addresses. The rules are `apps.people.linking`'s.
-    A link made or removed by hand is never touched: `link_method=manual` with a person means
-    "theirs, whatever the attributes say", and with no person "leave it unlinked". Also used
-    by the demo seed, so the demo tenant links the way a sync would.
+    The keys are the employee ID (or a former one), then the on-premises account name and the
+    UPN against people's network usernames, then the link of the AD account a synchronized
+    account copies, then e-mail: always for guests and external members, who rarely carry an
+    employee ID of ours, and for members too with `ENTRA_LINK_MEMBERS_BY_EMAIL`. The rules are
+    `apps.people.linking`'s. A link made or removed by hand is never touched:
+    `link_method=manual` with a person means "theirs, whatever the attributes say", and with no
+    person "leave it unlinked". Also used by the demo seed, so the demo tenant links the way a
+    sync would.
     """
     now = now or timezone.now()
+    cfg = EntraSettings.from_settings()
     index = PeopleIndex.build()
+    pairs = _ad_originals()
     counts = dict.fromkeys(("linked", "unlinked", "unmatched"), 0)
     accounts = EntraAccount.objects.filter(is_active=True).exclude(
         link_method=EntraAccount.LinkMethod.MANUAL
     )
     for account in accounts.select_related("person").order_by("upn", "pk"):
+        by_email = account.is_external or cfg.link_members_by_email
         keys = AccountKeys(
             employee_id=account.employee_id,
             usernames=(account.on_premises_sam_account_name, account.upn),
-            emails=tuple(account.email_candidates()) if account.is_external else (),
+            emails=tuple(account.email_candidates()) if by_email else (),
             created_at=account.created_in_entra_at,
         )
         outcome = apply_match(
             account,
-            index.match(keys),
+            index.match(keys, pair=pairs.get(account.on_premises_object_guid)),
             now=now,
             lost=_lost_basis(account),
             result=result,
@@ -751,11 +757,29 @@ def link_accounts(result: AccountSyncResult | None = None, *, now=None) -> tuple
     return counts["linked"], counts["unlinked"], counts["unmatched"]
 
 
+def _ad_originals() -> dict:
+    """`{objectGUID: Pair}` for the AD accounts linked by hand or by a strong key, while the AD
+    account mirror is on: the copy Entra Connect synchronizes follows its original."""
+    if not settings.AD_ACCOUNTS_ENABLED:
+        return {}
+    originals = DirectoryAccount.objects.filter(
+        is_active=True, person__isnull=False, link_method__in=PAIRABLE
+    ).select_related("person")
+    return {
+        original.object_guid: Pair(
+            original.person, f"Same account as AD account {original.sam_account_name}"
+        )
+        for original in originals
+    }
+
+
 def _lost_basis(account: EntraAccount) -> str:
     """Why an automatic link went away, for the run log, when nothing more specific is known."""
     if account.link_method == EntraAccount.LinkMethod.USERNAME:
         name = account.on_premises_sam_account_name or account.upn
         return f"username {name} matches nobody"
+    if account.link_method == EntraAccount.LinkMethod.PAIRED:
+        return "its AD account no longer links it"
     return "neither the employee ID nor an e-mail address matches anybody"
 
 

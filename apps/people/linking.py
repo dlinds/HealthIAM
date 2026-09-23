@@ -4,18 +4,23 @@ Both account mirrors -- `apps.directory` for Active Directory, `apps.entra` for 
 link their accounts through `PeopleIndex.match` and `apply_match`, so one set of rules
 decides on both sides:
 
-1. **Strong keys** name a person outright: the employee ID, then the network username (the
-   account's sAMAccountName or UPN against `Person.network_username`). A username does not
-   count for a person who left before the account was created: names get reused, and a new
-   account must never be tied to somebody who has gone.
+1. **Strong keys** name a person outright: the employee ID (or, when it matches nobody's
+   current one, a former employee ID a person carries as an identifier -- a rehire, a traveler
+   hired on), then the network username (the account's sAMAccountName or UPN against
+   `Person.network_username`). A username does not count for a person who left before the
+   account was created: names get reused, and a new account must never be tied to somebody
+   who has gone.
 2. Strong keys naming **two or more people** are a conflict. Nothing is linked on their
    strength, a link to one of those people is left as it is, and the run log says which key
    names whom: a person has to decide which system is wrong.
 3. Strong keys naming **exactly one** person link the account to them. The link records the
    strongest key that agreed and is left alone while that key still does.
-4. With no strong key, **e-mail** is tried where the mirror allows it: an address exactly one
-   person has. An ambiguous address links nobody, since a wrong link would hand one person's
-   worklist entries to another.
+4. With no strong key, the **paired account** decides: the other mirror's copy of the same
+   account (an Entra ID account synchronized from an AD one), when that copy is linked by hand
+   or by a strong key.
+5. Then **e-mail**, where the mirror allows it: an address exactly one person has. An
+   ambiguous address links nobody, since a wrong link would hand one person's worklist
+   entries to another.
 
 A link or unlink made by hand is never touched: the mirrors leave `link_method=manual` rows
 out of the pass altogether.
@@ -30,13 +35,21 @@ from datetime import datetime
 from django.utils import timezone
 
 from .keys import normalize_username
-from .models import Person
+from .models import Person, PersonIdentifier
 
 #: Automatic link methods, strongest first: the values `DirectoryAccount.LinkMethod` and
-#: `EntraAccount.LinkMethod` store.
+#: `EntraAccount.LinkMethod` store, beside `MANUAL` for a link made by hand.
 EMPLOYEE_ID = "employee_id"
+FORMER_ID = "former_id"
 USERNAME = "username"
+PAIRED = "paired"
 EMAIL = "email"
+MANUAL = "manual"
+
+#: The links a mirror copies from the other one's copy of an account: made by hand or by a
+#: strong key. Never an e-mail link, which would get round the mirror's own e-mail setting, nor
+#: a paired one, which would let the two mirrors keep each other's links alive forever.
+PAIRABLE = (MANUAL, EMPLOYEE_ID, FORMER_ID, USERNAME)
 
 #: What a link or an unlink writes on an account row.
 LINK_FIELDS = ["person", "link_method", "linked_at", "updated_at"]
@@ -52,6 +65,15 @@ class AccountKeys:
     usernames: tuple[str, ...] = ()
     emails: tuple[str, ...] = ()
     created_at: datetime | None = None
+
+
+@dataclass(frozen=True)
+class Pair:
+    """The person the other mirror's copy of an account is linked to, and the audit reason
+    of a link copied from it."""
+
+    person: Person
+    reason: str
 
 
 @dataclass(frozen=True)
@@ -97,11 +119,14 @@ def left_before(person: Person, created_at: datetime | None) -> bool:
 class PeopleIndex:
     """Every person by each key an account can carry, built once per link pass."""
 
-    def __init__(self, people: Iterable[Person]):
+    def __init__(self, people: Iterable[Person], former_ids: Iterable[tuple[str, int]] = ()):
+        by_pk: dict[int, Person] = {}
         self.by_employee_id: dict[str, Person] = {}
+        self.by_former_id: dict[str, Person] = {}
         self.by_username: dict[str, Person] = {}
         self.by_email: dict[str, list[Person]] = {}
         for person in people:
+            by_pk[person.pk] = person
             if person.employee_id:
                 self.by_employee_id[person.employee_id] = person
             if person.network_username:
@@ -109,12 +134,19 @@ class PeopleIndex:
             email = (person.email or "").strip().lower()
             if email:
                 self.by_email.setdefault(email, []).append(person)
+        # Unique per kind case-insensitively (`unique_identifier_value_per_kind`).
+        for value, person_id in former_ids:
+            if person_id in by_pk:
+                self.by_former_id[value.strip().lower()] = by_pk[person_id]
 
     @classmethod
     def build(cls) -> PeopleIndex:
-        return cls(Person.objects.all())
+        former_ids = PersonIdentifier.objects.filter(
+            kind=PersonIdentifier.Kind.FORMER_EMPLOYEE_ID
+        ).values_list("value", "person_id")
+        return cls(Person.objects.all(), former_ids)
 
-    def match(self, keys: AccountKeys) -> Match:
+    def match(self, keys: AccountKeys, *, pair: Pair | None = None) -> Match:
         hits = self._strong_hits(keys)
         people = {person.pk: person for _, person, _, _ in hits}
         if len(people) > 1:
@@ -129,6 +161,8 @@ class PeopleIndex:
             for method, _, reason, _ in hits:
                 reasons.setdefault(method, reason)
             return Match(person=person, methods=tuple(reasons), reasons=reasons)
+        if pair is not None:
+            return Match(person=pair.person, methods=(PAIRED,), reasons={PAIRED: pair.reason})
         note = ""
         for email in dict.fromkeys(e.strip().lower() for e in keys.emails if e and e.strip()):
             found = self.by_email.get(email, [])
@@ -155,6 +189,15 @@ class PeopleIndex:
                         person,
                         f"Employee ID {employee_id} matches",
                         f"employee ID {employee_id}",
+                    )
+                )
+            elif (person := self.by_former_id.get(employee_id.lower())) is not None:
+                hits.append(
+                    (
+                        FORMER_ID,
+                        person,
+                        f"Former employee ID {employee_id} matches",
+                        f"former employee ID {employee_id}",
                     )
                 )
         for username in dict.fromkeys(normalize_username(u) for u in keys.usernames):

@@ -36,7 +36,7 @@
           <dd class="col-sm-8">
             {% if config.accounts_enabled %}<span class="badge text-bg-success">on</span> every account in the tenant
             {% if config.account_exclude_patterns %}<div>excluding <span class="text-mono">{{ config.account_exclude_patterns|join:", " }}</span></div>{% endif %}
-            <div>linked to people by {% if config.employee_id_attribute %}<span class="text-mono">{{ config.employee_id_attribute }}</span>{% if not config.employee_id_readable %} <span class="badge text-bg-warning">not readable</span>{% endif %}{% else %}hand only{% endif %}, guests also by e-mail</div>
+            <div>linked to people by {% if config.employee_id_attribute %}the employee ID in <span class="text-mono">{{ config.employee_id_attribute }}</span>{% if not config.employee_id_readable %} <span class="badge text-bg-warning">not readable</span>{% endif %}, {% endif %}network username{% if ad_pairing %}, the link on its AD original{% endif %}, e-mail{% if not config.link_members_by_email %} (guests only){% endif %} or by hand</div>
             {% else %}<span class="badge text-bg-secondary">off</span> &mdash; <span class="text-mono">ENTRA_ACCOUNTS_ENABLED</span> is false{% endif %}
           </dd>
           <dt class="col-sm-4">Sign-in activity</dt>

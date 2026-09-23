@@ -1018,3 +1018,48 @@ def test_sync_ad_accounts_only_needs_a_base(fake_directory):
         sync_ad(accounts_only=True)
     with pytest.raises(CommandError, match="cannot be combined"):
         sync_ad(accounts_only=True, groups_only=True)
+
+
+def test_a_former_employee_id_links_when_no_current_one_matches(people):
+    from apps.people.models import Person, PersonIdentifier
+
+    PersonIdentifier.objects.create(
+        person=people["alice"], kind=PersonIdentifier.Kind.FORMER_EMPLOYEE_ID, value="t0042"
+    )
+    acct = factories.DirectoryAccountFactory(sam_account_name="traveler", employee_id="T0042")
+    result = AccountSyncResult(kind="accounts", dry_run=False)
+    assert sync.link_accounts(result) == (1, 0, 0)
+    acct.refresh_from_db()
+    assert acct.person == people["alice"]
+    assert acct.link_method == DirectoryAccount.LinkMethod.FORMER_ID
+    assert [e["message"] for e in result.log] == ["linked to Alice Anders by former employee ID"]
+    assert account_log(acct)[-1].additional_data["reason"] == "Former employee ID T0042 matches"
+    # Somebody's current employee ID wins over another person's former one.
+    Person.objects.filter(pk=people["bob"].pk).update(employee_id="T0042")
+    assert sync.link_accounts() == (1, 0, 0)
+    acct.refresh_from_db()
+    assert acct.person == people["bob"]
+
+
+def test_email_links_only_with_the_setting_and_only_to_one_person(people, settings):
+    people["alice"].email = "alice.anders@corp.example.org"
+    people["alice"].save()
+    acct = factories.DirectoryAccountFactory(
+        sam_account_name="aa", mail="Alice.Anders@corp.example.org"
+    )
+    assert sync.link_accounts() == (0, 0, 0), "AD_LINK_BY_EMAIL is off by default"
+    settings.AD_LINK_BY_EMAIL = True
+    assert sync.link_accounts() == (1, 0, 0)
+    acct.refresh_from_db()
+    assert acct.person == people["alice"]
+    assert acct.link_method == DirectoryAccount.LinkMethod.EMAIL
+    # An address two people have links nobody, and a link that rested on it goes.
+    factories.PersonFactory(
+        first_name="Al", last_name="Anders", employee_id="", email="alice.anders@corp.example.org"
+    )
+    result = AccountSyncResult(kind="accounts", dry_run=False)
+    assert sync.link_accounts(result) == (0, 1, 0)
+    assert result.log[0]["message"] == (
+        "unlinked from Alice Anders: 2 people have the e-mail alice.anders@corp.example.org"
+    )
+    assert sync.link_accounts() == (0, 0, 1), "an ambiguous address counts as unmatched"

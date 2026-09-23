@@ -78,6 +78,7 @@ class EntraSettings:
     accounts_enabled: bool = True
     account_exclude_patterns: tuple[str, ...] = ()
     employee_id_attribute: str = "employeeId"
+    link_members_by_email: bool = False
     sign_in_activity: bool = True
     user_group: str = ""
     baseline_role: str = "Help Desk"
@@ -104,6 +105,7 @@ class EntraSettings:
             accounts_enabled=bool(settings.ENTRA_ENABLED and settings.ENTRA_ACCOUNTS_ENABLED),
             account_exclude_patterns=tuple(settings.ENTRA_ACCOUNTS_EXCLUDE_PATTERNS),
             employee_id_attribute=(settings.ENTRA_EMPLOYEE_ID_ATTRIBUTE or "").strip(),
+            link_members_by_email=bool(getattr(settings, "ENTRA_LINK_MEMBERS_BY_EMAIL", False)),
             sign_in_activity=bool(settings.ENTRA_SIGN_IN_ACTIVITY),
             user_group=settings.ENTRA_USER_GROUP,
             baseline_role=settings.ENTRA_BASELINE_ROLE,
@@ -157,6 +159,7 @@ class EntraSettings:
             "account_exclude_patterns": list(self.account_exclude_patterns),
             "employee_id_attribute": self.employee_id_attribute,
             "employee_id_readable": bool(self.employee_id_select),
+            "link_members_by_email": self.link_members_by_email,
             "sign_in_activity": self.sign_in_activity,
             "user_group": self.user_group,
             "baseline_role": self.baseline_role,

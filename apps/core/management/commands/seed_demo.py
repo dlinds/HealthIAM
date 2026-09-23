@@ -140,6 +140,10 @@ class Command(BaseCommand):
             people = self._people(users, positions, vendors, apps)
             counts = self._directory(users, positions)
             entra_counts = self._entra(users)
+            # The AD link pass ran before the demo tenant existed. Once more, as the next sync
+            # would: an AD account follows a hand link on its Entra ID copy, and a second seed
+            # finds nothing left to change.
+            link_accounts()
         self.stdout.write(f"People: {people} on record.")
         self.stdout.write(self.style.SUCCESS("Demo data loaded."))
         self.stdout.write(
