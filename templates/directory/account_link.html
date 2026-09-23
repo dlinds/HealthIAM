@@ -25,7 +25,7 @@
           {% for e in form.person.errors %}<div class="invalid-feedback d-block mb-2">{{ e }}</div>{% endfor %}
           {% include "people/partials/field.html" with field=form.reason %}
           <button class="btn btn-primary" type="submit">Link</button>
-          <a class="btn btn-link" href="{{ next|default:'/directory/accounts/' }}">Cancel</a>
+          <a class="btn btn-link" href="{% if next %}{{ next }}{% else %}{% url 'directory:account_list' %}{% endif %}">Cancel</a>
         </form>
       </div>
     </div>

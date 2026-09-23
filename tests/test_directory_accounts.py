@@ -876,6 +876,50 @@ def test_account_link_page_and_post(as_user, admin_user, mirror, people):
     assert resp["Location"] == "/directory/accounts/?q=off"
 
 
+def test_next_never_leads_off_the_site(as_user, admin_user, mirror, people):
+    client = as_user(admin_user)
+    accounts = reverse("directory:account_list")
+    link = reverse("directory:account_link", args=[mirror["nobody"].pk])
+    # A protocol-relative URL starts with a slash, and still names another host.
+    resp = client.post(
+        link,
+        {
+            "person": people["bob"].pk,
+            "reason": "Badge photo matches",
+            "next": "//evil.example/path",
+        },
+    )
+    assert resp.status_code == 302
+    assert resp["Location"] == f"{accounts}?q=nobody"
+
+    # A javascript: URL is never rendered: the form carries nothing and Cancel goes to the list.
+    off = reverse("directory:account_link", args=[mirror["off"].pk])
+    page = client.get(off, {"next": "javascript:alert(1)"}).content.decode()
+    assert "alert(1)" not in page
+    assert '<input type="hidden" name="next" value="">' in page
+    assert f'href="{accounts}">Cancel' in page
+
+    # A same-site `next` is still honoured, on the page and after the link.
+    page = client.get(off, {"next": "/people/1/"}).content.decode()
+    assert 'value="/people/1/"' in page and 'href="/people/1/">Cancel' in page
+    resp = client.post(
+        off, {"person": people["bob"].pk, "reason": "Second account", "next": "/people/1/"}
+    )
+    assert resp["Location"] == "/people/1/"
+
+    # Unlinking and changing the kind go through the same check.
+    unlink = reverse("directory:account_unlink", args=[mirror["alice"].pk])
+    resp = client.post(
+        f"{unlink}?next=//evil.example/", HTTP_HX_REQUEST="true", HTTP_HX_PROMPT="Wrong person"
+    )
+    assert resp["HX-Redirect"] == f"{accounts}?q=alice"
+    kind = reverse("directory:account_kind", args=[mirror["svc"].pk])
+    resp = client.post(
+        kind, {"kind": "shared", "reason": "Scanner login", "next": "javascript:alert(1)"}
+    )
+    assert resp["Location"] == f"{accounts}?q=svc-scanner"
+
+
 def test_account_unlink_takes_the_reason_from_the_htmx_prompt(as_user, admin_user, mirror):
     client = as_user(admin_user)
     acct = mirror["alice"]

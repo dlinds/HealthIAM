@@ -15,7 +15,7 @@ from django.db.models import Case, Count, Exists, IntegerField, OuterRef, Q, Val
 from django.db.models.functions import Lower
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
-from django.utils.http import urlencode
+from django.utils.http import url_has_allowed_host_and_scheme, urlencode
 from django.views.decorators.debug import sensitive_variables
 from django.views.decorators.http import require_POST
 from django.views.generic import ListView
@@ -737,13 +737,22 @@ class DirectoryAccountListView(PermissionCheckMixin, ListView):
 account_list = DirectoryAccountListView.as_view()
 
 
-def _back(request, account):
+def _safe_next(request) -> str:
+    """The `next` a form or link carried, when it stays on this site; "" otherwise. It ends up
+    in a redirect and in the Cancel link, so a `javascript:` or off-site URL -- a
+    protocol-relative `//host/` starts with a slash too -- never gets that far."""
     target = request.POST.get("next") or request.GET.get("next") or ""
-    if not target.startswith("/"):
-        target = (
-            reverse("directory:account_list") + "?" + urlencode({"q": account.sam_account_name})
-        )
-    return target
+    if target and url_has_allowed_host_and_scheme(
+        target, allowed_hosts={request.get_host()}, require_https=request.is_secure()
+    ):
+        return target
+    return ""
+
+
+def _back(request, account):
+    return _safe_next(request) or (
+        reverse("directory:account_list") + "?" + urlencode({"q": account.sam_account_name})
+    )
 
 
 @role_required("can_link_accounts")
@@ -772,7 +781,7 @@ def account_link(request, pk):
     return render(
         request,
         "directory/account_link.html",
-        {"account": account, "form": form, "next": request.GET.get("next", "")},
+        {"account": account, "form": form, "next": _safe_next(request)},
     )
 
 
